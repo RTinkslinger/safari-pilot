@@ -130,6 +130,10 @@ test("testRejectsEmptyID") {
 
 registerCommandDispatcherTests()
 
+// MARK: - SleepWake / Memory / Recovery Tests
+
+registerSleepWakeMemoryRecoveryTests()
+
 // MARK: - Results
 
 print("-----------------")
