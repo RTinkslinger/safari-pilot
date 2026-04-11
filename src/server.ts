@@ -16,6 +16,14 @@ import { PermissionTools } from './tools/permissions.js';
 import { ClipboardTools } from './tools/clipboard.js';
 import { ServiceWorkerTools } from './tools/service-workers.js';
 import { PerformanceTools } from './tools/performance.js';
+import { KillSwitch } from './security/kill-switch.js';
+import { TabOwnership } from './security/tab-ownership.js';
+import { AuditLog } from './security/audit-log.js';
+import { DomainPolicy } from './security/domain-policy.js';
+import { RateLimiter } from './security/rate-limiter.js';
+import { CircuitBreaker } from './security/circuit-breaker.js';
+import { IdpiScanner } from './security/idpi-scanner.js';
+import { RateLimitedError, CircuitBreakerOpenError } from './errors.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -87,12 +95,38 @@ async function checkScreenRecording(): Promise<HealthCheck> {
   }
 }
 
+// ── Tool names that skip ownership enforcement ──────────────────────────────
+const SKIP_OWNERSHIP_TOOLS = new Set([
+  'safari_list_tabs',
+  'safari_new_tab',
+  'safari_health_check',
+]);
+
 export class SafariPilotServer {
   private tools: Map<string, ToolDefinition> = new Map();
   private engines: Map<Engine, IEngine> = new Map();
   private engineAvailability = { daemon: false, extension: false };
   private sessionId: string = `sess_${Date.now().toString(36)}`;
   private _engine: AppleScriptEngine | null = null;
+
+  // ── Security layers ─────────────────────────────────────────────────────────
+  readonly killSwitch: KillSwitch;
+  readonly tabOwnership: TabOwnership;
+  readonly auditLog: AuditLog;
+  readonly domainPolicy: DomainPolicy;
+  readonly rateLimiter: RateLimiter;
+  readonly circuitBreaker: CircuitBreaker;
+  readonly idpiScanner: IdpiScanner;
+
+  constructor() {
+    this.auditLog = new AuditLog();
+    this.killSwitch = new KillSwitch({ auditLog: this.auditLog });
+    this.tabOwnership = new TabOwnership();
+    this.domainPolicy = new DomainPolicy();
+    this.rateLimiter = new RateLimiter();
+    this.circuitBreaker = new CircuitBreaker();
+    this.idpiScanner = new IdpiScanner();
+  }
 
   async initialize(): Promise<void> {
     // Instantiate and probe the DaemonEngine first (fastest path)
@@ -238,6 +272,90 @@ export class SafariPilotServer {
     const tool = this.tools.get(name);
     if (!tool) throw new Error(`Unknown tool: ${name}`);
     return tool.handler(params);
+  }
+
+  /**
+   * Execute a tool through the full security pipeline:
+   * kill switch → tab ownership → domain policy → rate limiter →
+   * circuit breaker → tool execution → audit log
+   */
+  async executeToolWithSecurity(
+    name: string,
+    params: Record<string, unknown>,
+  ): Promise<ToolResponse> {
+    const start = Date.now();
+
+    // 1. Kill switch check — blocks all automation when active
+    this.killSwitch.checkBeforeAction();
+
+    // 2. Extract URL / domain from params
+    const url = ((params['tabUrl'] ?? params['url'] ?? '') as string);
+    let domain: string;
+    try {
+      domain = new URL(url || 'about:blank').hostname;
+    } catch {
+      domain = '';
+    }
+
+    // 3. Tab ownership check — skip for tools that operate without a specific tab
+    if (params['tabUrl'] && !SKIP_OWNERSHIP_TOOLS.has(name)) {
+      const tabUrl = params['tabUrl'] as string;
+      const tabId = this.tabOwnership.findByUrl(tabUrl);
+      if (tabId !== undefined) {
+        this.tabOwnership.assertOwnership(tabId);
+      }
+      // If tabId is undefined the tool handler will surface its own error;
+      // ownership enforcement only applies to tabs we know about.
+    }
+
+    // 4. Domain policy evaluation
+    const policy = this.domainPolicy.evaluate(url);
+
+    // 5. Rate limit check — check before recording so we don't consume quota on blocked calls
+    const limitCheck = this.rateLimiter.checkLimit(domain);
+    if (!limitCheck.allowed) {
+      throw new RateLimitedError(domain, policy.maxActionsPerMinute);
+    }
+    this.rateLimiter.recordAction(domain);
+
+    // 6. Circuit breaker check
+    if (this.circuitBreaker.isOpen(domain)) {
+      throw new CircuitBreakerOpenError(domain, 120);
+    }
+
+    // 7. Execute the tool, record circuit breaker outcome, and audit
+    try {
+      const result = await this.callTool(name, params);
+      this.circuitBreaker.recordSuccess(domain);
+
+      // 8. Audit log — success path
+      this.auditLog.record({
+        tool: name,
+        tabUrl: url,
+        engine: 'applescript',
+        params,
+        result: 'ok',
+        elapsed_ms: Date.now() - start,
+        session: this.sessionId,
+      });
+
+      return result;
+    } catch (error) {
+      this.circuitBreaker.recordFailure(domain);
+
+      // 8. Audit log — error path
+      this.auditLog.record({
+        tool: name,
+        tabUrl: url,
+        engine: 'applescript',
+        params,
+        result: 'error',
+        elapsed_ms: Date.now() - start,
+        session: this.sessionId,
+      });
+
+      throw error;
+    }
   }
 
   getSelectedEngine(requirements: ToolRequirements): Engine {
