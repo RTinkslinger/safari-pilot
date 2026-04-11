@@ -10,6 +10,12 @@ import { InteractionTools } from './tools/interaction.js';
 import { ExtractionTools } from './tools/extraction.js';
 import { NetworkTools } from './tools/network.js';
 import { StorageTools } from './tools/storage.js';
+import { ShadowTools } from './tools/shadow.js';
+import { FrameTools } from './tools/frames.js';
+import { PermissionTools } from './tools/permissions.js';
+import { ClipboardTools } from './tools/clipboard.js';
+import { ServiceWorkerTools } from './tools/service-workers.js';
+import { PerformanceTools } from './tools/performance.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -128,6 +134,12 @@ export class SafariPilotServer {
     const extractionTools = new ExtractionTools(engine);
     const networkTools = new NetworkTools(engine);
     const storageTools = new StorageTools(engine);
+    const shadowTools = new ShadowTools(engine);
+    const frameTools = new FrameTools(engine);
+    const permissionTools = new PermissionTools(engine);
+    const clipboardTools = new ClipboardTools(engine);
+    const serviceWorkerTools = new ServiceWorkerTools(engine);
+    const performanceTools = new PerformanceTools(engine);
 
     // Register all tools from all modules.
     // Each module may have getHandler returning Handler (NavigationTools) or Handler | undefined.
@@ -147,6 +159,12 @@ export class SafariPilotServer {
       extractionTools,
       networkTools,
       storageTools,
+      shadowTools,
+      frameTools,
+      permissionTools,
+      clipboardTools as unknown as ToolModule,
+      serviceWorkerTools as unknown as ToolModule,
+      performanceTools as unknown as ToolModule,
     ];
 
     for (const module of modules) {
