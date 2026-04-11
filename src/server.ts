@@ -4,6 +4,7 @@ import type { Engine, ToolResponse, ToolRequirements } from './types.js';
 import type { IEngine } from './engines/engine.js';
 import { selectEngine, EngineUnavailableError } from './engine-selector.js';
 import { AppleScriptEngine } from './engines/applescript.js';
+import { DaemonEngine } from './engines/daemon.js';
 import { NavigationTools } from './tools/navigation.js';
 import { InteractionTools } from './tools/interaction.js';
 import { ExtractionTools } from './tools/extraction.js';
@@ -88,7 +89,18 @@ export class SafariPilotServer {
   private _engine: AppleScriptEngine | null = null;
 
   async initialize(): Promise<void> {
-    // Instantiate the AppleScript engine
+    // Instantiate and probe the DaemonEngine first (fastest path)
+    const daemonEngine = new DaemonEngine();
+    const daemonAvailable = await daemonEngine.isAvailable();
+    this.setEngineAvailability({ daemon: daemonAvailable, extension: false });
+    if (daemonAvailable) {
+      this.engines.set('daemon', daemonEngine);
+    } else {
+      // Ensure daemon is cleaned up if it failed to start
+      await daemonEngine.shutdown();
+    }
+
+    // Instantiate the AppleScript engine (always available as fallback)
     const engine = new AppleScriptEngine();
     this._engine = engine;
 
