@@ -64,9 +64,11 @@ export class DaemonEngine extends BaseEngine {
       await this.ensureRunning();
       const response = await this.sendCommand('execute', { script }, timeout);
       if (response.ok) {
+        // Normalize: trim trailing whitespace (daemon may include trailing newline)
+        const value = response.value?.trimEnd();
         return {
           ok: true,
-          value: response.value,
+          value,
           elapsed_ms: Date.now() - start,
         };
       }
