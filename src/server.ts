@@ -16,6 +16,9 @@ import { PermissionTools } from './tools/permissions.js';
 import { ClipboardTools } from './tools/clipboard.js';
 import { ServiceWorkerTools } from './tools/service-workers.js';
 import { PerformanceTools } from './tools/performance.js';
+import { StructuredExtractionTools } from './tools/structured-extraction.js';
+import { WaitTools } from './tools/wait.js';
+import { CompoundTools } from './tools/compound.js';
 import { KillSwitch } from './security/kill-switch.js';
 import { TabOwnership } from './security/tab-ownership.js';
 import { AuditLog } from './security/audit-log.js';
@@ -174,6 +177,9 @@ export class SafariPilotServer {
     const clipboardTools = new ClipboardTools(engine);
     const serviceWorkerTools = new ServiceWorkerTools(engine);
     const performanceTools = new PerformanceTools(engine);
+    const structuredExtractionTools = new StructuredExtractionTools(engine);
+    const waitTools = new WaitTools(engine);
+    const compoundTools = new CompoundTools(engine);
 
     // Register all tools from all modules.
     // Each module may have getHandler returning Handler (NavigationTools) or Handler | undefined.
@@ -199,6 +205,9 @@ export class SafariPilotServer {
       clipboardTools as unknown as ToolModule,
       serviceWorkerTools as unknown as ToolModule,
       performanceTools as unknown as ToolModule,
+      structuredExtractionTools as unknown as ToolModule,
+      waitTools as unknown as ToolModule,
+      compoundTools as unknown as ToolModule,
     ];
 
     for (const module of modules) {
@@ -213,6 +222,28 @@ export class SafariPilotServer {
         });
       }
     }
+
+    // Emergency stop — system tool, registered directly (not via a module)
+    this.registerTool({
+      name: 'safari_emergency_stop',
+      description:
+        'Emergency stop — immediately close all agent-owned tabs, activate kill switch, and block all further automation.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          reason: { type: 'string', description: 'Reason for the emergency stop' },
+        },
+      },
+      requirements: {},
+      handler: async (params) => {
+        const reason = (params['reason'] as string | undefined) ?? 'emergency_stop called';
+        this.killSwitch.activate(reason);
+        return {
+          content: [{ type: 'text', text: JSON.stringify({ stopped: true, reason }) }],
+          metadata: { engine: 'applescript' as Engine, degraded: false, latencyMs: 0 },
+        };
+      },
+    });
   }
 
   private async handleHealthCheck(params: Record<string, unknown>): Promise<ToolResponse> {
