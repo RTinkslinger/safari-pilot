@@ -69,6 +69,12 @@ public final class LRUScriptCache: @unchecked Sendable {
     /// Number of entries currently in the cache (for testing).
     public var count: Int { store.count }
 
+    /// Evict all entries from the cache immediately.
+    public func clear() {
+        store.removeAll()
+        order.removeAll()
+    }
+
     // MARK: Private helpers
 
     private func touch(key: String) {
@@ -116,6 +122,14 @@ public final class AppleScriptExecutor: ScriptExecutorProtocol, @unchecked Senda
     public init() {}
 
     // MARK: Public API
+
+    /// Evict all cached compiled scripts immediately.
+    /// Safe to call from any thread — dispatches the eviction to the main thread.
+    public func clearCache() {
+        DispatchQueue.main.async {
+            self.cache.clear()
+        }
+    }
 
     public func execute(script: String, commandID: String) async -> Response {
         let start = Date()
