@@ -2,8 +2,20 @@
   "name": "safari-pilot",
   "version": "0.1.0",
   "description": "Native Safari browser automation for AI agents on macOS",
+  "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "files": [
+    "dist/",
+    "bin/",
+    "skills/",
+    "hooks/",
+    "extension/",
+    ".claude-plugin/",
+    ".mcp.json",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
@@ -12,7 +24,9 @@
     "test:integration": "vitest run test/integration/",
     "test:e2e": "vitest run test/e2e/",
     "test:security": "vitest run test/security/",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "postinstall": "scripts/postinstall.sh",
+    "prepublishOnly": "npm run build"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0"
