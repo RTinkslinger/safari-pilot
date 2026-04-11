@@ -126,6 +126,10 @@ test("testRejectsEmptyID") {
         "Expected NDJSONError.emptyID")
 }
 
+// MARK: - CommandDispatcher Tests (registered from CommandDispatcherTests.swift)
+
+registerCommandDispatcherTests()
+
 // MARK: - Results
 
 print("-----------------")
