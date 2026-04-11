@@ -38,13 +38,18 @@ beforeEach(() => {
 // ── Tool definitions ──────────────────────────────────────────────────────────
 
 describe('NetworkTools - tool definitions', () => {
-  it('registers 3 P0 network tools', () => {
+  it('registers 8 network tools (3 P0 + 5 P1)', () => {
     const defs = tools.getDefinitions();
-    expect(defs).toHaveLength(3);
+    expect(defs).toHaveLength(8);
     expect(defs.map(d => d.name)).toEqual([
       'safari_list_network_requests',
       'safari_get_network_request',
       'safari_intercept_requests',
+      'safari_network_throttle',
+      'safari_network_offline',
+      'safari_mock_request',
+      'safari_websocket_listen',
+      'safari_websocket_filter',
     ]);
   });
 
@@ -52,6 +57,11 @@ describe('NetworkTools - tool definitions', () => {
     'safari_list_network_requests',
     'safari_get_network_request',
     'safari_intercept_requests',
+    'safari_network_throttle',
+    'safari_network_offline',
+    'safari_mock_request',
+    'safari_websocket_listen',
+    'safari_websocket_filter',
   ];
 
   for (const name of expectedTools) {
@@ -291,6 +301,301 @@ describe('safari_intercept_requests', () => {
 
     const handler = tools.getHandler('safari_intercept_requests')!;
     await expect(handler({ tabUrl: 'https://example.com' })).rejects.toThrow('Intercept failed');
+  });
+});
+
+// ── safari_network_throttle ───────────────────────────────────────────────────
+
+describe('safari_network_throttle', () => {
+  it('requires tabUrl and latencyMs in schema', () => {
+    const def = tools.getDefinitions().find(d => d.name === 'safari_network_throttle')!;
+    const required = (def.inputSchema as { required: string[] }).required;
+    expect(required).toContain('tabUrl');
+    expect(required).toContain('latencyMs');
+  });
+
+  it('schema has optional downloadKbps param', () => {
+    const def = tools.getDefinitions().find(d => d.name === 'safari_network_throttle')!;
+    expect((def.inputSchema as any).properties).toHaveProperty('downloadKbps');
+  });
+
+  it('has requiresNetworkIntercept requirement', () => {
+    const def = tools.getDefinitions().find(d => d.name === 'safari_network_throttle')!;
+    expect(def.requirements.requiresNetworkIntercept).toBe(true);
+  });
+
+  it('returns enabled status on install', async () => {
+    mockEngine.executeJsInTab.mockResolvedValue(okResult(JSON.stringify({ status: 'enabled', latencyMs: 500, downloadKbps: null })));
+
+    const handler = tools.getHandler('safari_network_throttle')!;
+    const result = await handler({ tabUrl: 'https://example.com', latencyMs: 500 });
+    const parsed = JSON.parse(result.content[0].text!);
+
+    expect(parsed.status).toBe('enabled');
+    expect(parsed.latencyMs).toBe(500);
+  });
+
+  it('returns disabled status when latencyMs is 0', async () => {
+    mockEngine.executeJsInTab.mockResolvedValue(okResult(JSON.stringify({ status: 'disabled', latencyMs: 0, downloadKbps: null })));
+
+    const handler = tools.getHandler('safari_network_throttle')!;
+    const result = await handler({ tabUrl: 'https://example.com', latencyMs: 0 });
+    const parsed = JSON.parse(result.content[0].text!);
+
+    expect(parsed.status).toBe('disabled');
+  });
+
+  it('passes tabUrl to engine', async () => {
+    mockEngine.executeJsInTab.mockResolvedValue(okResult(JSON.stringify({ status: 'enabled', latencyMs: 100, downloadKbps: null })));
+
+    const handler = tools.getHandler('safari_network_throttle')!;
+    await handler({ tabUrl: 'https://example.com', latencyMs: 100 });
+
+    expect(mockEngine.executeJsInTab).toHaveBeenCalledWith('https://example.com', expect.any(String));
+  });
+
+  it('throws when engine returns error', async () => {
+    mockEngine.executeJsInTab.mockResolvedValue(errResult('Network throttle failed'));
+
+    const handler = tools.getHandler('safari_network_throttle')!;
+    await expect(handler({ tabUrl: 'https://example.com', latencyMs: 200 })).rejects.toThrow('Network throttle failed');
+  });
+});
+
+// ── safari_network_offline ────────────────────────────────────────────────────
+
+describe('safari_network_offline', () => {
+  it('requires tabUrl and offline in schema', () => {
+    const def = tools.getDefinitions().find(d => d.name === 'safari_network_offline')!;
+    const required = (def.inputSchema as { required: string[] }).required;
+    expect(required).toContain('tabUrl');
+    expect(required).toContain('offline');
+  });
+
+  it('returns offline: true when going offline', async () => {
+    mockEngine.executeJsInTab.mockResolvedValue(okResult(JSON.stringify({ offline: true })));
+
+    const handler = tools.getHandler('safari_network_offline')!;
+    const result = await handler({ tabUrl: 'https://example.com', offline: true });
+    const parsed = JSON.parse(result.content[0].text!);
+
+    expect(parsed.offline).toBe(true);
+  });
+
+  it('returns offline: false when restoring connectivity', async () => {
+    mockEngine.executeJsInTab.mockResolvedValue(okResult(JSON.stringify({ offline: false })));
+
+    const handler = tools.getHandler('safari_network_offline')!;
+    const result = await handler({ tabUrl: 'https://example.com', offline: false });
+    const parsed = JSON.parse(result.content[0].text!);
+
+    expect(parsed.offline).toBe(false);
+  });
+
+  it('passes tabUrl to engine', async () => {
+    mockEngine.executeJsInTab.mockResolvedValue(okResult(JSON.stringify({ offline: true })));
+
+    const handler = tools.getHandler('safari_network_offline')!;
+    await handler({ tabUrl: 'https://example.com', offline: true });
+
+    expect(mockEngine.executeJsInTab).toHaveBeenCalledWith('https://example.com', expect.any(String));
+  });
+
+  it('throws when engine returns error', async () => {
+    mockEngine.executeJsInTab.mockResolvedValue(errResult('Offline failed'));
+
+    const handler = tools.getHandler('safari_network_offline')!;
+    await expect(handler({ tabUrl: 'https://example.com', offline: true })).rejects.toThrow('Offline failed');
+  });
+});
+
+// ── safari_mock_request ───────────────────────────────────────────────────────
+
+describe('safari_mock_request', () => {
+  it('requires tabUrl and urlPattern in schema', () => {
+    const def = tools.getDefinitions().find(d => d.name === 'safari_mock_request')!;
+    const required = (def.inputSchema as { required: string[] }).required;
+    expect(required).toContain('tabUrl');
+    expect(required).toContain('urlPattern');
+  });
+
+  it('schema has optional response param with status, body, headers', () => {
+    const def = tools.getDefinitions().find(d => d.name === 'safari_mock_request')!;
+    const responseProps = (def.inputSchema as any).properties.response.properties;
+    expect(responseProps).toHaveProperty('status');
+    expect(responseProps).toHaveProperty('body');
+    expect(responseProps).toHaveProperty('headers');
+  });
+
+  it('returns installed status with mock info', async () => {
+    const data = { status: 'installed', urlPattern: '/api/users', response: { status: 200, body: '[]', headers: {} }, totalMocks: 1 };
+    mockEngine.executeJsInTab.mockResolvedValue(okResult(JSON.stringify(data)));
+
+    const handler = tools.getHandler('safari_mock_request')!;
+    const result = await handler({
+      tabUrl: 'https://example.com',
+      urlPattern: '/api/users',
+      response: { status: 200, body: '[]', headers: {} },
+    });
+    const parsed = JSON.parse(result.content[0].text!);
+
+    expect(parsed.status).toBe('installed');
+    expect(parsed.urlPattern).toBe('/api/users');
+    expect(parsed.totalMocks).toBe(1);
+  });
+
+  it('returns removed status when no response provided', async () => {
+    mockEngine.executeJsInTab.mockResolvedValue(okResult(JSON.stringify({ status: 'removed', urlPattern: '/api/users' })));
+
+    const handler = tools.getHandler('safari_mock_request')!;
+    const result = await handler({ tabUrl: 'https://example.com', urlPattern: '/api/users' });
+    const parsed = JSON.parse(result.content[0].text!);
+
+    expect(parsed.status).toBe('removed');
+  });
+
+  it('passes tabUrl to engine', async () => {
+    mockEngine.executeJsInTab.mockResolvedValue(okResult(JSON.stringify({ status: 'installed', urlPattern: '/api', totalMocks: 1 })));
+
+    const handler = tools.getHandler('safari_mock_request')!;
+    await handler({ tabUrl: 'https://example.com', urlPattern: '/api', response: { status: 404, body: '' } });
+
+    expect(mockEngine.executeJsInTab).toHaveBeenCalledWith('https://example.com', expect.any(String));
+  });
+
+  it('throws when engine returns error', async () => {
+    mockEngine.executeJsInTab.mockResolvedValue(errResult('Mock request failed'));
+
+    const handler = tools.getHandler('safari_mock_request')!;
+    await expect(handler({ tabUrl: 'https://example.com', urlPattern: '/api' })).rejects.toThrow('Mock request failed');
+  });
+});
+
+// ── safari_websocket_listen ───────────────────────────────────────────────────
+
+describe('safari_websocket_listen', () => {
+  it('requires tabUrl in schema', () => {
+    const def = tools.getDefinitions().find(d => d.name === 'safari_websocket_listen')!;
+    expect((def.inputSchema as { required: string[] }).required).toContain('tabUrl');
+  });
+
+  it('schema has optional urlPattern param', () => {
+    const def = tools.getDefinitions().find(d => d.name === 'safari_websocket_listen')!;
+    expect((def.inputSchema as any).properties).toHaveProperty('urlPattern');
+  });
+
+  it('has requiresNetworkIntercept requirement', () => {
+    const def = tools.getDefinitions().find(d => d.name === 'safari_websocket_listen')!;
+    expect(def.requirements.requiresNetworkIntercept).toBe(true);
+  });
+
+  it('returns installed status on first call', async () => {
+    mockEngine.executeJsInTab.mockResolvedValue(okResult(JSON.stringify({ status: 'installed', urlPattern: null })));
+
+    const handler = tools.getHandler('safari_websocket_listen')!;
+    const result = await handler({ tabUrl: 'https://example.com' });
+    const parsed = JSON.parse(result.content[0].text!);
+
+    expect(parsed.status).toBe('installed');
+  });
+
+  it('returns already_installed status on repeat call', async () => {
+    mockEngine.executeJsInTab.mockResolvedValue(okResult(JSON.stringify({ status: 'already_installed', buffered: 3 })));
+
+    const handler = tools.getHandler('safari_websocket_listen')!;
+    const result = await handler({ tabUrl: 'https://example.com' });
+    const parsed = JSON.parse(result.content[0].text!);
+
+    expect(parsed.status).toBe('already_installed');
+    expect(parsed.buffered).toBe(3);
+  });
+
+  it('passes tabUrl to engine', async () => {
+    mockEngine.executeJsInTab.mockResolvedValue(okResult(JSON.stringify({ status: 'installed', urlPattern: null })));
+
+    const handler = tools.getHandler('safari_websocket_listen')!;
+    await handler({ tabUrl: 'https://example.com' });
+
+    expect(mockEngine.executeJsInTab).toHaveBeenCalledWith('https://example.com', expect.any(String));
+  });
+
+  it('throws when engine returns error', async () => {
+    mockEngine.executeJsInTab.mockResolvedValue(errResult('WebSocket listen failed'));
+
+    const handler = tools.getHandler('safari_websocket_listen')!;
+    await expect(handler({ tabUrl: 'https://example.com' })).rejects.toThrow('WebSocket listen failed');
+  });
+});
+
+// ── safari_websocket_filter ───────────────────────────────────────────────────
+
+describe('safari_websocket_filter', () => {
+  it('requires tabUrl in schema', () => {
+    const def = tools.getDefinitions().find(d => d.name === 'safari_websocket_filter')!;
+    expect((def.inputSchema as { required: string[] }).required).toContain('tabUrl');
+  });
+
+  it('schema has optional pattern and direction params', () => {
+    const def = tools.getDefinitions().find(d => d.name === 'safari_websocket_filter')!;
+    const props = (def.inputSchema as any).properties;
+    expect(props).toHaveProperty('pattern');
+    expect(props).toHaveProperty('direction');
+  });
+
+  it('direction enum has sent, received, both', () => {
+    const def = tools.getDefinitions().find(d => d.name === 'safari_websocket_filter')!;
+    const dirEnum = (def.inputSchema as any).properties.direction.enum;
+    expect(dirEnum).toContain('sent');
+    expect(dirEnum).toContain('received');
+    expect(dirEnum).toContain('both');
+  });
+
+  it('returns filtered messages', async () => {
+    const data = {
+      messages: [
+        { direction: 'received', data: '{"type":"ping"}', timestamp: Date.now(), url: 'wss://example.com/ws' },
+      ],
+      count: 1,
+      total: 3,
+    };
+    mockEngine.executeJsInTab.mockResolvedValue(okResult(JSON.stringify(data)));
+
+    const handler = tools.getHandler('safari_websocket_filter')!;
+    const result = await handler({ tabUrl: 'https://example.com', direction: 'received' });
+    const parsed = JSON.parse(result.content[0].text!);
+
+    expect(parsed.messages).toHaveLength(1);
+    expect(parsed.messages[0].direction).toBe('received');
+    expect(parsed.count).toBe(1);
+    expect(parsed.total).toBe(3);
+  });
+
+  it('returns error note when listener not installed', async () => {
+    const data = { messages: [], count: 0, error: 'WebSocket listener not installed. Call safari_websocket_listen first.' };
+    mockEngine.executeJsInTab.mockResolvedValue(okResult(JSON.stringify(data)));
+
+    const handler = tools.getHandler('safari_websocket_filter')!;
+    const result = await handler({ tabUrl: 'https://example.com' });
+    const parsed = JSON.parse(result.content[0].text!);
+
+    expect(parsed.messages).toHaveLength(0);
+    expect(parsed.error).toBeDefined();
+  });
+
+  it('passes tabUrl to engine', async () => {
+    mockEngine.executeJsInTab.mockResolvedValue(okResult(JSON.stringify({ messages: [], count: 0, total: 0 })));
+
+    const handler = tools.getHandler('safari_websocket_filter')!;
+    await handler({ tabUrl: 'https://example.com' });
+
+    expect(mockEngine.executeJsInTab).toHaveBeenCalledWith('https://example.com', expect.any(String));
+  });
+
+  it('throws when engine returns error', async () => {
+    mockEngine.executeJsInTab.mockResolvedValue(errResult('WebSocket filter failed'));
+
+    const handler = tools.getHandler('safari_websocket_filter')!;
+    await expect(handler({ tabUrl: 'https://example.com' })).rejects.toThrow('WebSocket filter failed');
   });
 });
 

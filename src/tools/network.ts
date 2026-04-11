@@ -23,6 +23,11 @@ export class NetworkTools {
     this.handlers.set('safari_list_network_requests', this.handleListNetworkRequests.bind(this));
     this.handlers.set('safari_get_network_request', this.handleGetNetworkRequest.bind(this));
     this.handlers.set('safari_intercept_requests', this.handleInterceptRequests.bind(this));
+    this.handlers.set('safari_network_throttle', this.handleNetworkThrottle.bind(this));
+    this.handlers.set('safari_network_offline', this.handleNetworkOffline.bind(this));
+    this.handlers.set('safari_mock_request', this.handleMockRequest.bind(this));
+    this.handlers.set('safari_websocket_listen', this.handleWebSocketListen.bind(this));
+    this.handlers.set('safari_websocket_filter', this.handleWebSocketFilter.bind(this));
   }
 
   // ── Public API ──────────────────────────────────────────────────────────────
@@ -106,6 +111,117 @@ export class NetworkTools {
               type: 'number',
               description: 'Maximum intercepted entries to store in the buffer',
               default: 200,
+            },
+          },
+          required: ['tabUrl'],
+        },
+        requirements: {},
+      },
+      {
+        name: 'safari_network_throttle',
+        description:
+          'Simulate a slow network by monkey-patching fetch and XHR to add artificial latency and ' +
+          'optional bandwidth throttling. Must be called before the requests you want to throttle. ' +
+          'Uses MAIN world fetch/XHR patching — does NOT require declarativeNetRequest. ' +
+          'Call with latencyMs: 0 to remove throttling.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            tabUrl: { type: 'string', description: 'Current URL of the tab' },
+            latencyMs: {
+              type: 'number',
+              description: 'Artificial latency to add per request in milliseconds. Set to 0 to disable.',
+            },
+            downloadKbps: {
+              type: 'number',
+              description: 'Simulated download speed in kilobytes per second (optional). Omit for latency-only.',
+            },
+          },
+          required: ['tabUrl', 'latencyMs'],
+        },
+        requirements: { requiresNetworkIntercept: true },
+      },
+      {
+        name: 'safari_network_offline',
+        description:
+          'Simulate offline mode by making all fetch and XHR requests reject with a NetworkError. ' +
+          'Call with offline: false to restore connectivity. ' +
+          'Works by monkey-patching window.fetch and XMLHttpRequest in the MAIN world.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            tabUrl: { type: 'string', description: 'Current URL of the tab' },
+            offline: { type: 'boolean', description: 'true to go offline, false to restore connectivity' },
+          },
+          required: ['tabUrl', 'offline'],
+        },
+        requirements: {},
+      },
+      {
+        name: 'safari_mock_request',
+        description:
+          'Mock a specific URL\'s response so that any fetch or XHR to a matching URL returns the provided ' +
+          'status, body, and headers instead of making a real network request. ' +
+          'urlPattern is matched as a substring of the request URL. ' +
+          'Call without response to remove the mock for that pattern.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            tabUrl: { type: 'string', description: 'Current URL of the tab' },
+            urlPattern: { type: 'string', description: 'Substring to match against request URLs' },
+            response: {
+              type: 'object',
+              description: 'Mock response to return for matching requests',
+              properties: {
+                status: { type: 'number', description: 'HTTP status code', default: 200 },
+                body: { type: 'string', description: 'Response body string (JSON, text, etc.)' },
+                headers: {
+                  type: 'object',
+                  description: 'Response headers as key-value pairs',
+                  additionalProperties: { type: 'string' },
+                },
+              },
+            },
+          },
+          required: ['tabUrl', 'urlPattern'],
+        },
+        requirements: {},
+      },
+      {
+        name: 'safari_websocket_listen',
+        description:
+          'Install a WebSocket interceptor that captures sent and received messages. ' +
+          'Patches the global WebSocket constructor so all new connections are monitored. ' +
+          'Must be called before the WebSocket connection is established. ' +
+          'Retrieve captured messages with safari_websocket_filter.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            tabUrl: { type: 'string', description: 'Current URL of the tab' },
+            urlPattern: {
+              type: 'string',
+              description: 'Only capture WebSockets whose URL matches this substring. Omit to capture all.',
+            },
+          },
+          required: ['tabUrl'],
+        },
+        requirements: { requiresNetworkIntercept: true },
+      },
+      {
+        name: 'safari_websocket_filter',
+        description:
+          'Get captured WebSocket messages from the buffer installed by safari_websocket_listen. ' +
+          'Optionally filter by content pattern or message direction.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            tabUrl: { type: 'string', description: 'Current URL of the tab' },
+            pattern: { type: 'string', description: 'Filter messages whose data contains this substring' },
+            direction: {
+              type: 'string',
+              enum: ['sent', 'received', 'both'],
+              description: 'Filter by message direction',
+              default: 'both',
             },
           },
           required: ['tabUrl'],
@@ -369,6 +485,283 @@ export class NetworkTools {
 
     const result = await this.engine.executeJsInTab(tabUrl, js);
     if (!result.ok) throw new Error(result.error?.message ?? 'Intercept requests failed');
+
+    return this.makeResponse(result.value ? JSON.parse(result.value) : {}, Date.now() - start);
+  }
+
+  private async handleNetworkThrottle(params: Record<string, unknown>): Promise<ToolResponse> {
+    const start = Date.now();
+    const tabUrl = params['tabUrl'] as string;
+    const latencyMs = typeof params['latencyMs'] === 'number' ? params['latencyMs'] : 0;
+    const downloadKbps = typeof params['downloadKbps'] === 'number' ? params['downloadKbps'] : null;
+
+    const js = `
+      var latencyMs = ${latencyMs};
+      var downloadKbps = ${downloadKbps !== null ? downloadKbps : 'null'};
+
+      if (!window.__safariPilotThrottle) {
+        window.__safariPilotThrottle = { origFetch: window.fetch, origOpen: XMLHttpRequest.prototype.open, origSend: XMLHttpRequest.prototype.send };
+      }
+
+      if (latencyMs === 0 && downloadKbps === null) {
+        // Remove throttling — restore originals
+        window.fetch = window.__safariPilotThrottle.origFetch;
+        XMLHttpRequest.prototype.open = window.__safariPilotThrottle.origOpen;
+        XMLHttpRequest.prototype.send = window.__safariPilotThrottle.origSend;
+        return { status: 'disabled', latencyMs: 0, downloadKbps: null };
+      }
+
+      var origFetch = window.__safariPilotThrottle.origFetch;
+      window.fetch = function(input, init) {
+        return new Promise(function(resolve) {
+          setTimeout(function() { resolve(null); }, latencyMs);
+        }).then(function() {
+          return origFetch.apply(window, [input, init]).then(function(response) {
+            if (!downloadKbps) return response;
+            // Simulate bandwidth by reading the body and delaying proportionally
+            return response.clone().arrayBuffer().then(function(buf) {
+              var bytes = buf.byteLength;
+              var delayMs = (bytes / (downloadKbps * 1024)) * 1000;
+              return new Promise(function(resolve) {
+                setTimeout(function() { resolve(response); }, delayMs);
+              });
+            });
+          });
+        });
+      };
+
+      var origXhrSend = window.__safariPilotThrottle.origSend;
+      XMLHttpRequest.prototype.send = function(body) {
+        var self = this;
+        setTimeout(function() {
+          origXhrSend.call(self, body);
+        }, latencyMs);
+      };
+
+      return { status: 'enabled', latencyMs: latencyMs, downloadKbps: downloadKbps };
+    `;
+
+    const result = await this.engine.executeJsInTab(tabUrl, js);
+    if (!result.ok) throw new Error(result.error?.message ?? 'Network throttle failed');
+
+    return this.makeResponse(result.value ? JSON.parse(result.value) : {}, Date.now() - start);
+  }
+
+  private async handleNetworkOffline(params: Record<string, unknown>): Promise<ToolResponse> {
+    const start = Date.now();
+    const tabUrl = params['tabUrl'] as string;
+    const offline = params['offline'] === true;
+
+    const js = `
+      var offline = ${offline};
+
+      if (!window.__safariPilotOffline) {
+        window.__safariPilotOffline = { origFetch: window.fetch, origOpen: XMLHttpRequest.prototype.open };
+      }
+
+      if (!offline) {
+        // Restore connectivity
+        window.fetch = window.__safariPilotOffline.origFetch;
+        XMLHttpRequest.prototype.open = window.__safariPilotOffline.origOpen;
+        return { offline: false };
+      }
+
+      // Intercept fetch
+      window.fetch = function() {
+        return Promise.reject(Object.assign(new TypeError('Failed to fetch'), { name: 'NetworkError' }));
+      };
+
+      // Intercept XHR
+      var origXhrOpen = window.__safariPilotOffline.origOpen;
+      XMLHttpRequest.prototype.open = function() {
+        var self = this;
+        origXhrOpen.apply(this, arguments);
+        setTimeout(function() {
+          self.dispatchEvent(new ProgressEvent('error'));
+        }, 0);
+      };
+
+      return { offline: true };
+    `;
+
+    const result = await this.engine.executeJsInTab(tabUrl, js);
+    if (!result.ok) throw new Error(result.error?.message ?? 'Network offline failed');
+
+    return this.makeResponse(result.value ? JSON.parse(result.value) : {}, Date.now() - start);
+  }
+
+  private async handleMockRequest(params: Record<string, unknown>): Promise<ToolResponse> {
+    const start = Date.now();
+    const tabUrl = params['tabUrl'] as string;
+    const urlPattern = params['urlPattern'] as string;
+    const response = params['response'] as Record<string, unknown> | undefined;
+
+    const escapedPattern = urlPattern.replace(/'/g, "\\'");
+    const responseJson = response ? JSON.stringify(response).replace(/\\/g, '\\\\').replace(/`/g, '\\`') : 'null';
+
+    const js = `
+      var urlPattern = '${escapedPattern}';
+      var mockResponse = ${responseJson !== 'null' ? `JSON.parse(\`${responseJson}\`)` : 'null'};
+
+      if (!window.__safariPilotMocks) {
+        window.__safariPilotMocks = {};
+
+        // Patch fetch once
+        var origFetch = window.fetch;
+        window.fetch = function(input, init) {
+          var reqUrl = typeof input === 'string' ? input : (input && input.url ? input.url : String(input));
+          var matched = null;
+          var patterns = Object.keys(window.__safariPilotMocks);
+          for (var i = 0; i < patterns.length; i++) {
+            if (reqUrl.indexOf(patterns[i]) !== -1) { matched = patterns[i]; break; }
+          }
+          if (matched !== null) {
+            var mock = window.__safariPilotMocks[matched];
+            var status = mock.status || 200;
+            var body = mock.body || '';
+            var headers = mock.headers || {};
+            var resp = new Response(body, { status: status, headers: headers });
+            return Promise.resolve(resp);
+          }
+          return origFetch.apply(this, arguments);
+        };
+
+        // Patch XHR once
+        var origOpen = XMLHttpRequest.prototype.open;
+        var origSend = XMLHttpRequest.prototype.send;
+        XMLHttpRequest.prototype.open = function(method, xhrUrl) {
+          this.__safariMockUrl = String(xhrUrl);
+          return origOpen.apply(this, arguments);
+        };
+        XMLHttpRequest.prototype.send = function(body) {
+          var reqUrl = this.__safariMockUrl || '';
+          var matched = null;
+          var patterns = Object.keys(window.__safariPilotMocks);
+          for (var i = 0; i < patterns.length; i++) {
+            if (reqUrl.indexOf(patterns[i]) !== -1) { matched = patterns[i]; break; }
+          }
+          if (matched !== null) {
+            var mock = window.__safariPilotMocks[matched];
+            var self = this;
+            Object.defineProperty(self, 'status', { get: function() { return mock.status || 200; }, configurable: true });
+            Object.defineProperty(self, 'responseText', { get: function() { return mock.body || ''; }, configurable: true });
+            Object.defineProperty(self, 'readyState', { get: function() { return 4; }, configurable: true });
+            setTimeout(function() { self.dispatchEvent(new ProgressEvent('load')); self.dispatchEvent(new ProgressEvent('loadend')); }, 0);
+            return;
+          }
+          return origSend.apply(this, arguments);
+        };
+      }
+
+      if (mockResponse === null) {
+        delete window.__safariPilotMocks[urlPattern];
+        return { status: 'removed', urlPattern: urlPattern };
+      }
+
+      window.__safariPilotMocks[urlPattern] = mockResponse;
+      return { status: 'installed', urlPattern: urlPattern, response: mockResponse, totalMocks: Object.keys(window.__safariPilotMocks).length };
+    `;
+
+    const result = await this.engine.executeJsInTab(tabUrl, js);
+    if (!result.ok) throw new Error(result.error?.message ?? 'Mock request failed');
+
+    return this.makeResponse(result.value ? JSON.parse(result.value) : {}, Date.now() - start);
+  }
+
+  private async handleWebSocketListen(params: Record<string, unknown>): Promise<ToolResponse> {
+    const start = Date.now();
+    const tabUrl = params['tabUrl'] as string;
+    const urlPattern = params['urlPattern'] as string | undefined;
+
+    const escapedPattern = urlPattern ? urlPattern.replace(/'/g, "\\'") : '';
+
+    const js = `
+      var urlPattern = ${urlPattern ? `'${escapedPattern}'` : 'null'};
+
+      if (window.__safariPilotWS && window.__safariPilotWS.installed) {
+        return { status: 'already_installed', buffered: window.__safariPilotWS.messages.length };
+      }
+
+      window.__safariPilotWS = { messages: [], installed: false, urlPattern: urlPattern };
+
+      var OrigWebSocket = window.WebSocket;
+      function PatchedWebSocket(url, protocols) {
+        var ws = protocols !== undefined ? new OrigWebSocket(url, protocols) : new OrigWebSocket(url);
+        var shouldCapture = !urlPattern || String(url).indexOf(urlPattern) !== -1;
+
+        if (shouldCapture) {
+          var origSend = ws.send.bind(ws);
+          ws.send = function(data) {
+            window.__safariPilotWS.messages.push({
+              direction: 'sent',
+              data: typeof data === 'string' ? data : '[binary]',
+              timestamp: Date.now(),
+              url: String(url),
+            });
+            return origSend(data);
+          };
+
+          ws.addEventListener('message', function(event) {
+            window.__safariPilotWS.messages.push({
+              direction: 'received',
+              data: typeof event.data === 'string' ? event.data : '[binary]',
+              timestamp: Date.now(),
+              url: String(url),
+            });
+          });
+        }
+
+        return ws;
+      }
+
+      PatchedWebSocket.prototype = OrigWebSocket.prototype;
+      PatchedWebSocket.CONNECTING = OrigWebSocket.CONNECTING;
+      PatchedWebSocket.OPEN = OrigWebSocket.OPEN;
+      PatchedWebSocket.CLOSING = OrigWebSocket.CLOSING;
+      PatchedWebSocket.CLOSED = OrigWebSocket.CLOSED;
+      window.WebSocket = PatchedWebSocket;
+      window.__safariPilotWS.installed = true;
+
+      return { status: 'installed', urlPattern: urlPattern };
+    `;
+
+    const result = await this.engine.executeJsInTab(tabUrl, js);
+    if (!result.ok) throw new Error(result.error?.message ?? 'WebSocket listen failed');
+
+    return this.makeResponse(result.value ? JSON.parse(result.value) : {}, Date.now() - start);
+  }
+
+  private async handleWebSocketFilter(params: Record<string, unknown>): Promise<ToolResponse> {
+    const start = Date.now();
+    const tabUrl = params['tabUrl'] as string;
+    const pattern = params['pattern'] as string | undefined;
+    const direction = (params['direction'] as string | undefined) ?? 'both';
+
+    const escapedPattern = pattern ? pattern.replace(/'/g, "\\'") : '';
+
+    const js = `
+      var filterPattern = ${pattern ? `'${escapedPattern}'` : 'null'};
+      var filterDirection = '${direction}';
+
+      if (!window.__safariPilotWS) {
+        return { messages: [], count: 0, error: 'WebSocket listener not installed. Call safari_websocket_listen first.' };
+      }
+
+      var msgs = window.__safariPilotWS.messages.slice();
+
+      if (filterDirection !== 'both') {
+        msgs = msgs.filter(function(m) { return m.direction === filterDirection; });
+      }
+
+      if (filterPattern) {
+        msgs = msgs.filter(function(m) { return String(m.data).indexOf(filterPattern) !== -1; });
+      }
+
+      return { messages: msgs, count: msgs.length, total: window.__safariPilotWS.messages.length };
+    `;
+
+    const result = await this.engine.executeJsInTab(tabUrl, js);
+    if (!result.ok) throw new Error(result.error?.message ?? 'WebSocket filter failed');
 
     return this.makeResponse(result.value ? JSON.parse(result.value) : {}, Date.now() - start);
   }

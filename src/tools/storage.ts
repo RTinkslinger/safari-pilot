@@ -25,6 +25,12 @@ export class StorageTools {
     this.handlers.set('safari_delete_cookie', this.handleDeleteCookie.bind(this));
     this.handlers.set('safari_storage_state_export', this.handleStorageStateExport.bind(this));
     this.handlers.set('safari_storage_state_import', this.handleStorageStateImport.bind(this));
+    this.handlers.set('safari_local_storage_get', this.handleLocalStorageGet.bind(this));
+    this.handlers.set('safari_local_storage_set', this.handleLocalStorageSet.bind(this));
+    this.handlers.set('safari_session_storage_get', this.handleSessionStorageGet.bind(this));
+    this.handlers.set('safari_session_storage_set', this.handleSessionStorageSet.bind(this));
+    this.handlers.set('safari_idb_list', this.handleIdbList.bind(this));
+    this.handlers.set('safari_idb_get', this.handleIdbGet.bind(this));
   }
 
   // ── Public API ──────────────────────────────────────────────────────────────
@@ -138,6 +144,103 @@ export class StorageTools {
             },
           },
           required: ['tabUrl', 'state'],
+        },
+        requirements: {},
+      },
+      {
+        name: 'safari_local_storage_get',
+        description: 'Get a single localStorage value by key from the current page.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            tabUrl: { type: 'string', description: 'URL of the tab' },
+            key: { type: 'string', description: 'localStorage key to retrieve' },
+          },
+          required: ['tabUrl', 'key'],
+        },
+        requirements: {},
+      },
+      {
+        name: 'safari_local_storage_set',
+        description: 'Set a localStorage key to the given value on the current page.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            tabUrl: { type: 'string', description: 'URL of the tab' },
+            key: { type: 'string', description: 'localStorage key to set' },
+            value: { type: 'string', description: 'Value to store (will be coerced to string by localStorage)' },
+          },
+          required: ['tabUrl', 'key', 'value'],
+        },
+        requirements: {},
+      },
+      {
+        name: 'safari_session_storage_get',
+        description: 'Get a single sessionStorage value by key from the current page.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            tabUrl: { type: 'string', description: 'URL of the tab' },
+            key: { type: 'string', description: 'sessionStorage key to retrieve' },
+          },
+          required: ['tabUrl', 'key'],
+        },
+        requirements: {},
+      },
+      {
+        name: 'safari_session_storage_set',
+        description: 'Set a sessionStorage key to the given value on the current page.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            tabUrl: { type: 'string', description: 'URL of the tab' },
+            key: { type: 'string', description: 'sessionStorage key to set' },
+            value: { type: 'string', description: 'Value to store' },
+          },
+          required: ['tabUrl', 'key', 'value'],
+        },
+        requirements: {},
+      },
+      {
+        name: 'safari_idb_list',
+        description:
+          'List all IndexedDB databases available on the current origin. ' +
+          'Returns an array of database descriptors with name and version.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            tabUrl: { type: 'string', description: 'URL of the tab' },
+          },
+          required: ['tabUrl'],
+        },
+        requirements: {},
+      },
+      {
+        name: 'safari_idb_get',
+        description:
+          'Read records from an IndexedDB object store. ' +
+          'Optionally filter with a key range query. ' +
+          'Returns up to 100 records by default.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            tabUrl: { type: 'string', description: 'URL of the tab' },
+            database: { type: 'string', description: 'IndexedDB database name' },
+            store: { type: 'string', description: 'Object store name within the database' },
+            query: {
+              type: 'object',
+              description: 'Optional key range query',
+              properties: {
+                lower: { description: 'Lower bound of key range (any serializable value)' },
+                upper: { description: 'Upper bound of key range (any serializable value)' },
+                lowerOpen: { type: 'boolean', description: 'Exclude lower bound', default: false },
+                upperOpen: { type: 'boolean', description: 'Exclude upper bound', default: false },
+                only: { description: 'Exact key to retrieve (overrides lower/upper)' },
+              },
+            },
+            limit: { type: 'number', description: 'Maximum records to return', default: 100 },
+          },
+          required: ['tabUrl', 'database', 'store'],
         },
         requirements: {},
       },
@@ -423,6 +526,213 @@ export class StorageTools {
     if (!result.ok) throw new Error(result.error?.message ?? 'Storage state import failed');
 
     return this.makeResponse(result.value ? JSON.parse(result.value) : {}, Date.now() - start);
+  }
+
+  private async handleLocalStorageGet(params: Record<string, unknown>): Promise<ToolResponse> {
+    const start = Date.now();
+    const tabUrl = params['tabUrl'] as string;
+    const key = params['key'] as string;
+
+    const escapedKey = key.replace(/'/g, "\\'");
+
+    const js = `
+      var key = '${escapedKey}';
+      var value = null;
+      var exists = false;
+      try {
+        value = localStorage.getItem(key);
+        exists = value !== null;
+      } catch (e) {
+        throw new Error('localStorage not available: ' + e.message);
+      }
+      return { key: key, value: value, exists: exists };
+    `;
+
+    const result = await this.engine.executeJsInTab(tabUrl, js);
+    if (!result.ok) throw new Error(result.error?.message ?? 'localStorage get failed');
+
+    return this.makeResponse(result.value ? JSON.parse(result.value) : {}, Date.now() - start);
+  }
+
+  private async handleLocalStorageSet(params: Record<string, unknown>): Promise<ToolResponse> {
+    const start = Date.now();
+    const tabUrl = params['tabUrl'] as string;
+    const key = params['key'] as string;
+    const value = params['value'] as string;
+
+    const escapedKey = key.replace(/'/g, "\\'");
+    const escapedValue = value.replace(/'/g, "\\'");
+
+    const js = `
+      var key = '${escapedKey}';
+      var value = '${escapedValue}';
+      try {
+        localStorage.setItem(key, value);
+      } catch (e) {
+        throw new Error('localStorage set failed: ' + e.message);
+      }
+      return { key: key, value: value, set: true };
+    `;
+
+    const result = await this.engine.executeJsInTab(tabUrl, js);
+    if (!result.ok) throw new Error(result.error?.message ?? 'localStorage set failed');
+
+    return this.makeResponse(result.value ? JSON.parse(result.value) : {}, Date.now() - start);
+  }
+
+  private async handleSessionStorageGet(params: Record<string, unknown>): Promise<ToolResponse> {
+    const start = Date.now();
+    const tabUrl = params['tabUrl'] as string;
+    const key = params['key'] as string;
+
+    const escapedKey = key.replace(/'/g, "\\'");
+
+    const js = `
+      var key = '${escapedKey}';
+      var value = null;
+      var exists = false;
+      try {
+        value = sessionStorage.getItem(key);
+        exists = value !== null;
+      } catch (e) {
+        throw new Error('sessionStorage not available: ' + e.message);
+      }
+      return { key: key, value: value, exists: exists };
+    `;
+
+    const result = await this.engine.executeJsInTab(tabUrl, js);
+    if (!result.ok) throw new Error(result.error?.message ?? 'sessionStorage get failed');
+
+    return this.makeResponse(result.value ? JSON.parse(result.value) : {}, Date.now() - start);
+  }
+
+  private async handleSessionStorageSet(params: Record<string, unknown>): Promise<ToolResponse> {
+    const start = Date.now();
+    const tabUrl = params['tabUrl'] as string;
+    const key = params['key'] as string;
+    const value = params['value'] as string;
+
+    const escapedKey = key.replace(/'/g, "\\'");
+    const escapedValue = value.replace(/'/g, "\\'");
+
+    const js = `
+      var key = '${escapedKey}';
+      var value = '${escapedValue}';
+      try {
+        sessionStorage.setItem(key, value);
+      } catch (e) {
+        throw new Error('sessionStorage set failed: ' + e.message);
+      }
+      return { key: key, value: value, set: true };
+    `;
+
+    const result = await this.engine.executeJsInTab(tabUrl, js);
+    if (!result.ok) throw new Error(result.error?.message ?? 'sessionStorage set failed');
+
+    return this.makeResponse(result.value ? JSON.parse(result.value) : {}, Date.now() - start);
+  }
+
+  private async handleIdbList(params: Record<string, unknown>): Promise<ToolResponse> {
+    const start = Date.now();
+    const tabUrl = params['tabUrl'] as string;
+
+    const js = `
+      return new Promise(function(resolve, reject) {
+        if (!indexedDB.databases) {
+          // Fallback: indexedDB.databases() not available in all environments
+          resolve({ databases: [], count: 0, note: 'indexedDB.databases() not supported in this context' });
+          return;
+        }
+        indexedDB.databases().then(function(dbs) {
+          resolve({ databases: dbs.map(function(db) { return { name: db.name, version: db.version }; }), count: dbs.length });
+        }).catch(function(err) {
+          reject(err);
+        });
+      });
+    `;
+
+    const result = await this.engine.executeJsInTab(tabUrl, js);
+    if (!result.ok) throw new Error(result.error?.message ?? 'IndexedDB list failed');
+
+    return this.makeResponse(result.value ? JSON.parse(result.value) : { databases: [], count: 0 }, Date.now() - start);
+  }
+
+  private async handleIdbGet(params: Record<string, unknown>): Promise<ToolResponse> {
+    const start = Date.now();
+    const tabUrl = params['tabUrl'] as string;
+    const database = params['database'] as string;
+    const store = params['store'] as string;
+    const query = params['query'] as Record<string, unknown> | undefined;
+    const limit = typeof params['limit'] === 'number' ? params['limit'] : 100;
+
+    const queryJson = query ? JSON.stringify(query).replace(/\\/g, '\\\\').replace(/`/g, '\\`') : 'null';
+
+    const js = `
+      var dbName = ${JSON.stringify(database)};
+      var storeName = ${JSON.stringify(store)};
+      var queryParam = ${queryJson !== 'null' ? `JSON.parse(\`${queryJson}\`)` : 'null'};
+      var limit = ${limit};
+
+      return new Promise(function(resolve, reject) {
+        var req = indexedDB.open(dbName);
+        req.onerror = function() { reject(new Error('Failed to open database: ' + dbName)); };
+        req.onsuccess = function(event) {
+          var db = event.target.result;
+          if (!db.objectStoreNames.contains(storeName)) {
+            db.close();
+            reject(new Error('Object store not found: ' + storeName));
+            return;
+          }
+
+          var tx = db.transaction([storeName], 'readonly');
+          var objectStore = tx.objectStore(storeName);
+
+          // Build key range if query provided
+          var keyRange = null;
+          if (queryParam) {
+            try {
+              if (queryParam.only !== undefined) {
+                keyRange = IDBKeyRange.only(queryParam.only);
+              } else if (queryParam.lower !== undefined && queryParam.upper !== undefined) {
+                keyRange = IDBKeyRange.bound(queryParam.lower, queryParam.upper, !!queryParam.lowerOpen, !!queryParam.upperOpen);
+              } else if (queryParam.lower !== undefined) {
+                keyRange = IDBKeyRange.lowerBound(queryParam.lower, !!queryParam.lowerOpen);
+              } else if (queryParam.upper !== undefined) {
+                keyRange = IDBKeyRange.upperBound(queryParam.upper, !!queryParam.upperOpen);
+              }
+            } catch(e) {
+              db.close();
+              reject(new Error('Invalid key range: ' + e.message));
+              return;
+            }
+          }
+
+          var records = [];
+          var cursorReq = keyRange ? objectStore.openCursor(keyRange) : objectStore.openCursor();
+
+          cursorReq.onerror = function() {
+            db.close();
+            reject(new Error('Cursor error on store: ' + storeName));
+          };
+
+          cursorReq.onsuccess = function(event) {
+            var cursor = event.target.result;
+            if (cursor && records.length < limit) {
+              records.push({ key: cursor.key, value: cursor.value });
+              cursor.continue();
+            } else {
+              db.close();
+              resolve({ records: records, count: records.length, database: dbName, store: storeName });
+            }
+          };
+        };
+      });
+    `;
+
+    const result = await this.engine.executeJsInTab(tabUrl, js);
+    if (!result.ok) throw new Error(result.error?.message ?? 'IndexedDB get failed');
+
+    return this.makeResponse(result.value ? JSON.parse(result.value) : { records: [], count: 0 }, Date.now() - start);
   }
 
   // ── Private helpers ─────────────────────────────────────────────────────────

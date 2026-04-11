@@ -31,6 +31,7 @@ export class InteractionTools {
     this.handlers.set('safari_press_key', this.handlePressKey.bind(this));
     this.handlers.set('safari_scroll', this.handleScroll.bind(this));
     this.handlers.set('safari_drag', this.handleDrag.bind(this));
+    this.handlers.set('safari_handle_dialog', this.handleHandleDialog.bind(this));
   }
 
   // ── Public API ──────────────────────────────────────────────────────────────
@@ -208,6 +209,36 @@ export class InteractionTools {
           required: ['tabUrl', 'sourceSelector', 'targetSelector'],
         },
         requirements: {},
+      },
+      {
+        name: 'safari_handle_dialog',
+        description:
+          'Install a proactive dialog interceptor that automatically handles alert, confirm, and prompt dialogs. ' +
+          'MUST be called BEFORE the action that triggers the dialog — dialogs block JavaScript execution ' +
+          'so they cannot be handled reactively. Patches window.alert, window.confirm, and window.prompt. ' +
+          'Use action: "accept" to confirm/ok dialogs, "dismiss" to cancel. ' +
+          'For prompts, provide promptText to set the return value.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            tabUrl: { type: 'string', description: 'Current URL of the tab' },
+            autoHandle: {
+              type: 'boolean',
+              description: 'Must be true to install the interceptor. Set to false to restore native dialogs.',
+            },
+            action: {
+              type: 'string',
+              enum: ['accept', 'dismiss'],
+              description: 'How to handle dialogs: accept (ok/confirm) or dismiss (cancel)',
+            },
+            promptText: {
+              type: 'string',
+              description: 'Text to return from prompt() dialogs when action is accept',
+            },
+          },
+          required: ['tabUrl', 'autoHandle', 'action'],
+        },
+        requirements: { requiresDialogIntercept: true },
       },
     ];
   }
@@ -617,6 +648,61 @@ export class InteractionTools {
     if (!result.ok) throw new Error(result.error?.message ?? 'Drag failed');
 
     return this.makeResponse(result.value ? JSON.parse(result.value) : { dragged: true }, Date.now() - start);
+  }
+
+  private async handleHandleDialog(params: Record<string, unknown>): Promise<ToolResponse> {
+    const start = Date.now();
+    const tabUrl = params['tabUrl'] as string;
+    const autoHandle = params['autoHandle'] === true;
+    const action = (params['action'] as string | undefined) ?? 'accept';
+    const promptText = (params['promptText'] as string | undefined) ?? '';
+
+    const escapedPromptText = promptText.replace(/'/g, "\\'");
+
+    const js = `
+      var autoHandle = ${autoHandle};
+      var action = '${action}';
+      var promptText = '${escapedPromptText}';
+
+      if (!window.__safariPilotDialogs) {
+        window.__safariPilotDialogs = {
+          origAlert: window.alert,
+          origConfirm: window.confirm,
+          origPrompt: window.prompt,
+          intercepted: [],
+        };
+      }
+
+      if (!autoHandle) {
+        // Restore native dialogs
+        window.alert = window.__safariPilotDialogs.origAlert;
+        window.confirm = window.__safariPilotDialogs.origConfirm;
+        window.prompt = window.__safariPilotDialogs.origPrompt;
+        return { status: 'restored', intercepted: window.__safariPilotDialogs.intercepted.length };
+      }
+
+      window.alert = function(message) {
+        window.__safariPilotDialogs.intercepted.push({ type: 'alert', message: String(message), timestamp: Date.now() });
+        // alert returns undefined — no-op
+      };
+
+      window.confirm = function(message) {
+        window.__safariPilotDialogs.intercepted.push({ type: 'confirm', message: String(message), action: action, timestamp: Date.now() });
+        return action === 'accept';
+      };
+
+      window.prompt = function(message, defaultValue) {
+        window.__safariPilotDialogs.intercepted.push({ type: 'prompt', message: String(message), action: action, returnValue: action === 'accept' ? promptText : null, timestamp: Date.now() });
+        return action === 'accept' ? promptText : null;
+      };
+
+      return { status: 'installed', action: action, promptText: promptText };
+    `;
+
+    const result = await this.engine.executeJsInTab(tabUrl, js);
+    if (!result.ok) throw new Error(result.error?.message ?? 'Handle dialog failed');
+
+    return this.makeResponse(result.value ? JSON.parse(result.value) : { status: 'installed' }, Date.now() - start);
   }
 
   // ── Private helpers ─────────────────────────────────────────────────────────

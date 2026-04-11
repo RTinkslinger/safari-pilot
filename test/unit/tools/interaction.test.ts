@@ -38,8 +38,8 @@ beforeEach(() => {
 // ── Tool definitions ──────────────────────────────────────────────────────────
 
 describe('InteractionTools - tool definitions', () => {
-  it('registers 10 P0 interaction tools', () => {
-    expect(tools.getDefinitions()).toHaveLength(10);
+  it('registers 11 interaction tools (10 P0 + 1 P1)', () => {
+    expect(tools.getDefinitions()).toHaveLength(11);
   });
 
   const expectedTools = [
@@ -53,6 +53,7 @@ describe('InteractionTools - tool definitions', () => {
     'safari_press_key',
     'safari_scroll',
     'safari_drag',
+    'safari_handle_dialog',
   ];
 
   for (const name of expectedTools) {
@@ -392,6 +393,117 @@ describe('safari_drag', () => {
     expect(data.dragged).toBe(true);
     expect(data.source.id).toBe('item1');
     expect(data.target.id).toBe('bucket');
+  });
+});
+
+// ── safari_handle_dialog ──────────────────────────────────────────────────────
+
+describe('safari_handle_dialog', () => {
+  it('requires tabUrl, autoHandle, and action in schema', () => {
+    const def = tools.getDefinitions().find(d => d.name === 'safari_handle_dialog')!;
+    const required = (def.inputSchema as { required: string[] }).required;
+    expect(required).toContain('tabUrl');
+    expect(required).toContain('autoHandle');
+    expect(required).toContain('action');
+  });
+
+  it('schema has optional promptText param', () => {
+    const def = tools.getDefinitions().find(d => d.name === 'safari_handle_dialog')!;
+    expect((def.inputSchema as any).properties).toHaveProperty('promptText');
+  });
+
+  it('action enum has accept and dismiss', () => {
+    const def = tools.getDefinitions().find(d => d.name === 'safari_handle_dialog')!;
+    const actionEnum = (def.inputSchema as any).properties.action.enum;
+    expect(actionEnum).toContain('accept');
+    expect(actionEnum).toContain('dismiss');
+  });
+
+  it('has requiresDialogIntercept requirement', () => {
+    const def = tools.getDefinitions().find(d => d.name === 'safari_handle_dialog')!;
+    expect(def.requirements.requiresDialogIntercept).toBe(true);
+  });
+
+  it('returns installed status when autoHandle is true', async () => {
+    mockEngine.executeJsInTab.mockResolvedValue(
+      okResult(JSON.stringify({ status: 'installed', action: 'accept', promptText: '' })),
+    );
+
+    const handler = tools.getHandler('safari_handle_dialog')!;
+    const result = await handler({ tabUrl: 'https://example.com', autoHandle: true, action: 'accept' });
+    const parsed = JSON.parse(result.content[0].text!);
+
+    expect(parsed.status).toBe('installed');
+    expect(parsed.action).toBe('accept');
+  });
+
+  it('returns restored status when autoHandle is false', async () => {
+    mockEngine.executeJsInTab.mockResolvedValue(
+      okResult(JSON.stringify({ status: 'restored', intercepted: 2 })),
+    );
+
+    const handler = tools.getHandler('safari_handle_dialog')!;
+    const result = await handler({ tabUrl: 'https://example.com', autoHandle: false, action: 'dismiss' });
+    const parsed = JSON.parse(result.content[0].text!);
+
+    expect(parsed.status).toBe('restored');
+    expect(parsed.intercepted).toBe(2);
+  });
+
+  it('supports dismiss action', async () => {
+    mockEngine.executeJsInTab.mockResolvedValue(
+      okResult(JSON.stringify({ status: 'installed', action: 'dismiss', promptText: '' })),
+    );
+
+    const handler = tools.getHandler('safari_handle_dialog')!;
+    const result = await handler({ tabUrl: 'https://example.com', autoHandle: true, action: 'dismiss' });
+    const parsed = JSON.parse(result.content[0].text!);
+
+    expect(parsed.action).toBe('dismiss');
+  });
+
+  it('supports promptText for prompt dialogs', async () => {
+    mockEngine.executeJsInTab.mockResolvedValue(
+      okResult(JSON.stringify({ status: 'installed', action: 'accept', promptText: 'my answer' })),
+    );
+
+    const handler = tools.getHandler('safari_handle_dialog')!;
+    const result = await handler({ tabUrl: 'https://example.com', autoHandle: true, action: 'accept', promptText: 'my answer' });
+    const parsed = JSON.parse(result.content[0].text!);
+
+    expect(parsed.promptText).toBe('my answer');
+  });
+
+  it('passes tabUrl to engine', async () => {
+    mockEngine.executeJsInTab.mockResolvedValue(
+      okResult(JSON.stringify({ status: 'installed', action: 'accept', promptText: '' })),
+    );
+
+    const handler = tools.getHandler('safari_handle_dialog')!;
+    await handler({ tabUrl: 'https://example.com', autoHandle: true, action: 'accept' });
+
+    expect(mockEngine.executeJsInTab).toHaveBeenCalledWith('https://example.com', expect.any(String));
+  });
+
+  it('throws when engine returns error', async () => {
+    mockEngine.executeJsInTab.mockResolvedValue(errResult('Handle dialog failed'));
+
+    const handler = tools.getHandler('safari_handle_dialog')!;
+    await expect(
+      handler({ tabUrl: 'https://example.com', autoHandle: true, action: 'accept' }),
+    ).rejects.toThrow('Handle dialog failed');
+  });
+
+  it('returns metadata with engine = applescript', async () => {
+    mockEngine.executeJsInTab.mockResolvedValue(
+      okResult(JSON.stringify({ status: 'installed', action: 'accept', promptText: '' })),
+    );
+
+    const handler = tools.getHandler('safari_handle_dialog')!;
+    const result = await handler({ tabUrl: 'https://example.com', autoHandle: true, action: 'accept' });
+
+    expect(result.metadata.engine).toBe('applescript');
+    expect(result.metadata.degraded).toBe(false);
   });
 });
 

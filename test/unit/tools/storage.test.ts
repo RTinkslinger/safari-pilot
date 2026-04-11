@@ -38,15 +38,21 @@ beforeEach(() => {
 // ── Tool definitions ──────────────────────────────────────────────────────────
 
 describe('StorageTools - tool definitions', () => {
-  it('registers 5 P0 storage tools', () => {
+  it('registers 11 storage tools (5 P0 + 6 P1)', () => {
     const defs = tools.getDefinitions();
-    expect(defs).toHaveLength(5);
+    expect(defs).toHaveLength(11);
     expect(defs.map(d => d.name)).toEqual([
       'safari_get_cookies',
       'safari_set_cookie',
       'safari_delete_cookie',
       'safari_storage_state_export',
       'safari_storage_state_import',
+      'safari_local_storage_get',
+      'safari_local_storage_set',
+      'safari_session_storage_get',
+      'safari_session_storage_set',
+      'safari_idb_list',
+      'safari_idb_get',
     ]);
   });
 
@@ -56,6 +62,12 @@ describe('StorageTools - tool definitions', () => {
     'safari_delete_cookie',
     'safari_storage_state_export',
     'safari_storage_state_import',
+    'safari_local_storage_get',
+    'safari_local_storage_set',
+    'safari_session_storage_get',
+    'safari_session_storage_set',
+    'safari_idb_list',
+    'safari_idb_get',
   ];
 
   for (const name of expectedTools) {
@@ -413,6 +425,335 @@ describe('safari_storage_state_import', () => {
     expect(stateProps).toHaveProperty('cookies');
     expect(stateProps).toHaveProperty('localStorage');
     expect(stateProps).toHaveProperty('sessionStorage');
+  });
+});
+
+// ── safari_local_storage_get ──────────────────────────────────────────────────
+
+describe('safari_local_storage_get', () => {
+  it('requires tabUrl and key in schema', () => {
+    const def = tools.getDefinitions().find(d => d.name === 'safari_local_storage_get')!;
+    const required = (def.inputSchema as { required: string[] }).required;
+    expect(required).toContain('tabUrl');
+    expect(required).toContain('key');
+  });
+
+  it('returns key, value, exists when item found', async () => {
+    mockEngine.executeJsInTab.mockResolvedValue(okResult(JSON.stringify({ key: 'theme', value: 'dark', exists: true })));
+
+    const handler = tools.getHandler('safari_local_storage_get')!;
+    const result = await handler({ tabUrl: 'https://example.com', key: 'theme' });
+    const parsed = JSON.parse(result.content[0].text!);
+
+    expect(parsed.key).toBe('theme');
+    expect(parsed.value).toBe('dark');
+    expect(parsed.exists).toBe(true);
+  });
+
+  it('returns exists: false when key not found', async () => {
+    mockEngine.executeJsInTab.mockResolvedValue(okResult(JSON.stringify({ key: 'missing', value: null, exists: false })));
+
+    const handler = tools.getHandler('safari_local_storage_get')!;
+    const result = await handler({ tabUrl: 'https://example.com', key: 'missing' });
+    const parsed = JSON.parse(result.content[0].text!);
+
+    expect(parsed.exists).toBe(false);
+    expect(parsed.value).toBeNull();
+  });
+
+  it('passes tabUrl to engine', async () => {
+    mockEngine.executeJsInTab.mockResolvedValue(okResult(JSON.stringify({ key: 'k', value: 'v', exists: true })));
+
+    const handler = tools.getHandler('safari_local_storage_get')!;
+    await handler({ tabUrl: 'https://example.com', key: 'k' });
+
+    expect(mockEngine.executeJsInTab).toHaveBeenCalledWith('https://example.com', expect.any(String));
+  });
+
+  it('throws when engine returns error', async () => {
+    mockEngine.executeJsInTab.mockResolvedValue(errResult('localStorage not available'));
+
+    const handler = tools.getHandler('safari_local_storage_get')!;
+    await expect(handler({ tabUrl: 'https://example.com', key: 'k' })).rejects.toThrow('localStorage not available');
+  });
+});
+
+// ── safari_local_storage_set ──────────────────────────────────────────────────
+
+describe('safari_local_storage_set', () => {
+  it('requires tabUrl, key, and value in schema', () => {
+    const def = tools.getDefinitions().find(d => d.name === 'safari_local_storage_set')!;
+    const required = (def.inputSchema as { required: string[] }).required;
+    expect(required).toContain('tabUrl');
+    expect(required).toContain('key');
+    expect(required).toContain('value');
+  });
+
+  it('returns set: true on success', async () => {
+    mockEngine.executeJsInTab.mockResolvedValue(okResult(JSON.stringify({ key: 'theme', value: 'dark', set: true })));
+
+    const handler = tools.getHandler('safari_local_storage_set')!;
+    const result = await handler({ tabUrl: 'https://example.com', key: 'theme', value: 'dark' });
+    const parsed = JSON.parse(result.content[0].text!);
+
+    expect(parsed.set).toBe(true);
+    expect(parsed.key).toBe('theme');
+    expect(parsed.value).toBe('dark');
+  });
+
+  it('passes tabUrl to engine', async () => {
+    mockEngine.executeJsInTab.mockResolvedValue(okResult(JSON.stringify({ key: 'k', value: 'v', set: true })));
+
+    const handler = tools.getHandler('safari_local_storage_set')!;
+    await handler({ tabUrl: 'https://example.com', key: 'k', value: 'v' });
+
+    expect(mockEngine.executeJsInTab).toHaveBeenCalledWith('https://example.com', expect.any(String));
+  });
+
+  it('throws when engine returns error', async () => {
+    mockEngine.executeJsInTab.mockResolvedValue(errResult('localStorage set failed'));
+
+    const handler = tools.getHandler('safari_local_storage_set')!;
+    await expect(handler({ tabUrl: 'https://example.com', key: 'k', value: 'v' })).rejects.toThrow('localStorage set failed');
+  });
+});
+
+// ── safari_session_storage_get ────────────────────────────────────────────────
+
+describe('safari_session_storage_get', () => {
+  it('requires tabUrl and key in schema', () => {
+    const def = tools.getDefinitions().find(d => d.name === 'safari_session_storage_get')!;
+    const required = (def.inputSchema as { required: string[] }).required;
+    expect(required).toContain('tabUrl');
+    expect(required).toContain('key');
+  });
+
+  it('returns key, value, exists when item found', async () => {
+    mockEngine.executeJsInTab.mockResolvedValue(okResult(JSON.stringify({ key: 'cart', value: '[]', exists: true })));
+
+    const handler = tools.getHandler('safari_session_storage_get')!;
+    const result = await handler({ tabUrl: 'https://example.com', key: 'cart' });
+    const parsed = JSON.parse(result.content[0].text!);
+
+    expect(parsed.key).toBe('cart');
+    expect(parsed.value).toBe('[]');
+    expect(parsed.exists).toBe(true);
+  });
+
+  it('returns exists: false when key not found', async () => {
+    mockEngine.executeJsInTab.mockResolvedValue(okResult(JSON.stringify({ key: 'nope', value: null, exists: false })));
+
+    const handler = tools.getHandler('safari_session_storage_get')!;
+    const result = await handler({ tabUrl: 'https://example.com', key: 'nope' });
+    const parsed = JSON.parse(result.content[0].text!);
+
+    expect(parsed.exists).toBe(false);
+  });
+
+  it('passes tabUrl to engine', async () => {
+    mockEngine.executeJsInTab.mockResolvedValue(okResult(JSON.stringify({ key: 'k', value: null, exists: false })));
+
+    const handler = tools.getHandler('safari_session_storage_get')!;
+    await handler({ tabUrl: 'https://example.com', key: 'k' });
+
+    expect(mockEngine.executeJsInTab).toHaveBeenCalledWith('https://example.com', expect.any(String));
+  });
+
+  it('throws when engine returns error', async () => {
+    mockEngine.executeJsInTab.mockResolvedValue(errResult('sessionStorage not available'));
+
+    const handler = tools.getHandler('safari_session_storage_get')!;
+    await expect(handler({ tabUrl: 'https://example.com', key: 'k' })).rejects.toThrow('sessionStorage not available');
+  });
+});
+
+// ── safari_session_storage_set ────────────────────────────────────────────────
+
+describe('safari_session_storage_set', () => {
+  it('requires tabUrl, key, and value in schema', () => {
+    const def = tools.getDefinitions().find(d => d.name === 'safari_session_storage_set')!;
+    const required = (def.inputSchema as { required: string[] }).required;
+    expect(required).toContain('tabUrl');
+    expect(required).toContain('key');
+    expect(required).toContain('value');
+  });
+
+  it('returns set: true on success', async () => {
+    mockEngine.executeJsInTab.mockResolvedValue(okResult(JSON.stringify({ key: 'cart', value: '[1,2]', set: true })));
+
+    const handler = tools.getHandler('safari_session_storage_set')!;
+    const result = await handler({ tabUrl: 'https://example.com', key: 'cart', value: '[1,2]' });
+    const parsed = JSON.parse(result.content[0].text!);
+
+    expect(parsed.set).toBe(true);
+    expect(parsed.key).toBe('cart');
+  });
+
+  it('passes tabUrl to engine', async () => {
+    mockEngine.executeJsInTab.mockResolvedValue(okResult(JSON.stringify({ key: 'k', value: 'v', set: true })));
+
+    const handler = tools.getHandler('safari_session_storage_set')!;
+    await handler({ tabUrl: 'https://example.com', key: 'k', value: 'v' });
+
+    expect(mockEngine.executeJsInTab).toHaveBeenCalledWith('https://example.com', expect.any(String));
+  });
+
+  it('throws when engine returns error', async () => {
+    mockEngine.executeJsInTab.mockResolvedValue(errResult('sessionStorage set failed'));
+
+    const handler = tools.getHandler('safari_session_storage_set')!;
+    await expect(handler({ tabUrl: 'https://example.com', key: 'k', value: 'v' })).rejects.toThrow('sessionStorage set failed');
+  });
+});
+
+// ── safari_idb_list ───────────────────────────────────────────────────────────
+
+describe('safari_idb_list', () => {
+  it('requires tabUrl in schema', () => {
+    const def = tools.getDefinitions().find(d => d.name === 'safari_idb_list')!;
+    expect((def.inputSchema as { required: string[] }).required).toContain('tabUrl');
+  });
+
+  it('returns list of databases with name and version', async () => {
+    const data = {
+      databases: [{ name: 'mydb', version: 1 }, { name: 'cache', version: 2 }],
+      count: 2,
+    };
+    mockEngine.executeJsInTab.mockResolvedValue(okResult(JSON.stringify(data)));
+
+    const handler = tools.getHandler('safari_idb_list')!;
+    const result = await handler({ tabUrl: 'https://example.com' });
+    const parsed = JSON.parse(result.content[0].text!);
+
+    expect(parsed.databases).toHaveLength(2);
+    expect(parsed.databases[0].name).toBe('mydb');
+    expect(parsed.databases[1].version).toBe(2);
+    expect(parsed.count).toBe(2);
+  });
+
+  it('returns empty list when no databases', async () => {
+    mockEngine.executeJsInTab.mockResolvedValue(okResult(JSON.stringify({ databases: [], count: 0 })));
+
+    const handler = tools.getHandler('safari_idb_list')!;
+    const result = await handler({ tabUrl: 'https://example.com' });
+    const parsed = JSON.parse(result.content[0].text!);
+
+    expect(parsed.databases).toHaveLength(0);
+    expect(parsed.count).toBe(0);
+  });
+
+  it('returns note when indexedDB.databases() not supported', async () => {
+    const data = { databases: [], count: 0, note: 'indexedDB.databases() not supported in this context' };
+    mockEngine.executeJsInTab.mockResolvedValue(okResult(JSON.stringify(data)));
+
+    const handler = tools.getHandler('safari_idb_list')!;
+    const result = await handler({ tabUrl: 'https://example.com' });
+    const parsed = JSON.parse(result.content[0].text!);
+
+    expect(parsed.note).toBeDefined();
+  });
+
+  it('passes tabUrl to engine', async () => {
+    mockEngine.executeJsInTab.mockResolvedValue(okResult(JSON.stringify({ databases: [], count: 0 })));
+
+    const handler = tools.getHandler('safari_idb_list')!;
+    await handler({ tabUrl: 'https://example.com' });
+
+    expect(mockEngine.executeJsInTab).toHaveBeenCalledWith('https://example.com', expect.any(String));
+  });
+
+  it('throws when engine returns error', async () => {
+    mockEngine.executeJsInTab.mockResolvedValue(errResult('IndexedDB list failed'));
+
+    const handler = tools.getHandler('safari_idb_list')!;
+    await expect(handler({ tabUrl: 'https://example.com' })).rejects.toThrow('IndexedDB list failed');
+  });
+});
+
+// ── safari_idb_get ────────────────────────────────────────────────────────────
+
+describe('safari_idb_get', () => {
+  it('requires tabUrl, database, and store in schema', () => {
+    const def = tools.getDefinitions().find(d => d.name === 'safari_idb_get')!;
+    const required = (def.inputSchema as { required: string[] }).required;
+    expect(required).toContain('tabUrl');
+    expect(required).toContain('database');
+    expect(required).toContain('store');
+  });
+
+  it('schema has optional query and limit params', () => {
+    const def = tools.getDefinitions().find(d => d.name === 'safari_idb_get')!;
+    const props = (def.inputSchema as any).properties;
+    expect(props).toHaveProperty('query');
+    expect(props).toHaveProperty('limit');
+  });
+
+  it('query schema has lower, upper, lowerOpen, upperOpen, only', () => {
+    const def = tools.getDefinitions().find(d => d.name === 'safari_idb_get')!;
+    const queryProps = (def.inputSchema as any).properties.query.properties;
+    expect(queryProps).toHaveProperty('lower');
+    expect(queryProps).toHaveProperty('upper');
+    expect(queryProps).toHaveProperty('lowerOpen');
+    expect(queryProps).toHaveProperty('upperOpen');
+    expect(queryProps).toHaveProperty('only');
+  });
+
+  it('returns records from the store', async () => {
+    const data = {
+      records: [
+        { key: 1, value: { id: 1, name: 'Alice' } },
+        { key: 2, value: { id: 2, name: 'Bob' } },
+      ],
+      count: 2,
+      database: 'mydb',
+      store: 'users',
+    };
+    mockEngine.executeJsInTab.mockResolvedValue(okResult(JSON.stringify(data)));
+
+    const handler = tools.getHandler('safari_idb_get')!;
+    const result = await handler({ tabUrl: 'https://example.com', database: 'mydb', store: 'users' });
+    const parsed = JSON.parse(result.content[0].text!);
+
+    expect(parsed.records).toHaveLength(2);
+    expect(parsed.records[0].key).toBe(1);
+    expect(parsed.records[0].value.name).toBe('Alice');
+    expect(parsed.count).toBe(2);
+    expect(parsed.database).toBe('mydb');
+    expect(parsed.store).toBe('users');
+  });
+
+  it('returns empty records when store is empty', async () => {
+    const data = { records: [], count: 0, database: 'mydb', store: 'users' };
+    mockEngine.executeJsInTab.mockResolvedValue(okResult(JSON.stringify(data)));
+
+    const handler = tools.getHandler('safari_idb_get')!;
+    const result = await handler({ tabUrl: 'https://example.com', database: 'mydb', store: 'users' });
+    const parsed = JSON.parse(result.content[0].text!);
+
+    expect(parsed.records).toHaveLength(0);
+  });
+
+  it('passes tabUrl to engine', async () => {
+    mockEngine.executeJsInTab.mockResolvedValue(okResult(JSON.stringify({ records: [], count: 0, database: 'db', store: 's' })));
+
+    const handler = tools.getHandler('safari_idb_get')!;
+    await handler({ tabUrl: 'https://example.com', database: 'db', store: 's' });
+
+    expect(mockEngine.executeJsInTab).toHaveBeenCalledWith('https://example.com', expect.any(String));
+  });
+
+  it('throws when engine returns error (database not found)', async () => {
+    mockEngine.executeJsInTab.mockResolvedValue(errResult('Failed to open database: mydb'));
+
+    const handler = tools.getHandler('safari_idb_get')!;
+    await expect(handler({ tabUrl: 'https://example.com', database: 'mydb', store: 'users' })).rejects.toThrow('Failed to open database');
+  });
+
+  it('throws when engine returns error (store not found)', async () => {
+    mockEngine.executeJsInTab.mockResolvedValue(errResult('Object store not found: missing'));
+
+    const handler = tools.getHandler('safari_idb_get')!;
+    await expect(handler({ tabUrl: 'https://example.com', database: 'mydb', store: 'missing' })).rejects.toThrow('Object store not found');
   });
 });
 
