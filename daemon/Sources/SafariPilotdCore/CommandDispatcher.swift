@@ -21,16 +21,21 @@ public final class CommandDispatcher: @unchecked Sendable {
     private let outputSink: OutputSink
     private let executor: ScriptExecutorProtocol
 
+    /// Manages Safari extension connection state and pending requests.
+    public let extensionBridge: ExtensionBridge
+
     // MARK: Init
 
     public init(
         lineSource: @escaping LineSource,
         outputSink: @escaping OutputSink,
-        executor: ScriptExecutorProtocol
+        executor: ScriptExecutorProtocol,
+        extensionBridge: ExtensionBridge = ExtensionBridge()
     ) {
         self.lineSource = lineSource
         self.outputSink = outputSink
         self.executor = executor
+        self.extensionBridge = extensionBridge
     }
 
     /// Convenience initialiser for production use: reads from stdin, writes to stdout.
@@ -117,11 +122,38 @@ public final class CommandDispatcher: @unchecked Sendable {
                     )
                 )
             }
+
+            // Internal extension bridge sentinel: "__SAFARI_PILOT_INTERNAL__ <method> [jsonParams]"
+            // This allows the TypeScript ExtensionEngine to route extension commands through
+            // the DaemonEngine's standard execute() path without requiring a separate protocol.
+            let internalPrefix = "__SAFARI_PILOT_INTERNAL__ "
+            if scriptString.hasPrefix(internalPrefix) {
+                let remainder = String(scriptString.dropFirst(internalPrefix.count))
+                return await handleInternalCommand(commandID: command.id, raw: remainder)
+            }
+
             return await executor.execute(script: scriptString, commandID: command.id)
 
         case "shutdown":
             // Return ack first — the run loop will call exit() after writing it.
             return Response.success(id: command.id, value: AnyCodable("shutting_down"))
+
+        // MARK: Extension bridge commands
+
+        case "extension_connected":
+            return extensionBridge.handleConnected(commandID: command.id)
+
+        case "extension_disconnected":
+            return extensionBridge.handleDisconnected(commandID: command.id)
+
+        case "extension_result":
+            return extensionBridge.handleResult(commandID: command.id, params: command.params)
+
+        case "extension_execute":
+            return await extensionBridge.handleExecute(commandID: command.id, params: command.params)
+
+        case "extension_status":
+            return extensionBridge.handleStatus(commandID: command.id)
 
         default:
             return Response.failure(
@@ -129,6 +161,40 @@ public final class CommandDispatcher: @unchecked Sendable {
                 error: StructuredError(
                     code: "UNKNOWN_METHOD",
                     message: "Unknown method: \"\(command.method)\"",
+                    retryable: false
+                )
+            )
+        }
+    }
+
+    // MARK: - Internal command routing (for ExtensionEngine sentinel protocol)
+
+    /// Parse and route a "__SAFARI_PILOT_INTERNAL__ <method> [jsonParams]" string.
+    /// Supported methods: extension_status, extension_execute.
+    private func handleInternalCommand(commandID: String, raw: String) async -> Response {
+        // Split on first space: "<method>" or "<method> <jsonParams>"
+        let parts = raw.split(separator: " ", maxSplits: 1).map(String.init)
+        let method = parts.first ?? ""
+        let jsonString = parts.count > 1 ? parts[1] : "{}"
+
+        // Parse optional JSON params
+        var params: [String: AnyCodable] = [:]
+        if let data = jsonString.data(using: .utf8),
+           let dict = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] {
+            params = dict.mapValues { AnyCodable($0) }
+        }
+
+        switch method {
+        case "extension_status":
+            return extensionBridge.handleStatus(commandID: commandID)
+        case "extension_execute":
+            return await extensionBridge.handleExecute(commandID: commandID, params: params)
+        default:
+            return Response.failure(
+                id: commandID,
+                error: StructuredError(
+                    code: "UNKNOWN_INTERNAL_METHOD",
+                    message: "Unknown internal method: \"\(method)\"",
                     retryable: false
                 )
             )

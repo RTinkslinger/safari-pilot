@@ -134,6 +134,10 @@ registerCommandDispatcherTests()
 
 registerSleepWakeMemoryRecoveryTests()
 
+// MARK: - ExtensionBridge Tests
+
+registerExtensionBridgeTests()
+
 // MARK: - Results
 
 print("-----------------")
