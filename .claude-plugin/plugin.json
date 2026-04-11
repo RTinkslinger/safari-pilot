@@ -1,0 +1,35 @@
+{
+  "name": "safari-pilot",
+  "version": "0.1.0",
+  "description": "Native Safari browser automation for AI agents on macOS",
+  "author": "Aakash Kumar",
+  "license": "MIT",
+  "homepage": "https://github.com/aakashkumar/safari-pilot",
+  "components": {
+    "mcpServers": {
+      "safari": {
+        "command": "node",
+        "args": ["${CLAUDE_PLUGIN_ROOT}/dist/index.js"],
+        "env": {
+          "SAFARI_PILOT_DATA": "${CLAUDE_PLUGIN_DATA}",
+          "SAFARI_PILOT_DAEMON": "${CLAUDE_PLUGIN_ROOT}/bin/SafariPilotd"
+        }
+      }
+    },
+    "skills": ["skills/safari-pilot/SKILL.md"],
+    "hooks": [
+      {
+        "event": "SessionStart",
+        "script": "${CLAUDE_PLUGIN_ROOT}/hooks/session-start.sh"
+      },
+      {
+        "event": "Stop",
+        "script": "${CLAUDE_PLUGIN_ROOT}/hooks/session-end.sh"
+      }
+    ]
+  },
+  "requirements": {
+    "os": ["darwin"],
+    "minOsVersion": "12.0"
+  }
+}
