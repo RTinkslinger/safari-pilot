@@ -152,6 +152,15 @@ end tell`;
 end tell`;
   }
 
+  /**
+   * Execute JavaScript in a tab identified by its current URL.
+   * Builds the AppleScript wrapper, executes it, and returns the raw EngineResult.
+   */
+  public async executeJsInTab(tabUrl: string, jsCode: string, timeout?: number): Promise<EngineResult> {
+    const script = this.buildTabScript(tabUrl, jsCode);
+    return this.execute(script, timeout);
+  }
+
   // ── JS wrapping & result parsing ────────────────────────────────────────────
 
   /**
