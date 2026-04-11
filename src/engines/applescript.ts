@@ -63,9 +63,8 @@ export class AppleScriptEngine extends BaseEngine {
    * Build an AppleScript that targets a tab by URL and executes JS inside it.
    */
   public buildTabScript(url: string, jsCode: string): string {
-    const wrapped = this.wrapJavaScript(jsCode);
     const escapedUrl = url.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-    const escapedJs = wrapped.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+    const escapedJs = jsCode.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
     return `tell application "Safari"
   set _result to ""
   repeat with _window in every window
@@ -154,11 +153,21 @@ end tell`;
 
   /**
    * Execute JavaScript in a tab identified by its current URL.
-   * Builds the AppleScript wrapper, executes it, and returns the raw EngineResult.
+   * Wraps the JS in a try/catch serialization harness so `return` works
+   * and results are properly JSON-serialized. Parses the wrapper on the
+   * way back so callers get the inner value directly.
    */
   public async executeJsInTab(tabUrl: string, jsCode: string, timeout?: number): Promise<EngineResult> {
-    const script = this.buildTabScript(tabUrl, jsCode);
-    return this.execute(script, timeout);
+    const wrapped = this.wrapJavaScript(jsCode);
+    const script = this.buildTabScript(tabUrl, wrapped);
+    const result = await this.execute(script, timeout);
+
+    // Parse the JSON wrapper from wrapJavaScript
+    if (result.ok && result.value) {
+      const parsed = this.parseJsResult(result.value);
+      return { ...parsed, elapsed_ms: result.elapsed_ms };
+    }
+    return result;
   }
 
   // ── JS wrapping & result parsing ────────────────────────────────────────────
