@@ -7,15 +7,17 @@ EXT_DIR="$ROOT/extension"
 APP_DIR="$ROOT/app"
 XCODE_PROJECT_DIR="$APP_DIR/Safari Pilot"
 BUNDLE_ID="com.safari-pilot.app"
+SIGN_IDENTITY="Developer ID Application: Aakash Kumar (V37WLKRXUJ)"
+TEAM_ID="V37WLKRXUJ"
 
-# Read version from package.json — single source of truth
 VERSION=$(python3 -c "import json; print(json.load(open('$ROOT/package.json'))['version'])")
 BUILD_NUMBER=$(date +%Y%m%d%H%M)
 
 echo "=== Safari Pilot Extension Build ==="
 echo "Version: $VERSION (build $BUILD_NUMBER)"
 
-# Step 1: Generate Xcode project from extension source
+# ── Step 1: Generate Xcode project ──────────────────────────────────────────
+
 echo "Generating Xcode project..."
 xcrun safari-web-extension-packager "$EXT_DIR" \
   --project-location "$APP_DIR" \
@@ -26,28 +28,76 @@ xcrun safari-web-extension-packager "$EXT_DIR" \
   --no-prompt \
   --force
 
-# The packager generates the project inside a subdirectory named after the app
-# Resulting path: app/Safari Pilot/Safari Pilot.xcodeproj
 if [ ! -d "$XCODE_PROJECT_DIR/Safari Pilot.xcodeproj" ]; then
-  echo "ERROR: Xcode project not found at expected location: $XCODE_PROJECT_DIR/Safari Pilot.xcodeproj"
+  echo "ERROR: Xcode project not found"
   exit 1
 fi
 
-# Step 2: Fix bundle identifier in generated project
-# The packager sets the app's bundle ID to com.safari-pilot.Safari-Pilot (derived from name)
-# instead of our explicit com.safari-pilot.app — causing embedded binary validation failure.
-# Fix: replace the auto-derived ID with our explicit bundle ID in both Debug and Release configs.
+# ── Step 2: Patch Xcode project ─────────────────────────────────────────────
+
 PBXPROJ="$XCODE_PROJECT_DIR/Safari Pilot.xcodeproj/project.pbxproj"
-echo "Fixing bundle identifier in Xcode project..."
+
+echo "Fixing bundle identifier..."
 sed -i '' "s/PRODUCT_BUNDLE_IDENTIFIER = \"com.safari-pilot.Safari-Pilot\";/PRODUCT_BUNDLE_IDENTIFIER = \"$BUNDLE_ID\";/g" "$PBXPROJ"
 
-# Step 3: Sync versions from package.json into Xcode build settings
-echo "Setting version $VERSION (build $BUILD_NUMBER) in Xcode project..."
+echo "Setting version $VERSION (build $BUILD_NUMBER)..."
 sed -i '' "s/MARKETING_VERSION = .*;/MARKETING_VERSION = $VERSION;/g" "$PBXPROJ"
 sed -i '' "s/CURRENT_PROJECT_VERSION = .*;/CURRENT_PROJECT_VERSION = $BUILD_NUMBER;/g" "$PBXPROJ"
 
-# Step 4: Create placeholder Icon.png if missing
-# The packager references Icon.png in the project but doesn't create it.
+echo "Setting manual signing with Developer ID..."
+sed -i '' "s/CODE_SIGN_STYLE = Automatic;/CODE_SIGN_STYLE = Manual;/g" "$PBXPROJ"
+sed -i '' "s/DEVELOPMENT_TEAM = \"\";/DEVELOPMENT_TEAM = $TEAM_ID;/g" "$PBXPROJ"
+
+# ── Step 3: Create entitlements files for manual signing ────────────────────
+
+APP_ENTITLEMENTS="$XCODE_PROJECT_DIR/Safari Pilot/Safari Pilot.entitlements"
+EXT_ENTITLEMENTS="$XCODE_PROJECT_DIR/Safari Pilot Extension/Safari Pilot Extension.entitlements"
+
+cat > "$APP_ENTITLEMENTS" <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>com.apple.security.app-sandbox</key>
+    <true/>
+    <key>com.apple.security.files.user-selected.read-only</key>
+    <true/>
+    <key>com.apple.security.network.client</key>
+    <true/>
+</dict>
+</plist>
+PLIST
+
+cat > "$EXT_ENTITLEMENTS" <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>com.apple.security.app-sandbox</key>
+    <true/>
+    <key>com.apple.security.files.user-selected.read-only</key>
+    <true/>
+</dict>
+</plist>
+PLIST
+
+# Inject entitlements paths into the pbxproj build settings
+# App target: insert CODE_SIGN_ENTITLEMENTS after PRODUCT_BUNDLE_IDENTIFIER for app
+sed -i '' '/PRODUCT_BUNDLE_IDENTIFIER = "com.safari-pilot.app";/{
+  a\
+\t\t\t\tCODE_SIGN_ENTITLEMENTS = "Safari Pilot/Safari Pilot.entitlements";
+}' "$PBXPROJ"
+
+# Extension target: insert CODE_SIGN_ENTITLEMENTS after PRODUCT_BUNDLE_IDENTIFIER for extension
+sed -i '' '/PRODUCT_BUNDLE_IDENTIFIER = "com.safari-pilot.app.Extension";/{
+  a\
+\t\t\t\tCODE_SIGN_ENTITLEMENTS = "Safari Pilot Extension/Safari Pilot Extension.entitlements";
+}' "$PBXPROJ"
+
+echo "Entitlements created and wired into project"
+
+# ── Step 4: Create placeholder Icon.png if missing ──────────────────────────
+
 ICON_PATH="$XCODE_PROJECT_DIR/Safari Pilot/Resources/Icon.png"
 if [ ! -f "$ICON_PATH" ]; then
   echo "Creating placeholder Icon.png..."
@@ -76,73 +126,107 @@ with open('$ICON_PATH', 'wb') as f:
 "
 fi
 
-# Step 5: Build the app
-echo "Building app (Release)..."
+# ── Step 5: Archive ─────────────────────────────────────────────────────────
+
+ARCHIVE_PATH="$ROOT/.build/extension/Safari Pilot.xcarchive"
+
+echo "Archiving app (Release)..."
 cd "$XCODE_PROJECT_DIR"
-xcodebuild \
+xcodebuild archive \
   -project "Safari Pilot.xcodeproj" \
   -scheme "Safari Pilot" \
   -configuration Release \
-  -derivedDataPath "$ROOT/.build/extension" \
-  build 2>&1
+  -archivePath "$ARCHIVE_PATH" \
+  CODE_SIGN_IDENTITY="$SIGN_IDENTITY" \
+  DEVELOPMENT_TEAM="$TEAM_ID" \
+  OTHER_CODE_SIGN_FLAGS="--timestamp" \
+  2>&1
 
-# Step 6: Copy built app to bin/
-APP_PATH=$(find "$ROOT/.build/extension" -name "Safari Pilot.app" -type d | head -1)
-if [ -n "$APP_PATH" ]; then
-  echo "Built app at: $APP_PATH"
-  mkdir -p "$ROOT/bin"
-  rm -rf "$ROOT/bin/Safari Pilot.app"
-  cp -R "$APP_PATH" "$ROOT/bin/Safari Pilot.app"
-  echo "Copied to bin/Safari Pilot.app"
-else
-  echo "ERROR: Built app not found in derived data"
+if [ ! -d "$ARCHIVE_PATH" ]; then
+  echo "ERROR: Archive not created"
   exit 1
 fi
 
-echo "=== Build complete ==="
+echo "Archive created at: $ARCHIVE_PATH"
 
-# ── Signing & Notarization ───────────────────────────────────────────────────
+# ── Step 6: Export archive ──────────────────────────────────────────────────
 
-SIGN_IDENTITY="Developer ID Application: Aakash Kumar (V37WLKRXUJ)"
+EXPORT_DIR="$ROOT/.build/extension/Export"
+EXPORT_OPTIONS="$ROOT/scripts/ExportOptions.plist"
+
+cat > "$EXPORT_OPTIONS" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>method</key>
+    <string>developer-id</string>
+    <key>teamID</key>
+    <string>$TEAM_ID</string>
+    <key>signingCertificate</key>
+    <string>Developer ID Application</string>
+</dict>
+</plist>
+PLIST
+
+echo "Exporting archive..."
+xcodebuild -exportArchive \
+  -archivePath "$ARCHIVE_PATH" \
+  -exportPath "$EXPORT_DIR" \
+  -exportOptionsPlist "$EXPORT_OPTIONS" \
+  2>&1
+
+EXPORTED_APP="$EXPORT_DIR/Safari Pilot.app"
+if [ ! -d "$EXPORTED_APP" ]; then
+  echo "ERROR: Export failed — app not found in $EXPORT_DIR"
+  exit 1
+fi
+
+echo "Exported to: $EXPORTED_APP"
+
+# ── Step 7: Copy to bin/ ────────────────────────────────────────────────────
+
+mkdir -p "$ROOT/bin"
+rm -rf "$ROOT/bin/Safari Pilot.app"
+cp -R "$EXPORTED_APP" "$ROOT/bin/Safari Pilot.app"
+echo "Copied to bin/Safari Pilot.app"
+
 APP_PATH="$ROOT/bin/Safari Pilot.app"
-APPEX_PATH="$APP_PATH/Contents/PlugIns/Safari Pilot Extension.appex"
 
-echo "=== Signing Extension ==="
+# ── Step 8: Verify signature and entitlements ───────────────────────────────
 
-# Step 6: Sign the .appex FIRST (inside-out — NEVER use --deep)
-echo "Signing .appex..."
-codesign --force --options runtime --timestamp \
-  --sign "$SIGN_IDENTITY" \
-  "$APPEX_PATH"
+echo "=== Verification ==="
 
-# Step 7: Sign the .app container
-echo "Signing .app..."
-codesign --force --options runtime --timestamp \
-  --sign "$SIGN_IDENTITY" \
-  "$APP_PATH"
-
-# Step 8: Verify codesign (spctl check deferred until after notarization)
-echo "Verifying code signature..."
+echo "Code signature:"
 codesign --verify --deep --strict --verbose=2 "$APP_PATH"
+
+echo ""
+echo "App entitlements:"
+codesign -d --entitlements - "$APP_PATH" 2>&1 | grep -v "^Executable"
+
+echo ""
+echo "Extension entitlements:"
+codesign -d --entitlements - "$APP_PATH/Contents/PlugIns/Safari Pilot Extension.appex" 2>&1 | grep -v "^Executable"
+
+# ── Step 9: Notarize ────────────────────────────────────────────────────────
 
 echo "=== Notarizing ==="
 
-# Step 9: Create ZIP for notarization
 ditto -c -k --keepParent "$APP_PATH" "$ROOT/bin/Safari Pilot.zip"
 
-# Step 10: Submit for notarization and wait
 xcrun notarytool submit "$ROOT/bin/Safari Pilot.zip" \
   --keychain-profile "apple-notarytool" --wait
 
-# Step 11: Staple the ticket
 xcrun stapler staple "$APP_PATH"
 
-# Step 12: Re-zip the stapled app for distribution
+# Re-zip with stapled ticket
 rm "$ROOT/bin/Safari Pilot.zip"
 ditto -c -k --keepParent "$APP_PATH" "$ROOT/bin/Safari Pilot.zip"
 
-# Step 13: Verify with Gatekeeper (now notarized)
-echo "Verifying Gatekeeper acceptance..."
-spctl -a -t exec -vv "$APP_PATH"
+# ── Step 10: Final Gatekeeper check ─────────────────────────────────────────
 
-echo "=== Signed, Notarized, and Stapled ==="
+echo "=== Final Verification ==="
+spctl -a -t exec -vv "$APP_PATH"
+xcrun stapler validate "$APP_PATH"
+
+echo "=== Build Complete: v$VERSION (build $BUILD_NUMBER) ==="

@@ -18,15 +18,15 @@
 		</data>
 		<key>Resources/Base.lproj/Main.storyboardc/Info.plist</key>
 		<data>
-		0pHUIi5rGzSpYz4ztpJ9t40hlCI=
+		a2VT/xdcFLUwKaa1rN2i7aG440U=
 		</data>
 		<key>Resources/Base.lproj/Main.storyboardc/MainMenu.nib</key>
 		<data>
-		vPWEH3ezPccOOSZJUmvKlN+gGqo=
+		z4wrX6ZIT8Vqga4FNrBhl7p4mgI=
 		</data>
 		<key>Resources/Base.lproj/Main.storyboardc/NSWindowController-B8D-0N-5wS.nib</key>
 		<data>
-		AdhpJsuSA/7LVzfYeU9JxwiYZD8=
+		c/6Czv7zqEUm5pSNZBYPHtK3FtY=
 		</data>
 		<key>Resources/Base.lproj/Main.storyboardc/XfG-lQ-9wD-view-m2S-Jp-Qdl.nib</key>
 		<data>
@@ -51,10 +51,10 @@
 		<dict>
 			<key>cdhash</key>
 			<data>
-			SFM6UnmyD9GGgthkeojcQYgvbvI=
+			FDsh/+d1zp5QDu11arAcMRJbB24=
 			</data>
 			<key>requirement</key>
-			<string>identifier "com.safari-pilot.app.Extension" and anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] /* exists */ and certificate leaf[field.1.2.840.113635.100.6.1.13] /* exists */ and certificate leaf[subject.OU] = V37WLKRXUJ</string>
+			<string>anchor apple generic and identifier "com.safari-pilot.app.Extension" and (certificate leaf[field.1.2.840.113635.100.6.1.9] /* exists */ or certificate 1[field.1.2.840.113635.100.6.2.6] /* exists */ and certificate leaf[field.1.2.840.113635.100.6.1.13] /* exists */ and certificate leaf[subject.OU] = V37WLKRXUJ)</string>
 		</dict>
 		<key>Resources/AppIcon.icns</key>
 		<dict>
@@ -81,21 +81,21 @@
 		<dict>
 			<key>hash2</key>
 			<data>
-			IV7Ttsm+HV4PhZ11Znl9XztaovASGFgv95fjhOnPG/s=
+			kU2qRLrLe541khk8eANsHzAtUmih9nX13wl52uwLW2c=
 			</data>
 		</dict>
 		<key>Resources/Base.lproj/Main.storyboardc/MainMenu.nib</key>
 		<dict>
 			<key>hash2</key>
 			<data>
-			yhdollPy0NxS7xi36YuAdOftD8N9l/T322acrbhv5AE=
+			A4bMEIxWI848pN6hafSHG4ceWz5z8KeLEo1BcKEYTAc=
 			</data>
 		</dict>
 		<key>Resources/Base.lproj/Main.storyboardc/NSWindowController-B8D-0N-5wS.nib</key>
 		<dict>
 			<key>hash2</key>
 			<data>
-			7jpSeb4cWHd30hZeexdutS3qlJtfVvOJxyQJ5jXPFhE=
+			rT9p1f1TolVuhgan6fPW/bNoeuJmP2w/ql/1GKZRLBo=
 			</data>
 		</dict>
 		<key>Resources/Base.lproj/Main.storyboardc/XfG-lQ-9wD-view-m2S-Jp-Qdl.nib</key>
