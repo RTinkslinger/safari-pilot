@@ -1,87 +1,117 @@
 // background.js — Extension Service Worker
-// Handles native messaging to the Swift daemon, routes commands from
-// content scripts, manages cookie/DNR APIs, and tracks active tabs.
+// Handles native messaging to the Safari app extension handler via
+// browser.runtime.sendNativeMessage, routes commands from content scripts,
+// manages cookie/DNR APIs, and tracks active tabs.
 
 (function () {
   'use strict';
 
+  // ─── Constants ──────────────────────────────────────────────────────────────
+
+  // Bundle ID of the containing macOS app — Safari routes
+  // sendNativeMessage calls to the app's web extension handler.
+  const APP_BUNDLE_ID = 'com.safari-pilot.app';
+  const POLL_INTERVAL_MS = 200;
+
   // ─── State ────────────────────────────────────────────────────────────────
 
-  let nativePort = null;
-  const pendingRequests = new Map(); // requestId → { resolve, reject }
   let isConnected = false;
   const activeTabs = new Map(); // tabId → { url, status }
-  let nextRequestId = 0;
+  let pollTimerId = null;
 
-  // ─── Native Messaging ─────────────────────────────────────────────────────
+  // ─── Native Messaging (sendNativeMessage-based) ───────────────────────────
 
-  function connectNative() {
+  /**
+   * Send a message to the native extension handler and return the response.
+   * Uses browser.runtime.sendNativeMessage (request/response per call).
+   */
+  function sendNativeRequest(message) {
+    return browser.runtime.sendNativeMessage(APP_BUNDLE_ID, message);
+  }
+
+  /**
+   * Poll the native handler for pending commands from the daemon.
+   * If a command is returned, route it to the content script,
+   * collect the result, and send it back via native messaging.
+   */
+  async function pollForCommands() {
     try {
-      nativePort = browser.runtime.connectNative('com.safari-pilot.daemon');
-      nativePort.onMessage.addListener(handleNativeMessage);
-      nativePort.onDisconnect.addListener(handleNativeDisconnect);
-      isConnected = true;
-      console.log('[SafariPilot] Native messaging connected');
+      const response = await sendNativeRequest({ type: 'poll' });
+
+      if (response && response.command && response.command !== null) {
+        const cmd = response.command;
+        await executeAndReturnResult(cmd);
+      }
     } catch (e) {
-      console.error('[SafariPilot] Native messaging failed:', e);
-      isConnected = false;
-      nativePort = null;
+      console.warn('[SafariPilot] Poll error:', e);
     }
   }
 
-  function handleNativeMessage(message) {
-    if (message && message.id && pendingRequests.has(message.id)) {
-      const pending = pendingRequests.get(message.id);
-      pendingRequests.delete(message.id);
-      if (message.error) {
-        pending.reject(new Error(message.error));
-      } else {
-        pending.resolve(message);
-      }
-    }
-  }
+  /**
+   * Execute a command received from the daemon (via poll) and send the
+   * result back through the native handler.
+   */
+  async function executeAndReturnResult(cmd) {
+    const commandId = cmd.id;
 
-  function handleNativeDisconnect() {
-    isConnected = false;
-    nativePort = null;
-    console.warn('[SafariPilot] Native port disconnected');
+    try {
+      let result;
 
-    // Reject all pending requests immediately
-    for (const [id, pending] of pendingRequests) {
-      pending.reject(new Error('Native port disconnected'));
-    }
-    pendingRequests.clear();
+      if (cmd.script) {
+        // Route script execution to the active tab's content script
+        const tabs = await browser.tabs.query({
+          active: true,
+          currentWindow: true,
+        });
+        const tabId = tabs[0]?.id;
 
-    // Auto-reconnect after 1 s
-    setTimeout(connectNative, 1000);
-  }
-
-  function sendNativeMessage(command, params) {
-    return new Promise((resolve, reject) => {
-      if (!isConnected || !nativePort) {
-        reject(new Error('Native port not connected'));
-        return;
-      }
-
-      const id = `req_${++nextRequestId}_${Date.now()}`;
-      pendingRequests.set(id, { resolve, reject });
-
-      // Timeout after 30 s — daemon should reply well before this
-      const timer = setTimeout(() => {
-        if (pendingRequests.has(id)) {
-          pendingRequests.delete(id);
-          reject(new Error(`Native request timed out: ${command}`));
+        if (tabId != null) {
+          const responses = await browser.tabs.sendMessage(tabId, {
+            type: 'SAFARI_PILOT_COMMAND',
+            method: 'execute_script',
+            params: { script: cmd.script },
+          });
+          result = responses;
+        } else {
+          result = { ok: false, error: { message: 'No active tab' } };
         }
-      }, 30_000);
-
-      try {
-        nativePort.postMessage({ id, command, params: params ?? {} });
-      } catch (err) {
-        clearTimeout(timer);
-        pendingRequests.delete(id);
-        reject(err);
+      } else {
+        result = { ok: true, value: null };
       }
-    });
+
+      await sendNativeRequest({
+        type: 'result',
+        id: commandId,
+        result: result,
+      });
+    } catch (err) {
+      // Send error result back so the daemon doesn't hang
+      try {
+        await sendNativeRequest({
+          type: 'result',
+          id: commandId,
+          result: { ok: false, error: { message: err.message } },
+        });
+      } catch (sendErr) {
+        console.error('[SafariPilot] Failed to send error result:', sendErr);
+      }
+    }
+  }
+
+  // ─── Poll Loop ────────────────────────────────────────────────────────────
+
+  function startPolling() {
+    if (pollTimerId != null) return;
+    pollTimerId = setInterval(pollForCommands, POLL_INTERVAL_MS);
+    console.log('[SafariPilot] Polling started');
+  }
+
+  function stopPolling() {
+    if (pollTimerId != null) {
+      clearInterval(pollTimerId);
+      pollTimerId = null;
+      console.log('[SafariPilot] Polling stopped');
+    }
   }
 
   // ─── Cookie Operations ────────────────────────────────────────────────────
@@ -199,11 +229,6 @@
           return await handleDnrRemoveRule(params ?? {});
 
         default:
-          // Forward unknown commands to the Swift daemon
-          if (isConnected) {
-            const response = await sendNativeMessage(command, params);
-            return { ok: true, value: response };
-          }
           return {
             ok: false,
             error: { message: `Unknown command: ${command}` },
@@ -252,5 +277,18 @@
 
   // ─── Initialization ────────────────────────────────────────────────────────
 
-  connectNative();
+  // Send status check on startup to register as connected
+  sendNativeRequest({ type: 'status' })
+    .then((response) => {
+      if (response && response.connected) {
+        isConnected = true;
+        console.log('[SafariPilot] Native handler connected, version:', response.version);
+      }
+    })
+    .catch((err) => {
+      console.warn('[SafariPilot] Initial status check failed:', err);
+    });
+
+  // Start polling for daemon commands
+  startPolling();
 })();

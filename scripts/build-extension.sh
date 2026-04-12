@@ -90,3 +90,46 @@ else
 fi
 
 echo "=== Build complete ==="
+
+# ── Signing & Notarization ───────────────────────────────────────────────────
+
+SIGN_IDENTITY="Developer ID Application: Aakash Kumar (V37WLKRXUJ)"
+APP_PATH="$ROOT/bin/Safari Pilot.app"
+APPEX_PATH="$APP_PATH/Contents/PlugIns/Safari Pilot Extension.appex"
+
+echo "=== Signing Extension ==="
+
+# Step 6: Sign the .appex FIRST (inside-out — NEVER use --deep)
+echo "Signing .appex..."
+codesign --force --options runtime --timestamp \
+  --sign "$SIGN_IDENTITY" \
+  "$APPEX_PATH"
+
+# Step 7: Sign the .app container
+echo "Signing .app..."
+codesign --force --options runtime --timestamp \
+  --sign "$SIGN_IDENTITY" \
+  "$APP_PATH"
+
+# Step 8: Verify signature
+echo "Verifying signatures..."
+codesign --verify --deep --strict --verbose=2 "$APP_PATH"
+spctl -a -t exec -vv "$APP_PATH"
+
+echo "=== Notarizing ==="
+
+# Step 9: Create ZIP for notarization
+ditto -c -k --keepParent "$APP_PATH" "$ROOT/bin/Safari Pilot.zip"
+
+# Step 10: Submit for notarization and wait
+xcrun notarytool submit "$ROOT/bin/Safari Pilot.zip" \
+  --keychain-profile "apple-notarytool" --wait
+
+# Step 11: Staple the ticket
+xcrun stapler staple "$APP_PATH"
+
+# Step 12: Re-zip the stapled app for distribution
+rm "$ROOT/bin/Safari Pilot.zip"
+ditto -c -k --keepParent "$APP_PATH" "$ROOT/bin/Safari Pilot.zip"
+
+echo "=== Signed, Notarized, and Stapled ==="
