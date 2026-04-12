@@ -69,7 +69,13 @@ The extension unlocks advanced features that are impossible without it.
 6. Set to **"Allow on all websites"** when prompted
 7. Click **"Manage Profiles"** and enable for your active profile
 
-The extension is signed with Developer ID and notarized by Apple — it persists permanently across Safari restarts. No "Allow Unsigned Extensions" needed.
+The extension is signed with Developer ID and notarized by Apple — it persists permanently across Safari restarts.
+
+> **Troubleshooting:** If Safari shows **"Safari detected an app or service that interfered with clicking"** when you try to enable the extension, this is a Safari security feature triggered by other apps on your Mac that have Accessibility, Screen Recording, or Input Monitoring permissions (e.g., terminal emulators, screen sharing tools, window managers). To work around it:
+> 1. Go to **Safari > Develop > Allow Unsigned Extensions** (check it temporarily)
+> 2. Enable Safari Pilot in **Safari > Settings > Extensions**
+> 3. Quit and reopen Safari
+> 4. Optionally uncheck "Allow Unsigned Extensions" — the notarized extension stays enabled
 
 **What the extension adds:**
 
