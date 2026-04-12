@@ -273,7 +273,7 @@
   browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
     // Health check
     if (message && message.type === 'ping') {
-      sendResponse({ ok: true, type: 'pong', extensionVersion: '0.1.0' });
+      sendResponse({ ok: true, type: 'pong', extensionVersion: '0.1.1' });
       return false;
     }
 

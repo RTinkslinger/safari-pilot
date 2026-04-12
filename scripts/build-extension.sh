@@ -111,10 +111,9 @@ codesign --force --options runtime --timestamp \
   --sign "$SIGN_IDENTITY" \
   "$APP_PATH"
 
-# Step 8: Verify signature
-echo "Verifying signatures..."
+# Step 8: Verify codesign (spctl check deferred until after notarization)
+echo "Verifying code signature..."
 codesign --verify --deep --strict --verbose=2 "$APP_PATH"
-spctl -a -t exec -vv "$APP_PATH"
 
 echo "=== Notarizing ==="
 
@@ -131,5 +130,9 @@ xcrun stapler staple "$APP_PATH"
 # Step 12: Re-zip the stapled app for distribution
 rm "$ROOT/bin/Safari Pilot.zip"
 ditto -c -k --keepParent "$APP_PATH" "$ROOT/bin/Safari Pilot.zip"
+
+# Step 13: Verify with Gatekeeper (now notarized)
+echo "Verifying Gatekeeper acceptance..."
+spctl -a -t exec -vv "$APP_PATH"
 
 echo "=== Signed, Notarized, and Stapled ==="
