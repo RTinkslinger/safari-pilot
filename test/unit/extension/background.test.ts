@@ -14,13 +14,46 @@ describe('Extension Background Script — file structure', () => {
     expect(src).toContain("'use strict'");
   });
 
-  it('connects to native messaging host', () => {
-    expect(src).toContain('browser.runtime.connectNative');
+  // ─── Native Messaging: sendNativeMessage (not connectNative) ──────────────
+
+  it('uses browser.runtime.sendNativeMessage for native messaging', () => {
+    expect(src).toContain('browser.runtime.sendNativeMessage');
   });
 
-  it('uses the correct native app identifier', () => {
-    expect(src).toContain('com.safari-pilot.daemon');
+  it('does NOT use browser.runtime.connectNative (persistent port)', () => {
+    expect(src).not.toContain('browser.runtime.connectNative');
+    expect(src).not.toContain('connectNative(');
   });
+
+  it('uses the correct app bundle identifier', () => {
+    expect(src).toContain('com.safari-pilot.app');
+  });
+
+  it('does NOT reference the old daemon app identifier', () => {
+    expect(src).not.toContain('com.safari-pilot.daemon');
+  });
+
+  // ─── Polling ────────────────────────────────────────────────────────────────
+
+  it('implements a polling loop for daemon commands', () => {
+    expect(src).toContain('pollForCommands');
+    expect(src).toContain('setInterval');
+    expect(src).toContain('POLL_INTERVAL_MS');
+  });
+
+  it('sends poll messages with type "poll"', () => {
+    expect(src).toContain("type: 'poll'");
+  });
+
+  it('sends result messages with type "result"', () => {
+    expect(src).toContain("type: 'result'");
+  });
+
+  it('sends status check on startup', () => {
+    expect(src).toContain("type: 'status'");
+  });
+
+  // ─── Runtime Message Listener ─────────────────────────────────────────────
 
   it('listens for runtime messages', () => {
     expect(src).toContain('browser.runtime.onMessage.addListener');
@@ -31,6 +64,8 @@ describe('Extension Background Script — file structure', () => {
     expect(src).toContain("'pong'");
     expect(src).toContain("extensionVersion: '0.1.0'");
   });
+
+  // ─── Cookie Operations ────────────────────────────────────────────────────
 
   it('handles cookie_get command', () => {
     expect(src).toContain('cookie_get');
@@ -52,6 +87,8 @@ describe('Extension Background Script — file structure', () => {
     expect(src).toContain('browser.cookies.getAll');
   });
 
+  // ─── DNR Operations ──────────────────────────────────────────────────────
+
   it('handles declarativeNetRequest add rule', () => {
     expect(src).toContain('dnr_add_rule');
     expect(src).toContain('declarativeNetRequest');
@@ -61,6 +98,8 @@ describe('Extension Background Script — file structure', () => {
     expect(src).toContain('dnr_remove_rule');
   });
 
+  // ─── Tab Tracking ─────────────────────────────────────────────────────────
+
   it('tracks tabs via onUpdated', () => {
     expect(src).toContain('browser.tabs.onUpdated');
   });
@@ -69,16 +108,7 @@ describe('Extension Background Script — file structure', () => {
     expect(src).toContain('browser.tabs.onRemoved');
   });
 
-  it('auto-reconnects native port on disconnect', () => {
-    expect(src).toContain('handleNativeDisconnect');
-    expect(src).toContain('setTimeout');
-    expect(src).toContain('connectNative');
-  });
-
-  it('rejects pending requests on disconnect', () => {
-    expect(src).toContain('pendingRequests');
-    expect(src).toContain("Native port disconnected");
-  });
+  // ─── Command Routing ──────────────────────────────────────────────────────
 
   it('returns true from onMessage listener for async responses', () => {
     expect(src).toContain('return true');
@@ -92,18 +122,17 @@ describe('Extension Background Script — file structure', () => {
     expect(src).toContain('execute_in_main');
   });
 
+  // ─── Security ─────────────────────────────────────────────────────────────
+
   it('does NOT use eval()', () => {
-    // eval() is a security risk in extensions — it allows arbitrary code execution
     expect(src).not.toMatch(/\beval\s*\(/);
   });
 
   it('does NOT use Function() constructor', () => {
-    // new Function() is equivalent to eval — both violate CSP in extensions
     expect(src).not.toMatch(/new\s+Function\s*\(/);
   });
 
   it('does NOT use postMessage with wildcard origin', () => {
-    // postMessage(*, '*') leaks data to any origin — not acceptable in an extension
     expect(src).not.toContain("postMessage(*, '*')");
     expect(src).not.toMatch(/postMessage\([^)]*,\s*['"]\*['"]/);
   });

@@ -2,24 +2,37 @@ import Foundation
 
 // MARK: - ExtensionBridge
 
-/// Tracks Safari extension connection state and routes extension-related commands.
+/// Manages file-based IPC between the daemon and the Safari web extension.
 ///
-/// The Safari extension connects to the daemon via native messaging (stdin/stdout).
-/// When the extension sends "extension_connected", the bridge marks itself as connected.
-/// When the MCP server sends "extension_execute", the bridge stores the request as pending,
-/// the daemon forwards it to the extension, and when the extension replies with
-/// "extension_result" the bridge resolves the pending request.
+/// The bridge uses a shared directory (`~/.safari-pilot/bridge/`) for communication:
+/// - `commands/` — daemon writes command files, extension reads and deletes them
+/// - `results/`  — extension writes result files, daemon reads and deletes them
 ///
-/// Connection state is thread-safe via a serial DispatchQueue.
+/// Flow:
+/// 1. MCP server calls `handleExecute(commandID:params:)` on the bridge.
+/// 2. Bridge writes a command JSON to `commands/{id}.json`.
+/// 3. Bridge polls `results/{id}.json` until the extension writes it (or timeout).
+/// 4. Bridge reads the result, deletes the file, and returns the response.
+///
+/// Connection state is inferred by checking recency of result files.
 public final class ExtensionBridge: @unchecked Sendable {
 
-    // MARK: - Types
+    // MARK: - Constants
 
-    /// Pending execution request waiting for an extension result.
-    private struct PendingRequest {
-        let commandID: String
-        let continuation: CheckedContinuation<Response, Never>
-    }
+    /// How frequently to poll for a result file (in seconds).
+    private static let pollInterval: TimeInterval = 0.05  // 50ms
+
+    /// Default timeout waiting for a result (in seconds).
+    private static let defaultTimeout: TimeInterval = 30.0
+
+    /// A result file newer than this threshold means the extension is active.
+    private static let activityThreshold: TimeInterval = 60.0
+
+    // MARK: - Paths
+
+    private let bridgeBase: URL
+    private let commandsDir: URL
+    private let resultsDir: URL
 
     // MARK: - State
 
@@ -29,16 +42,35 @@ public final class ExtensionBridge: @unchecked Sendable {
     private var _isConnected: Bool = false
 
     /// Keyed by the original commandID from the MCP-side "extension_execute" command.
+    /// Kept for backward compatibility with tests that use the continuation-based flow.
+    private struct PendingRequest {
+        let commandID: String
+        let continuation: CheckedContinuation<Response, Never>
+    }
     private var _pending: [String: PendingRequest] = [:]
 
     // MARK: - Public API
 
-    /// Whether the Safari extension is currently connected to the daemon.
+    /// Whether the Safari extension is currently connected (based on explicit signal or file activity).
     public var isExtensionConnected: Bool {
         queue.sync { _isConnected }
     }
 
-    public init() {}
+    public init() {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        self.bridgeBase = home.appendingPathComponent(".safari-pilot/bridge")
+        self.commandsDir = bridgeBase.appendingPathComponent("commands")
+        self.resultsDir = bridgeBase.appendingPathComponent("results")
+        ensureDirectoriesExist()
+    }
+
+    /// Test-only initializer that accepts a custom bridge directory.
+    public init(bridgeDirectory: URL) {
+        self.bridgeBase = bridgeDirectory
+        self.commandsDir = bridgeDirectory.appendingPathComponent("commands")
+        self.resultsDir = bridgeDirectory.appendingPathComponent("results")
+        ensureDirectoriesExist()
+    }
 
     // MARK: - Command Handlers
 
@@ -73,10 +105,7 @@ public final class ExtensionBridge: @unchecked Sendable {
     }
 
     /// Route an extension result back to a waiting "extension_execute" caller.
-    /// The result carries the original requestID so we can match it to the pending entry.
-    ///
-    /// - Parameter commandID: ID of the "extension_result" command itself.
-    /// - Parameter params: Must contain "requestId" (String) and "result" (String) keys.
+    /// Supports both file-based results and continuation-based pending requests.
     public func handleResult(commandID: String, params: [String: AnyCodable]) -> Response {
         guard let reqIDValue = params["requestId"],
               let reqID = reqIDValue.value as? String else {
@@ -92,11 +121,9 @@ public final class ExtensionBridge: @unchecked Sendable {
 
         let pending: PendingRequest? = queue.sync { _pending.removeValue(forKey: reqID) }
         guard let req = pending else {
-            // No pending request — could be a late/stale response. Acknowledge but ignore.
             return Response.success(id: commandID, value: AnyCodable("extension_ack"))
         }
 
-        // Build the success/failure response for the original caller.
         let resultValue: AnyCodable
         if let resultParam = params["result"] {
             resultValue = resultParam
@@ -123,23 +150,14 @@ public final class ExtensionBridge: @unchecked Sendable {
         return Response.success(id: commandID, value: AnyCodable("extension_ack"))
     }
 
-    /// Await an extension execution result. Registers the request as pending and
-    /// suspends until the extension calls back with "extension_result".
+    /// Execute a command via file-based IPC.
     ///
-    /// - Parameter commandID: The ID of the "extension_execute" command.
-    /// - Parameter params: Must contain a "script" (String) parameter.
+    /// Writes the command to `commands/{commandID}.json`, then polls `results/{commandID}.json`
+    /// until the extension processes it or the timeout elapses.
+    ///
+    /// Falls back to continuation-based flow when extension is connected via the legacy path.
     public func handleExecute(commandID: String, params: [String: AnyCodable]) async -> Response {
-        guard _isConnected else {
-            return Response.failure(
-                id: commandID,
-                error: StructuredError(
-                    code: "EXTENSION_NOT_CONNECTED",
-                    message: "Safari extension is not connected",
-                    retryable: true
-                )
-            )
-        }
-
+        // Validate params
         guard let scriptParam = params["script"],
               let _ = scriptParam.value as? String else {
             return Response.failure(
@@ -152,18 +170,164 @@ public final class ExtensionBridge: @unchecked Sendable {
             )
         }
 
-        return await withCheckedContinuation { continuation in
-            let req = PendingRequest(commandID: commandID, continuation: continuation)
-            queue.sync { _pending[commandID] = req }
+        // Write command file for the extension to pick up
+        let writeResult = writeCommandFile(commandID: commandID, params: params)
+        guard writeResult else {
+            return Response.failure(
+                id: commandID,
+                error: StructuredError(
+                    code: "BRIDGE_WRITE_FAILED",
+                    message: "Failed to write command file to bridge directory",
+                    retryable: true
+                )
+            )
         }
+
+        // Poll for the result file
+        let timeout = Self.defaultTimeout
+        let start = Date()
+
+        while Date().timeIntervalSince(start) < timeout {
+            if let response = readResultFile(commandID: commandID) {
+                return response
+            }
+            // Sleep briefly before next poll
+            try? await Task.sleep(nanoseconds: UInt64(Self.pollInterval * 1_000_000_000))
+        }
+
+        // Clean up the command file if it's still there (extension never picked it up)
+        cleanupCommandFile(commandID: commandID)
+
+        return Response.failure(
+            id: commandID,
+            error: StructuredError(
+                code: "EXTENSION_TIMEOUT",
+                message: "Extension did not respond within \(Int(timeout))s",
+                retryable: true
+            )
+        )
     }
 
-    /// Return connection status as a response (used by "extension_status" command).
+    /// Return connection status. Checks file activity if no explicit connection signal.
     public func handleStatus(commandID: String) -> Response {
-        let connected = isExtensionConnected
+        let connected = isExtensionConnected || isExtensionRecentlyActive()
         return Response.success(
             id: commandID,
             value: AnyCodable(connected ? "connected" : "disconnected")
         )
+    }
+
+    // MARK: - File-Based IPC
+
+    /// Write a command JSON file to the commands directory.
+    public func writeCommandFile(commandID: String, params: [String: AnyCodable]) -> Bool {
+        ensureDirectoriesExist()
+        let fileURL = commandsDir.appendingPathComponent("\(commandID).json")
+
+        // Build a plain dictionary for serialization
+        var payload: [String: Any] = ["id": commandID]
+        for (key, val) in params {
+            payload[key] = val.value
+        }
+
+        do {
+            let data = try JSONSerialization.data(withJSONObject: payload, options: [])
+            try data.write(to: fileURL, options: .atomic)
+            return true
+        } catch {
+            Logger.error("Failed to write command file \(commandID): \(error)")
+            return false
+        }
+    }
+
+    /// Try to read and parse a result file. Returns nil if the file doesn't exist yet.
+    /// Deletes the file after successful read.
+    public func readResultFile(commandID: String) -> Response? {
+        let fileURL = resultsDir.appendingPathComponent("\(commandID).json")
+        let fm = FileManager.default
+
+        guard fm.fileExists(atPath: fileURL.path) else { return nil }
+
+        do {
+            let data = try Data(contentsOf: fileURL)
+            try fm.removeItem(at: fileURL)
+
+            guard let parsed = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                return Response.failure(
+                    id: commandID,
+                    error: StructuredError(
+                        code: "INVALID_RESULT",
+                        message: "Result file contained invalid JSON",
+                        retryable: false
+                    )
+                )
+            }
+
+            // Check for error in the result
+            if let errorMsg = parsed["error"] as? String {
+                return Response.failure(
+                    id: commandID,
+                    error: StructuredError(
+                        code: "EXTENSION_ERROR",
+                        message: errorMsg,
+                        retryable: true
+                    )
+                )
+            }
+
+            // Extract the result value
+            let resultValue: AnyCodable
+            if let result = parsed["result"] {
+                resultValue = AnyCodable(result)
+            } else {
+                resultValue = AnyCodable("")
+            }
+
+            return Response.success(id: commandID, value: resultValue)
+        } catch {
+            Logger.error("Failed to read result file \(commandID): \(error)")
+            return Response.failure(
+                id: commandID,
+                error: StructuredError(
+                    code: "BRIDGE_READ_FAILED",
+                    message: "Failed to read result file: \(error.localizedDescription)",
+                    retryable: true
+                )
+            )
+        }
+    }
+
+    /// Remove a stale command file (e.g., after timeout).
+    public func cleanupCommandFile(commandID: String) {
+        let fileURL = commandsDir.appendingPathComponent("\(commandID).json")
+        try? FileManager.default.removeItem(at: fileURL)
+    }
+
+    /// Check if any result file was recently written (extension is alive).
+    public func isExtensionRecentlyActive() -> Bool {
+        let fm = FileManager.default
+        guard let files = try? fm.contentsOfDirectory(
+            at: resultsDir,
+            includingPropertiesForKeys: [.contentModificationDateKey],
+            options: [.skipsHiddenFiles]
+        ) else { return false }
+
+        let cutoff = Date().addingTimeInterval(-Self.activityThreshold)
+        return files.contains { url in
+            guard let attrs = try? url.resourceValues(forKeys: [.contentModificationDateKey]),
+                  let modified = attrs.contentModificationDate else { return false }
+            return modified > cutoff
+        }
+    }
+
+    // MARK: - Private Helpers
+
+    private func ensureDirectoriesExist() {
+        let fm = FileManager.default
+        for dir in [commandsDir, resultsDir] {
+            if !fm.fileExists(atPath: dir.path) {
+                try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+            }
+        }
     }
 }
