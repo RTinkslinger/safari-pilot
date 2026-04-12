@@ -143,12 +143,12 @@ describe('Phase 6 Gate — README.md', () => {
 
   it('README.md has plugin install command', () => {
     const content = readFileSync(readmePath, 'utf-8');
-    expect(content).toContain('claude plugin add safari-pilot');
+    expect(content).toContain('claude plugin add --from npm safari-pilot');
   });
 
-  it('README.md has Prerequisites section', () => {
+  it('README.md has Setup section', () => {
     const content = readFileSync(readmePath, 'utf-8');
-    expect(content).toMatch(/##\s+Prerequisites/i);
+    expect(content).toMatch(/##\s+Setup/i);
   });
 
   it('README.md has macOS version requirement', () => {
