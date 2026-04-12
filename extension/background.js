@@ -11,13 +11,17 @@
   // Bundle ID of the containing macOS app — Safari routes
   // sendNativeMessage calls to the app's web extension handler.
   const APP_BUNDLE_ID = 'com.safari-pilot.app';
-  const POLL_INTERVAL_MS = 200;
+  const POLL_IDLE_MS = 5000;
+  const POLL_ACTIVE_MS = 200;
+  const ACTIVE_COOLDOWN_MS = 10000;
 
   // ─── State ────────────────────────────────────────────────────────────────
 
   let isConnected = false;
   const activeTabs = new Map(); // tabId → { url, status }
   let pollTimerId = null;
+  let currentPollInterval = POLL_IDLE_MS;
+  let lastCommandTime = 0;
 
   // ─── Native Messaging (sendNativeMessage-based) ───────────────────────────
 
@@ -39,12 +43,33 @@
       const response = await sendNativeRequest({ type: 'poll' });
 
       if (response && response.command && response.command !== null) {
+        lastCommandTime = Date.now();
+        switchToActivePolling();
         const cmd = response.command;
         await executeAndReturnResult(cmd);
+      } else if (currentPollInterval === POLL_ACTIVE_MS &&
+                 Date.now() - lastCommandTime > ACTIVE_COOLDOWN_MS) {
+        switchToIdlePolling();
       }
     } catch (e) {
       console.warn('[SafariPilot] Poll error:', e);
     }
+  }
+
+  function switchToActivePolling() {
+    if (currentPollInterval === POLL_ACTIVE_MS) return;
+    currentPollInterval = POLL_ACTIVE_MS;
+    stopPolling();
+    pollTimerId = setInterval(pollForCommands, POLL_ACTIVE_MS);
+    console.log('[SafariPilot] Switched to active polling (200ms)');
+  }
+
+  function switchToIdlePolling() {
+    if (currentPollInterval === POLL_IDLE_MS) return;
+    currentPollInterval = POLL_IDLE_MS;
+    stopPolling();
+    pollTimerId = setInterval(pollForCommands, POLL_IDLE_MS);
+    console.log('[SafariPilot] Switched to idle polling (5s)');
   }
 
   /**
@@ -102,8 +127,9 @@
 
   function startPolling() {
     if (pollTimerId != null) return;
-    pollTimerId = setInterval(pollForCommands, POLL_INTERVAL_MS);
-    console.log('[SafariPilot] Polling started');
+    currentPollInterval = POLL_IDLE_MS;
+    pollTimerId = setInterval(pollForCommands, POLL_IDLE_MS);
+    console.log('[SafariPilot] Polling started (idle: 5s)');
   }
 
   function stopPolling() {
@@ -248,6 +274,21 @@
     // Health check
     if (message && message.type === 'ping') {
       sendResponse({ ok: true, type: 'pong', extensionVersion: '0.1.0' });
+      return false;
+    }
+
+    // MCP server session signal — switch to active polling
+    if (message && message.type === 'session_start') {
+      lastCommandTime = Date.now();
+      switchToActivePolling();
+      sendResponse({ ok: true, polling: 'active' });
+      return false;
+    }
+
+    // MCP server session end — switch to idle polling
+    if (message && message.type === 'session_end') {
+      switchToIdlePolling();
+      sendResponse({ ok: true, polling: 'idle' });
       return false;
     }
 

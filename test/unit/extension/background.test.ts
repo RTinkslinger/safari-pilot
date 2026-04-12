@@ -35,10 +35,13 @@ describe('Extension Background Script — file structure', () => {
 
   // ─── Polling ────────────────────────────────────────────────────────────────
 
-  it('implements a polling loop for daemon commands', () => {
+  it('implements adaptive polling for daemon commands', () => {
     expect(src).toContain('pollForCommands');
     expect(src).toContain('setInterval');
-    expect(src).toContain('POLL_INTERVAL_MS');
+    expect(src).toContain('POLL_IDLE_MS');
+    expect(src).toContain('POLL_ACTIVE_MS');
+    expect(src).toContain('switchToActivePolling');
+    expect(src).toContain('switchToIdlePolling');
   });
 
   it('sends poll messages with type "poll"', () => {
