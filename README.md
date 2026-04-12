@@ -26,10 +26,16 @@ Safari Pilot gives Claude Code direct control of Safari through AppleScript and 
 claude plugin add safari-pilot
 ```
 
-### Manual Installation
+### From npm
 
 ```bash
-git clone https://github.com/aakashkumar/safari-pilot.git
+npm install -g safari-pilot
+```
+
+### From Source
+
+```bash
+git clone https://github.com/RTinkslinger/safari-pilot.git
 cd safari-pilot
 npm install
 npm run build
@@ -52,19 +58,32 @@ Enable "Allow JavaScript from Apple Events":
 
 This is a one-time setting that persists across Safari restarts.
 
-### Optional: Safari Web Extension
+### Safari Web Extension (Recommended)
 
-For advanced features (closed Shadow DOM traversal, CSP bypass, dialog interception, network mocking), install the bundled Safari extension:
+The extension unlocks advanced features that are impossible without it: closed Shadow DOM traversal, CSP bypass, dialog interception, and network request mocking.
+
+**Option A: Download the signed, notarized extension (easiest)**
+
+Download `Safari Pilot.zip` from the [latest GitHub Release](https://github.com/RTinkslinger/safari-pilot/releases/latest), extract it, and open `Safari Pilot.app`. The extension is signed with Developer ID and notarized by Apple — it persists across Safari restarts.
+
+**Option B: Build from source (requires Xcode)**
 
 ```bash
-# Build the extension (requires Xcode)
 bash scripts/build-extension.sh
-
-# Open the app to trigger Safari's extension enable prompt
 open "bin/Safari Pilot.app"
 ```
 
-Then enable it in **Safari > Settings > Extensions > Safari Pilot**.
+Then enable it in **Safari > Settings > Extensions > Safari Pilot**. Enable for all profiles and all websites when prompted.
+
+**What the extension adds:**
+
+| Feature | Without Extension | With Extension |
+|---|---|---|
+| Closed Shadow DOM | Invisible | Full traversal via `queryShadow` |
+| Strict CSP sites (GitHub, etc.) | JS execution blocked | Bypassed via MAIN world |
+| alert()/confirm()/prompt() | Blocks JS forever | Intercepted, returns instantly |
+| Network request capture | Read-only via Performance API | Full intercept, mock, throttle |
+| React/Vue internal state | Basic native setter | Deep framework manipulation |
 
 ## Quick Start
 

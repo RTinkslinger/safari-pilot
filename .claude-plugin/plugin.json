@@ -4,7 +4,7 @@
   "description": "Native Safari browser automation for AI agents on macOS",
   "author": "Aakash Kumar",
   "license": "MIT",
-  "homepage": "https://github.com/aakashkumar/safari-pilot",
+  "homepage": "https://github.com/RTinkslinger/safari-pilot",
   "components": {
     "mcpServers": {
       "safari": {
