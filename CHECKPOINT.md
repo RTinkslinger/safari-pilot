@@ -1,73 +1,39 @@
 # Checkpoint
-*Written: 2026-04-12 18:45*
+*Written: 2026-04-12 20:00*
 
 ## Current Task
-Execute Tasks A-H: wire native messaging bridge, rebuild extension, E2E test extension features, sign + notarize extension, publish. Also fix CI/CD errors on GitHub.
+Safari Pilot v0.1.0 shipped. All tasks complete. Next work: P0 roadmap items (structured a11y snapshots + auto-waiting).
 
 ## Progress
-- [x] Phases 1-8 built (74 tools, 1167+ tests, Swift daemon, extension source)
-- [x] Extension installed in Safari (unsigned, "Allow Unsigned Extensions" enabled)
-- [x] Extension content scripts confirmed injected (window.__safariPilot with 7 functions)
-- [x] Dialog interception, Shadow DOM traversal, framework detection tested live via AppleScript→extension functions
-- [x] GitHub repo: https://github.com/RTinkslinger/safari-pilot
-- [x] Ultra research on Xcode signing/notarization complete — saved to docs/research-xcode-signing-notarization.md
-- [x] Ultra research on certificate installation complete — Xcode is the correct path, not openssl CLI
-- [x] Developer ID Application certificate installed: `Developer ID Application: Aakash Kumar (V37WLKRXUJ)`
-- [x] Notarytool credentials stored: `--keychain-profile "apple-notarytool"` (validated, uses hi@aacash.me)
-- [x] npm authenticated as `aacash`
-- [ ] **Task A: Wire SafariWebExtensionHandler as message relay**
-- [ ] **Task B: Update daemon to use bridge directory IPC**
-- [ ] **Task C: Update background.js to use sendNativeMessage**
-- [ ] **Task D: Rebuild extension**
-- [ ] **Task E: Real E2E tests (CSP bypass, network capture, closed Shadow DOM, full round-trip)**
-- [ ] **Task F: Restore weakened network test**
-- [ ] **Task G: Sign + notarize extension with Developer ID**
-- [ ] **Task H: Publish signed extension + update distribution**
-- [ ] **Fix CI/CD errors on GitHub**
+- [x] Phases 1-8 built (74 tools, 1133+ tests, Swift daemon, extension)
+- [x] Tasks A-H complete (native messaging bridge, real E2E tests, signing, notarization, publishing)
+- [x] Extension signed with Developer ID: `Developer ID Application: Aakash Kumar (V37WLKRXUJ)`
+- [x] Extension notarized by Apple — persists across Safari restarts without "Allow Unsigned Extensions"
+- [x] Published to npm: `safari-pilot@0.1.0`
+- [x] GitHub Release: https://github.com/RTinkslinger/safari-pilot/releases/tag/v0.1.0
+- [x] CI/CD green on GitHub Actions
+- [x] README updated with correct install instructions and extension setup
+- [x] Roadmap with 10 items for full Playwright parity: docs/ROADMAP.md
 
-## Key Decisions (not yet persisted)
-1. System Apple ID (`itouch.aakash@gmail.com`) is DIFFERENT from Developer Apple ID (`hi@aacash.me`) — all build scripts MUST explicitly pass `DEVELOPMENT_TEAM=V37WLKRXUJ` and `CODE_SIGN_IDENTITY="Developer ID Application: Aakash Kumar (V37WLKRXUJ)"` — never auto-detect
-2. Notarytool profile named `apple-notarytool` (NOT app-specific — reusable for all apps)
-3. Signing order: .appex FIRST, then .app container (inside-out, never --deep)
-4. Must use `--options runtime --timestamp` for Hardened Runtime (required for notarization)
-5. Do NOT include `com.apple.security.get-task-allow = true` entitlement (breaks notarization)
-6. Safari native messaging goes through SafariWebExtensionHandler.beginRequest(with:) — NOT direct stdin/stdout to daemon
-7. Weakened network test must be restored to a REAL test — corner-cutting was called out
+## Key Decisions (persisted)
+- Apple Developer ID: hi@aacash.me, Team ID: V37WLKRXUJ (in memory: reference_apple_developer.md)
+- System Apple ID (itouch.aakash@gmail.com) is DIFFERENT from Developer ID — always pass signing identity explicitly
+- Notarytool profile: `apple-notarytool` (reusable across all apps)
+- npm user: `aacash`
+- Native messaging uses file-based IPC at `~/.safari-pilot/bridge/` (handler ↔ daemon)
+- Extension installed via signed .app from GitHub Releases (not build-from-source)
 
 ## Next Steps
-1. Start Task A: Modify `app/Safari Pilot/Safari Pilot Extension/SafariWebExtensionHandler.swift`
-   - Currently a stub that echoes messages
-   - Needs to: receive commands from extension, execute AppleScript or relay to daemon, send results back
-   - IPC options: shared directory at `~/.safari-pilot/bridge/`, or direct AppleScript execution within the handler
-2. Task B: Update daemon ExtensionBridge for the chosen IPC mechanism
-3. Task C: Update `extension/background.js` — switch from `connectNative()` to `sendNativeMessage()`
-4. Task D: Rebuild with `bash scripts/build-extension.sh`
-5. Task E: Write real E2E tests for CSP bypass, network capture, closed Shadow DOM
-6. Task F: Restore weakened test in `test/e2e/extension-live.test.ts`
-7. Task G: Update build-extension.sh with signing:
-   ```bash
-   codesign --force --options runtime --timestamp \
-     --sign "Developer ID Application: Aakash Kumar (V37WLKRXUJ)" \
-     "Safari Pilot.app/Contents/PlugIns/Safari Pilot Extension.appex"
-   codesign --force --options runtime --timestamp \
-     --sign "Developer ID Application: Aakash Kumar (V37WLKRXUJ)" \
-     "Safari Pilot.app"
-   ditto -c -k --keepParent "Safari Pilot.app" "Safari Pilot.zip"
-   xcrun notarytool submit "Safari Pilot.zip" --keychain-profile "apple-notarytool" --wait
-   xcrun stapler staple "Safari Pilot.app"
-   ```
-8. Task H: Upload to GitHub Releases, update postinstall, publish npm
-9. Check and fix CI/CD errors on GitHub Actions
+1. Read `docs/ROADMAP.md` for the full Playwright parity plan
+2. P0 first: Structured accessibility snapshots (the biggest gap — how Claude reasons about pages)
+3. P0 second: Auto-waiting on all interaction tools
+4. Then P1: Locator-style targeting, file downloads, PDF generation
+5. Each item needs: deep research → spec → implementation → E2E testing
 
 ## Context
-- Signing identity hash: `6E5C7C7ED0FBBFB9349B725A2C7E8F034A6C0B5F`
-- Full identity: `Developer ID Application: Aakash Kumar (V37WLKRXUJ)`
-- Team ID: `V37WLKRXUJ`
-- Apple ID (developer): `hi@aacash.me`
-- System Apple ID (DO NOT USE for signing): `itouch.aakash@gmail.com`
-- Notarytool profile: `apple-notarytool`
-- npm user: `aacash`
-- SafariWebExtensionHandler stub at: `app/Safari Pilot/Safari Pilot Extension/SafariWebExtensionHandler.swift`
-- Extension background.js currently uses `browser.runtime.connectNative('com.safari-pilot.daemon')` — needs to switch to `browser.runtime.sendNativeMessage()`
-- GitHub repo has CI errors that need fixing after push
-- Safari's native messaging: extension calls sendNativeMessage → Safari routes to SafariWebExtensionHandler.beginRequest(with:) → handler processes → responds via context.completeRequest
+- Repo: https://github.com/RTinkslinger/safari-pilot
+- npm: https://www.npmjs.com/package/safari-pilot
+- Design spec: docs/superpowers/specs/2026-04-11-safari-browser-skill-design.md
+- Implementation plan: docs/superpowers/plans/2026-04-11-safari-browser-skill-plan.md
+- Signing research: docs/research-xcode-signing-notarization.md
+- Signing identity hash: 6E5C7C7ED0FBBFB9349B725A2C7E8F034A6C0B5F
