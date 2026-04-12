@@ -65,7 +65,7 @@ describe('Extension Background Script — file structure', () => {
   it('handles ping with pong response', () => {
     expect(src).toContain("'ping'");
     expect(src).toContain("'pong'");
-    expect(src).toContain("extensionVersion: '0.1.0'");
+    expect(src).toMatch(/extensionVersion: '\d+\.\d+\.\d+'/);
   });
 
   // ─── Cookie Operations ────────────────────────────────────────────────────

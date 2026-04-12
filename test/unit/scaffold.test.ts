@@ -8,7 +8,7 @@ describe('Project Scaffold', () => {
   it('has package.json with correct name and version', () => {
     const pkg = JSON.parse(readFileSync(resolve(ROOT, 'package.json'), 'utf-8'));
     expect(pkg.name).toBe('safari-pilot');
-    expect(pkg.version).toBe('0.1.0');
+    expect(pkg.version).toMatch(/^\d+\.\d+\.\d+$/);
   });
 
   it('has plugin manifest with correct MCP server config', () => {

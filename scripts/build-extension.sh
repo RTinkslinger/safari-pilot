@@ -8,7 +8,12 @@ APP_DIR="$ROOT/app"
 XCODE_PROJECT_DIR="$APP_DIR/Safari Pilot"
 BUNDLE_ID="com.safari-pilot.app"
 
+# Read version from package.json — single source of truth
+VERSION=$(python3 -c "import json; print(json.load(open('$ROOT/package.json'))['version'])")
+BUILD_NUMBER=$(date +%Y%m%d%H%M)
+
 echo "=== Safari Pilot Extension Build ==="
+echo "Version: $VERSION (build $BUILD_NUMBER)"
 
 # Step 1: Generate Xcode project from extension source
 echo "Generating Xcode project..."
@@ -36,7 +41,12 @@ PBXPROJ="$XCODE_PROJECT_DIR/Safari Pilot.xcodeproj/project.pbxproj"
 echo "Fixing bundle identifier in Xcode project..."
 sed -i '' "s/PRODUCT_BUNDLE_IDENTIFIER = \"com.safari-pilot.Safari-Pilot\";/PRODUCT_BUNDLE_IDENTIFIER = \"$BUNDLE_ID\";/g" "$PBXPROJ"
 
-# Step 3: Create placeholder Icon.png if missing
+# Step 3: Sync versions from package.json into Xcode build settings
+echo "Setting version $VERSION (build $BUILD_NUMBER) in Xcode project..."
+sed -i '' "s/MARKETING_VERSION = .*;/MARKETING_VERSION = $VERSION;/g" "$PBXPROJ"
+sed -i '' "s/CURRENT_PROJECT_VERSION = .*;/CURRENT_PROJECT_VERSION = $BUILD_NUMBER;/g" "$PBXPROJ"
+
+# Step 4: Create placeholder Icon.png if missing
 # The packager references Icon.png in the project but doesn't create it.
 ICON_PATH="$XCODE_PROJECT_DIR/Safari Pilot/Resources/Icon.png"
 if [ ! -f "$ICON_PATH" ]; then
@@ -66,7 +76,7 @@ with open('$ICON_PATH', 'wb') as f:
 "
 fi
 
-# Step 4: Build the app
+# Step 5: Build the app
 echo "Building app (Release)..."
 cd "$XCODE_PROJECT_DIR"
 xcodebuild \
@@ -76,7 +86,7 @@ xcodebuild \
   -derivedDataPath "$ROOT/.build/extension" \
   build 2>&1
 
-# Step 5: Copy built app to bin/
+# Step 6: Copy built app to bin/
 APP_PATH=$(find "$ROOT/.build/extension" -name "Safari Pilot.app" -type d | head -1)
 if [ -n "$APP_PATH" ]; then
   echo "Built app at: $APP_PATH"
