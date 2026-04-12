@@ -20,20 +20,23 @@ The goal: **no Mac user running Claude Code should ever need Playwright or Chrom
 
 ## P0 — Must Have (Foundations + Closes 80% of the Playwright Gap)
 
-### Daemon Lifecycle Commands (NEXT UP)
+### Daemon Lifecycle + Configuration File (NEXT UP)
 
-**Plugin commands for daemon management.** Currently the daemon has no lifecycle management — no way to start, stop, or check status through the plugin. Users have to manually find and kill the process.
+**Plugin commands for daemon management + user-editable config file.** Currently the daemon has no lifecycle management and all settings (rate limits, circuit breaker, polling) are hardcoded in TypeScript source.
 
 **What to build:**
-- `/safari-pilot start` — starts SafariPilotd, outputs PID, confirms running
+- `safari-pilot.config.json` — ships with sensible defaults, user-editable and Claude Code-editable. MCP server reads config on startup. Settings include rate limits, circuit breaker thresholds, polling intervals, domain policies, kill switch, audit logging.
+- `/safari-pilot start` — starts SafariPilotd, outputs PID, confirms running (idempotent)
 - `/safari-pilot stop` — stops daemon gracefully; if shutdown fails, outputs `kill <PID>` fallback
 - Both commands note that the extension is managed in Safari > Settings > Extensions
 - Fix postinstall to properly `launchctl load` the LaunchAgent
-- All configuration (rate limits, domain policies, security) stays conversational through Claude Code
+- Conversational config: user says "set rate limit to 60/min" → Claude Code edits the config file
 
-**Mac app stays unchanged** — extension container only. No GUI controls for daemon.
+**Hardcoded (not configurable):** tab ownership, IDPI scanner patterns, protocol version, extension bundle ID.
 
-**Estimated effort:** Half session.
+**Mac app stays unchanged** — extension container only.
+
+**Estimated effort:** 1 session.
 
 ---
 
