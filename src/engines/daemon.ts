@@ -30,20 +30,32 @@ interface DaemonResponse {
   error?: { code?: string; message?: string };
 }
 
+export interface DaemonEngineOptions {
+  daemonPath?: string;
+  timeoutMs?: number;
+}
+
 export class DaemonEngine extends BaseEngine {
   readonly name: Engine = 'daemon';
 
   private proc: ChildProcess | null = null;
   private pending: Map<string, PendingRequest> = new Map();
   private daemonPath: string;
+  private readonly defaultTimeoutMs: number;
   private reconnectAttempted = false;
   private shuttingDown = false;
 
-  constructor(daemonPath?: string) {
+  constructor(options?: DaemonEngineOptions | string) {
     super();
-    this.daemonPath = daemonPath
-      ?? process.env['SAFARI_PILOT_DAEMON']
-      ?? './bin/SafariPilotd';
+    if (typeof options === 'string') {
+      this.daemonPath = options;
+      this.defaultTimeoutMs = DEFAULT_TIMEOUT_MS;
+    } else {
+      this.daemonPath = options?.daemonPath
+        ?? process.env['SAFARI_PILOT_DAEMON']
+        ?? './bin/SafariPilotd';
+      this.defaultTimeoutMs = options?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    }
   }
 
   // ── Public interface ────────────────────────────────────────────────────────
@@ -58,7 +70,7 @@ export class DaemonEngine extends BaseEngine {
     }
   }
 
-  async execute(script: string, timeout: number = DEFAULT_TIMEOUT_MS): Promise<EngineResult> {
+  async execute(script: string, timeout?: number): Promise<EngineResult> {
     const start = Date.now();
     try {
       await this.ensureRunning();
@@ -180,16 +192,17 @@ export class DaemonEngine extends BaseEngine {
   private sendCommand(
     method: string,
     params: Record<string, unknown>,
-    timeout: number = DEFAULT_TIMEOUT_MS,
+    timeout?: number,
   ): Promise<DaemonResponse> {
+    const effectiveTimeout = timeout ?? this.defaultTimeoutMs;
     const id = nextId();
     const payload = JSON.stringify({ id, method, params }) + '\n';
 
     return new Promise<DaemonResponse>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
-        reject(new DaemonTimeoutError(method, timeout));
-      }, timeout);
+        reject(new DaemonTimeoutError(method, effectiveTimeout));
+      }, effectiveTimeout);
 
       this.pending.set(id, { resolve, reject, timer });
 

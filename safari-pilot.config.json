@@ -1,0 +1,39 @@
+{
+  "schemaVersion": "1.0",
+
+  "rateLimit": {
+    "maxActionsPerMinute": 120,
+    "windowMs": 60000
+  },
+
+  "circuitBreaker": {
+    "errorThreshold": 5,
+    "windowMs": 60000,
+    "cooldownMs": 120000
+  },
+
+  "domainPolicy": {
+    "defaultMaxActionsPerMinute": 60,
+    "blocked": [],
+    "trusted": []
+  },
+
+  "killSwitch": {
+    "autoActivation": false,
+    "maxErrors": 5,
+    "windowSeconds": 60
+  },
+
+  "audit": {
+    "maxEntries": 10000,
+    "logPath": "~/.safari-pilot/audit.log"
+  },
+
+  "daemon": {
+    "timeoutMs": 30000
+  },
+
+  "healthCheck": {
+    "timeoutMs": 3000
+  }
+}

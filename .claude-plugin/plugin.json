@@ -6,6 +6,10 @@
   "license": "MIT",
   "homepage": "https://github.com/RTinkslinger/safari-pilot",
   "components": {
+    "commands": [
+      "commands/start.md",
+      "commands/stop.md"
+    ],
     "mcpServers": {
       "safari": {
         "command": "node",

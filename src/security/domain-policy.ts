@@ -22,11 +22,19 @@ export interface EvaluateResult {
   maxActionsPerMinute: number;
 }
 
-const DEFAULT_POLICY: PolicyRule = {
+const DEFAULT_MAX_ACTIONS = 60;
+
+export interface DomainPolicyOptions {
+  blocked?: string[];
+  trusted?: string[];
+  defaultMaxActionsPerMinute?: number;
+}
+
+const BASE_DEFAULT_POLICY: PolicyRule = {
   trust: 'unknown',
   privateWindow: false,
   extensionAllowed: false,
-  maxActionsPerMinute: 60,
+  maxActionsPerMinute: DEFAULT_MAX_ACTIONS,
 };
 
 // Built-in sensitive domain patterns → untrusted, force private window
@@ -90,18 +98,44 @@ function matchesDomain(pattern: string, hostname: string): boolean {
 
 export class DomainPolicy {
   private rules: Map<string, PolicyRule> = new Map();
+  private readonly defaultPolicy: PolicyRule;
 
-  constructor() {
-    // Register built-in sensitive domain rules
+  constructor(options: DomainPolicyOptions = {}) {
+    const maxActions = options.defaultMaxActionsPerMinute ?? DEFAULT_MAX_ACTIONS;
+    this.defaultPolicy = { ...BASE_DEFAULT_POLICY, maxActionsPerMinute: maxActions };
+
     for (const pattern of SENSITIVE_PATTERNS) {
       this.rules.set(pattern, { ...SENSITIVE_POLICY });
+    }
+
+    // Config-supplied domains must not override hardcoded sensitive protections
+    for (const domain of options.blocked ?? []) {
+      if (!this.rules.has(domain)) {
+        this.rules.set(domain, {
+          trust: 'untrusted',
+          privateWindow: false,
+          extensionAllowed: false,
+          maxActionsPerMinute: maxActions,
+        });
+      }
+    }
+
+    for (const domain of options.trusted ?? []) {
+      if (!this.rules.has(domain)) {
+        this.rules.set(domain, {
+          trust: 'trusted',
+          privateWindow: false,
+          extensionAllowed: true,
+          maxActionsPerMinute: maxActions,
+        });
+      }
     }
   }
 
   // ── Rule management ─────────────────────────────────────────────────────────
 
   addRule(domain: string, policy: Partial<PolicyRule>): void {
-    const existing = this.rules.get(domain) ?? { ...DEFAULT_POLICY };
+    const existing = this.rules.get(domain) ?? { ...this.defaultPolicy };
     this.rules.set(domain, { ...existing, ...policy });
   }
 
@@ -125,7 +159,7 @@ export class DomainPolicy {
       }
     }
 
-    return { ...DEFAULT_POLICY };
+    return { ...this.defaultPolicy };
   }
 
   // ── Introspection ────────────────────────────────────────────────────────────

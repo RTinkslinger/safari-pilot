@@ -12,22 +12,50 @@ fi
 # Detect architecture
 ARCH=$(uname -m)  # arm64 or x86_64
 
-# Download pre-built daemon binary from GitHub Releases
 DAEMON_DIR="$ROOT/bin"
+DAEMON_BIN="$DAEMON_DIR/SafariPilotd"
 mkdir -p "$DAEMON_DIR"
 
-# For now, try to build locally if swift is available
-if command -v swift &>/dev/null; then
-  echo "safari-pilot: Building daemon locally..."
-  cd "$ROOT/daemon" && swift build -c release 2>&1 || true
-  if [ -f ".build/release/SafariPilotd" ]; then
-    cp .build/release/SafariPilotd "$DAEMON_DIR/SafariPilotd"
-    chmod +x "$DAEMON_DIR/SafariPilotd"
+# Step 1: Use pre-built binary if present (npm install path)
+if [ -f "$DAEMON_BIN" ]; then
+  echo "safari-pilot: Daemon binary found (pre-built)"
+
+# Step 2: Build from source if available (developer clone path)
+elif [ -f "$ROOT/daemon/Package.swift" ] && command -v swift &>/dev/null; then
+  echo "safari-pilot: Building daemon from source..."
+  if (cd "$ROOT/daemon" && swift build -c release 2>&1); then
+    cp "$ROOT/daemon/.build/release/SafariPilotd" "$DAEMON_BIN"
+    chmod +x "$DAEMON_BIN"
     echo "safari-pilot: Daemon built successfully"
+  else
+    echo "safari-pilot: Source build failed — downloading pre-built binary..."
   fi
-else
-  echo "safari-pilot: Swift not available — daemon will not be available"
-  echo "safari-pilot: Install Xcode Command Line Tools for daemon support"
+fi
+
+# Step 3: Download from GitHub Releases if still missing
+if [ ! -f "$DAEMON_BIN" ]; then
+  DAEMON_URL="https://github.com/RTinkslinger/safari-pilot/releases/latest/download/SafariPilotd-universal.tar.gz"
+  DAEMON_TAR="$DAEMON_DIR/SafariPilotd.tar.gz"
+  echo "safari-pilot: Downloading daemon binary..."
+  if command -v curl &>/dev/null; then
+    curl -fsSL "$DAEMON_URL" -o "$DAEMON_TAR" 2>/dev/null || true
+  elif command -v wget &>/dev/null; then
+    wget -q "$DAEMON_URL" -O "$DAEMON_TAR" 2>/dev/null || true
+  fi
+
+  if [ -f "$DAEMON_TAR" ]; then
+    tar -xzf "$DAEMON_TAR" -C "$DAEMON_DIR/" 2>/dev/null || true
+    rm -f "$DAEMON_TAR"
+    if [ -f "$DAEMON_BIN" ]; then
+      chmod +x "$DAEMON_BIN"
+      echo "safari-pilot: Daemon downloaded successfully"
+    fi
+  fi
+fi
+
+if [ ! -f "$DAEMON_BIN" ]; then
+  echo "safari-pilot: Could not obtain daemon binary — download manually from:"
+  echo "  https://github.com/RTinkslinger/safari-pilot/releases/latest"
 fi
 
 # Install LaunchAgent if daemon was built
@@ -39,7 +67,10 @@ if [ -f "$DAEMON_DIR/SafariPilotd" ]; then
     # Replace placeholders
     sed "s|__DAEMON_PATH__|$DAEMON_DIR/SafariPilotd|g; s|__LOG_PATH__|$HOME/.safari-pilot|g" "$PLIST_SRC" > "$PLIST_DST"
     mkdir -p "$HOME/.safari-pilot"
-    echo "safari-pilot: LaunchAgent installed at $PLIST_DST"
+    # Register with launchd (unload first in case of upgrade)
+    launchctl unload "$PLIST_DST" 2>/dev/null || true
+    launchctl load "$PLIST_DST" 2>/dev/null || true
+    echo "safari-pilot: LaunchAgent installed and registered at $PLIST_DST"
   fi
 fi
 

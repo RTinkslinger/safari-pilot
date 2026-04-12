@@ -111,4 +111,35 @@ describe('CircuitBreaker', () => {
     expect(cb.getState('bad.com')).toBe('open');
     expect(cb.getState('good.com')).toBe('closed');
   });
+
+  // ── Custom config ──────────────────────────────────────────────────────────
+
+  it('trips at custom failureThreshold', () => {
+    const custom = new CircuitBreaker({ failureThreshold: 2 });
+    custom.recordFailure('x.com');
+    expect(custom.getState('x.com')).toBe('closed');
+    custom.recordFailure('x.com');
+    expect(custom.getState('x.com')).toBe('open');
+  });
+
+  it('uses custom cooldownMs for half-open transition', () => {
+    const custom = new CircuitBreaker({ failureThreshold: 1, cooldownMs: 5_000 });
+    custom.recordFailure('x.com');
+    expect(custom.getState('x.com')).toBe('open');
+
+    vi.advanceTimersByTime(4_999);
+    expect(custom.getState('x.com')).toBe('open');
+
+    vi.advanceTimersByTime(2);
+    expect(custom.getState('x.com')).toBe('half-open');
+  });
+
+  it('uses custom windowMs — failures outside window reset', () => {
+    const custom = new CircuitBreaker({ failureThreshold: 3, windowMs: 5_000 });
+    custom.recordFailure('x.com');
+    custom.recordFailure('x.com');
+    vi.advanceTimersByTime(5_001);
+    custom.recordFailure('x.com');
+    expect(custom.getState('x.com')).toBe('closed');
+  });
 });

@@ -6,9 +6,9 @@ import type { AuditEntry } from '../types.js';
 // Sensitive parameter values are redacted before storage so logs are safe to
 // write to disk or transmit.
 
-interface AuditLogOptions {
-  /** Maximum number of entries to keep in memory (FIFO eviction). Default 10 000. */
+export interface AuditLogOptions {
   maxEntries?: number;
+  logPath?: string;
 }
 
 // Tools that pass a cleartext value that should always be redacted.
@@ -28,9 +28,11 @@ const SCRIPT_MAX_LEN = 200;
 export class AuditLog {
   private entries: AuditEntry[] = [];
   private readonly maxEntries: number;
+  readonly logPath: string | undefined;
 
   constructor(options: AuditLogOptions = {}) {
     this.maxEntries = options.maxEntries ?? 10_000;
+    this.logPath = options.logPath;
   }
 
   // ── Write ───────────────────────────────────────────────────────────────────
