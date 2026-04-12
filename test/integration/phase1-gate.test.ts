@@ -173,7 +173,7 @@ describe('Phase 1 Integration Gate — ToolResponse shape', () => {
    * The checks will succeed or fail gracefully depending on the environment;
    * what we're validating here is the ToolResponse *shape*, not the actual health status.
    */
-  it('safari_health_check returns valid ToolResponse shape', async () => {
+  it('safari_health_check returns valid ToolResponse shape', { timeout: 60000 }, async () => {
     const response = await server.callTool('safari_health_check', {});
 
     // Top-level shape
