@@ -7,7 +7,7 @@ import AppKit
 
 // MARK: - Version
 
-private let version = "0.1.3"
+private let version = "0.1.4"
 
 // MARK: - Signal handling
 
