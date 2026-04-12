@@ -14,6 +14,8 @@
     "scripts/",
     ".claude-plugin/",
     ".mcp.json",
+    "safari-pilot.config.json",
+    "daemon/com.safari-pilot.daemon.plist",
     "README.md",
     "LICENSE"
   ],

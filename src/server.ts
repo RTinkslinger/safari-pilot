@@ -27,6 +27,7 @@ import { RateLimiter } from './security/rate-limiter.js';
 import { CircuitBreaker } from './security/circuit-breaker.js';
 import { IdpiScanner } from './security/idpi-scanner.js';
 import { RateLimitedError, CircuitBreakerOpenError } from './errors.js';
+import { loadConfig, DEFAULT_CONFIG, type SafariPilotConfig } from './config.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -46,14 +47,10 @@ interface HealthCheck {
   detail?: string;
 }
 
-// Per-check timeout: short enough to keep the total health check fast,
-// long enough to survive a sluggish osascript startup (~100-300 ms typical).
-const HEALTH_CHECK_TIMEOUT_MS = 3000;
-
-async function checkSafariRunning(): Promise<HealthCheck> {
+async function checkSafariRunning(timeoutMs: number): Promise<HealthCheck> {
   try {
     await execFileAsync('osascript', ['-e', 'tell application "Safari" to return name'], {
-      timeout: HEALTH_CHECK_TIMEOUT_MS,
+      timeout: timeoutMs,
     });
     return { name: 'safari_running', ok: true };
   } catch (err) {
@@ -62,12 +59,12 @@ async function checkSafariRunning(): Promise<HealthCheck> {
   }
 }
 
-async function checkJsFromAppleEvents(): Promise<HealthCheck> {
+async function checkJsFromAppleEvents(timeoutMs: number): Promise<HealthCheck> {
   try {
     const result = await execFileAsync(
       'osascript',
       ['-e', 'tell application "Safari" to do JavaScript "1+1" in current tab of front window'],
-      { timeout: HEALTH_CHECK_TIMEOUT_MS },
+      { timeout: timeoutMs },
     );
     const value = result.stdout.trim();
     return { name: 'js_apple_events', ok: value === '2', detail: value !== '2' ? `Unexpected: ${value}` : undefined };
@@ -83,10 +80,9 @@ async function checkJsFromAppleEvents(): Promise<HealthCheck> {
   }
 }
 
-async function checkScreenRecording(): Promise<HealthCheck> {
+async function checkScreenRecording(timeoutMs: number): Promise<HealthCheck> {
   try {
-    // screencapture -x captures without sound; a permission error means SR is blocked
-    await execFileAsync('screencapture', ['-x', '-t', 'png', '/dev/null'], { timeout: HEALTH_CHECK_TIMEOUT_MS });
+    await execFileAsync('screencapture', ['-x', '-t', 'png', '/dev/null'], { timeout: timeoutMs });
     return { name: 'screen_recording', ok: true };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -111,6 +107,7 @@ export class SafariPilotServer {
   private engineAvailability = { daemon: false, extension: false };
   private sessionId: string = `sess_${Date.now().toString(36)}`;
   private _engine: AppleScriptEngine | null = null;
+  readonly config: SafariPilotConfig;
 
   // ── Security layers ─────────────────────────────────────────────────────────
   readonly killSwitch: KillSwitch;
@@ -121,19 +118,39 @@ export class SafariPilotServer {
   readonly circuitBreaker: CircuitBreaker;
   readonly idpiScanner: IdpiScanner;
 
-  constructor() {
-    this.auditLog = new AuditLog();
-    this.killSwitch = new KillSwitch({ auditLog: this.auditLog });
+  constructor(config?: SafariPilotConfig) {
+    this.config = config ?? DEFAULT_CONFIG;
+
+    this.auditLog = new AuditLog({
+      maxEntries: this.config.audit.maxEntries,
+      logPath: this.config.audit.logPath,
+    });
+    this.killSwitch = new KillSwitch({
+      auditLog: this.auditLog,
+      autoActivation: this.config.killSwitch.autoActivation
+        ? { maxErrors: this.config.killSwitch.maxErrors, windowSeconds: this.config.killSwitch.windowSeconds }
+        : undefined,
+    });
     this.tabOwnership = new TabOwnership();
-    this.domainPolicy = new DomainPolicy();
-    this.rateLimiter = new RateLimiter();
-    this.circuitBreaker = new CircuitBreaker();
+    this.domainPolicy = new DomainPolicy({
+      blocked: this.config.domainPolicy.blocked,
+      trusted: this.config.domainPolicy.trusted,
+      defaultMaxActionsPerMinute: this.config.domainPolicy.defaultMaxActionsPerMinute,
+    });
+    this.rateLimiter = new RateLimiter({
+      windowMs: this.config.rateLimit.windowMs,
+      globalLimit: this.config.rateLimit.maxActionsPerMinute,
+    });
+    this.circuitBreaker = new CircuitBreaker({
+      failureThreshold: this.config.circuitBreaker.errorThreshold,
+      windowMs: this.config.circuitBreaker.windowMs,
+      cooldownMs: this.config.circuitBreaker.cooldownMs,
+    });
     this.idpiScanner = new IdpiScanner();
   }
 
   async initialize(): Promise<void> {
-    // Instantiate and probe the DaemonEngine first (fastest path)
-    const daemonEngine = new DaemonEngine();
+    const daemonEngine = new DaemonEngine({ timeoutMs: this.config.daemon.timeoutMs });
     const daemonAvailable = await daemonEngine.isAvailable();
     this.setEngineAvailability({ daemon: daemonAvailable, extension: false });
     if (daemonAvailable) {
@@ -250,16 +267,15 @@ export class SafariPilotServer {
     const start = Date.now();
     const checks: HealthCheck[] = [];
 
-    // 1. Safari running?
-    const safariCheck = await checkSafariRunning();
+    const timeout = this.config.healthCheck.timeoutMs;
+
+    const safariCheck = await checkSafariRunning(timeout);
     checks.push(safariCheck);
 
-    // 2. JS from Apple Events enabled?
-    const jsCheck = await checkJsFromAppleEvents();
+    const jsCheck = await checkJsFromAppleEvents(timeout);
     checks.push(jsCheck);
 
-    // 3. Screen Recording permission?
-    const srCheck = await checkScreenRecording();
+    const srCheck = await checkScreenRecording(timeout);
     checks.push(srCheck);
 
     // 4. Daemon available?
@@ -418,6 +434,7 @@ export class SafariPilotServer {
 }
 
 export async function createServer(): Promise<SafariPilotServer> {
-  const server = new SafariPilotServer();
+  const config = loadConfig();
+  const server = new SafariPilotServer(config);
   return server;
 }

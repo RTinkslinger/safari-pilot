@@ -10,9 +10,15 @@ import { CircuitBreakerOpenError } from '../errors.js';
 
 export type CircuitState = 'closed' | 'open' | 'half-open';
 
-const FAILURE_THRESHOLD = 5; // consecutive failures to trip the circuit
-const WINDOW_MS = 60_000;    // failure tracking window (60 s)
-const COOLDOWN_MS = 120_000; // open → half-open cooldown (120 s)
+const DEFAULT_FAILURE_THRESHOLD = 5;
+const DEFAULT_WINDOW_MS = 60_000;
+const DEFAULT_COOLDOWN_MS = 120_000;
+
+export interface CircuitBreakerOptions {
+  failureThreshold?: number;
+  windowMs?: number;
+  cooldownMs?: number;
+}
 
 interface DomainState {
   failures: number;        // consecutive failure count
@@ -34,6 +40,15 @@ function emptyState(): DomainState {
 
 export class CircuitBreaker {
   private states: Map<string, DomainState> = new Map();
+  private readonly failureThreshold: number;
+  private readonly windowMs: number;
+  private readonly cooldownMs: number;
+
+  constructor(options: CircuitBreakerOptions = {}) {
+    this.failureThreshold = options.failureThreshold ?? DEFAULT_FAILURE_THRESHOLD;
+    this.windowMs = options.windowMs ?? DEFAULT_WINDOW_MS;
+    this.cooldownMs = options.cooldownMs ?? DEFAULT_COOLDOWN_MS;
+  }
 
   // ── Public API ───────────────────────────────────────────────────────────────
 
@@ -64,14 +79,14 @@ export class CircuitBreaker {
       state.probeAllowed = false;
       state.probeInFlight = false;
       // Keep failures at threshold so the circuit stays open on next check
-      state.failures = FAILURE_THRESHOLD;
+      state.failures = this.failureThreshold;
       state.firstFailureAt = now;
       this.states.set(domain, state);
       return;
     }
 
     // Reset failure count if previous run is outside the tracking window
-    if (state.failures > 0 && now - state.firstFailureAt > WINDOW_MS) {
+    if (state.failures > 0 && now - state.firstFailureAt > this.windowMs) {
       state.failures = 0;
       state.firstFailureAt = 0;
     }
@@ -82,7 +97,7 @@ export class CircuitBreaker {
 
     state.failures += 1;
 
-    if (state.failures >= FAILURE_THRESHOLD) {
+    if (state.failures >= this.failureThreshold) {
       state.openedAt = now;
       state.probeAllowed = false;
     }
@@ -110,7 +125,7 @@ export class CircuitBreaker {
 
     const elapsed = Date.now() - state.openedAt;
 
-    if (elapsed >= COOLDOWN_MS) {
+    if (elapsed >= this.cooldownMs) {
       return 'half-open';
     }
 
@@ -128,7 +143,7 @@ export class CircuitBreaker {
     const state = this.getState_(domain);
 
     if (circuitState === 'open') {
-      const remaining = COOLDOWN_MS - (Date.now() - (state.openedAt ?? 0));
+      const remaining = this.cooldownMs - (Date.now() - (state.openedAt ?? 0));
       throw new CircuitBreakerOpenError(domain, Math.ceil(remaining / 1000));
     }
 

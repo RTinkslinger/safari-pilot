@@ -23,7 +23,9 @@ Run a single test file: `npx vitest run test/unit/tools/navigation.test.ts`
 
 Run tests matching a name: `npx vitest run -t "navigate"`
 
-Build the Swift daemon: `cd daemon && swift build -c release && cp .build/release/SafariPilotd ../bin/`
+Build the Swift daemon: `bash scripts/update-daemon.sh`
+
+Build the extension: `bash scripts/build-extension.sh`
 
 ## Architecture
 
@@ -105,6 +107,77 @@ test/
 ├── canary/               # Installation validation
 └── fixtures/             # Mock data, test servers
 ```
+
+## Distribution & Update Paths
+
+Safari Pilot is distributed as a signed, notarized npm package with pre-built binaries. Three personas use this repo differently. Every PR and roadmap item must account for all three.
+
+### Path 1: npm user (`npm install safari-pilot`)
+
+Ships with: pre-built `bin/SafariPilotd` (universal binary), pre-built `bin/Safari Pilot.app` (signed+notarized extension), compiled `dist/`, config, plugin files, plist.
+
+Postinstall: finds pre-built binary → installs LaunchAgent → finds pre-built extension → done. Zero build tools required.
+
+Updates via: `npm update safari-pilot` → new postinstall runs → new binaries in place.
+
+### Path 2: git clone user (`git clone` + `npm install`)
+
+Pre-built binaries are gitignored. Postinstall: no binary found → tries Swift build (if available) → if no Swift, downloads daemon from GitHub Releases → downloads extension from GitHub Releases → installs LaunchAgent → done.
+
+Updates via: `git pull && npm install`.
+
+### Path 3: Developer/maintainer (local development)
+
+When modifying different components:
+
+| Changed | Rebuild command | What happens |
+|---------|----------------|-------------|
+| `src/**/*.ts` | `npm run build` | Recompiles to `dist/`. MCP server picks up on next session. |
+| `daemon/Sources/**/*.swift` | `bash scripts/update-daemon.sh` | Builds, atomic binary swap, launchctl restart. |
+| `extension/**` (background.js, manifest.json, content scripts) | `bash scripts/build-extension.sh` | Xcode project → archive → export → sign → notarize → copy to `bin/Safari Pilot.app`. Then `open "bin/Safari Pilot.app"` to register with Safari. |
+| `.claude-plugin/**`, `hooks/**`, `skills/**` | Session restart | Plugin metadata reloaded by Claude Code on session start. |
+| `safari-pilot.config.json` | Session restart | Config loaded by MCP server on startup. |
+
+### Release pipeline (tag push → `release.yml`)
+
+1. `npm ci` + `npm run build` (TypeScript)
+2. `swift build --arch arm64` + `swift build --arch x86_64` + `lipo` → universal daemon binary
+3. `codesign` + `notarytool` + `stapler` (daemon)
+4. GitHub Release: `SafariPilotd-{version}-universal.tar.gz` + `SafariPilotd-universal.tar.gz` (stable URL) + `Safari Pilot.zip`
+5. `npm publish` (includes all pre-built artifacts)
+
+The extension `.app` and `.zip` are pre-built locally via `build-extension.sh`, committed to `bin/`, and uploaded as release assets. They are NOT rebuilt in CI — Xcode project generation requires the full macOS dev environment.
+
+### Scripts reference
+
+| Script | Purpose | Who uses it |
+|--------|---------|-------------|
+| `scripts/postinstall.sh` | Install daemon + extension + LaunchAgent | npm user, git clone user, CI |
+| `scripts/preuninstall.sh` | Unload LaunchAgent, cleanup | npm uninstall |
+| `scripts/update-daemon.sh` | Rebuild daemon, atomic swap, restart | Developer only |
+| `scripts/build-extension.sh` | Full Xcode → sign → notarize pipeline | Developer only |
+
+## Extension Build: Hard Rules (from v0.1.1–v0.1.3 disaster)
+
+These are non-negotiable. Every one of these was learned through a catastrophic failure.
+
+1. **NEVER use manual `codesign`** for the extension .app. It strips entitlements (app-sandbox). Only `xcodebuild archive` + `xcodebuild -exportArchive` with ExportOptions.plist preserves them. The working pipeline is in `scripts/build-extension.sh` — don't bypass it.
+
+2. **Version MUST sync from package.json** on every build. `CFBundleVersion` stuck at "1" caused Safari's code signing cache to reject the extension silently. The build script patches `MARKETING_VERSION` and `CURRENT_PROJECT_VERSION` via sed — don't remove this.
+
+3. **Build number MUST be unique per build** (timestamp-based: `YYYYMMDDHHMM`). Safari keys its extension cache on bundle version. Same version = invisible update.
+
+4. **NEVER run pluginkit, lsregister, pkill pkd, or edit Safari plists**. These caused unrecoverable state in v0.1.1. If the extension doesn't show up, the problem is the BUILD, not the system. Fix the build.
+
+5. **NEVER publish to GitHub Releases or npm before verifying the extension works in Safari**. v0.1.1 and v0.1.2 shipped broken. The verification sequence: `open "bin/Safari Pilot.app"` → check Safari > Settings > Extensions → enable → test.
+
+6. **NEVER quit Safari programmatically** (`osascript 'quit'`, `pkill Safari`). This is destructive — it kills user tabs. If Safari needs restarting, tell the user.
+
+7. **After building, verify entitlements exist**:
+   ```bash
+   codesign -d --entitlements - "bin/Safari Pilot.app"  # must show app-sandbox
+   codesign -d --entitlements - "bin/Safari Pilot.app/Contents/PlugIns/Safari Pilot Extension.appex"
+   ```
 
 ## Non-Obvious Constraints
 

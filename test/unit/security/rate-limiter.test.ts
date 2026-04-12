@@ -103,4 +103,31 @@ describe('RateLimiter', () => {
     const check = limiter.checkLimit('new-domain.com');
     expect(check.remaining).toBe(120);
   });
+
+  // ── Custom config ──────────────────────────────────────────────────────────
+
+  it('uses custom globalLimit from constructor options', () => {
+    const custom = new RateLimiter({ globalLimit: 10 });
+    const check = custom.checkLimit('example.com');
+    expect(check.remaining).toBe(10);
+  });
+
+  it('enforces custom globalLimit', () => {
+    const custom = new RateLimiter({ globalLimit: 2 });
+    custom.recordAction('x.com');
+    custom.recordAction('x.com');
+    expect(custom.checkLimit('x.com').allowed).toBe(false);
+  });
+
+  it('uses custom windowMs — entries expire after custom window', () => {
+    const custom = new RateLimiter({ windowMs: 5_000, globalLimit: 3 });
+    custom.recordAction('x.com');
+    custom.recordAction('x.com');
+    custom.recordAction('x.com');
+    expect(custom.checkLimit('x.com').allowed).toBe(false);
+
+    vi.advanceTimersByTime(5_001);
+    expect(custom.checkLimit('x.com').allowed).toBe(true);
+    expect(custom.checkLimit('x.com').remaining).toBe(3);
+  });
 });

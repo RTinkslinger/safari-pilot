@@ -90,4 +90,46 @@ describe('DomainPolicy', () => {
     expect(result.trust).toBe('untrusted');
     expect(result.privateWindow).toBe(true);
   });
+
+  // ── Constructor config ───────────────────────────────────────────────────────
+
+  it('blocked domains from config evaluate as untrusted', () => {
+    const p = new DomainPolicy({ blocked: ['evil.com', '*.spam.net'] });
+    expect(p.evaluate('https://evil.com').trust).toBe('untrusted');
+    expect(p.evaluate('https://sub.spam.net').trust).toBe('untrusted');
+  });
+
+  it('trusted domains from config evaluate as trusted with extension allowed', () => {
+    const p = new DomainPolicy({ trusted: ['myapp.dev'] });
+    const result = p.evaluate('https://myapp.dev/dashboard');
+    expect(result.trust).toBe('trusted');
+    expect(result.extensionAllowed).toBe(true);
+  });
+
+  it('custom defaultMaxActionsPerMinute applies to unknown domains', () => {
+    const p = new DomainPolicy({ defaultMaxActionsPerMinute: 30 });
+    const result = p.evaluate('https://any-site.com');
+    expect(result.maxActionsPerMinute).toBe(30);
+  });
+
+  it('sensitive domains still apply even with custom config', () => {
+    const p = new DomainPolicy({ trusted: ['myapp.dev'] });
+    expect(p.evaluate('https://paypal.com').trust).toBe('untrusted');
+    expect(p.evaluate('https://paypal.com').privateWindow).toBe(true);
+  });
+
+  it('trusted list cannot override sensitive domain protections', () => {
+    const p = new DomainPolicy({ trusted: ['paypal.com', 'chase.com'] });
+    expect(p.evaluate('https://paypal.com').trust).toBe('untrusted');
+    expect(p.evaluate('https://paypal.com').privateWindow).toBe(true);
+    expect(p.evaluate('https://chase.com').trust).toBe('untrusted');
+  });
+
+  it('blocked list cannot weaken sensitive domain protections', () => {
+    const p = new DomainPolicy({ blocked: ['paypal.com'] });
+    const result = p.evaluate('https://paypal.com');
+    expect(result.trust).toBe('untrusted');
+    expect(result.privateWindow).toBe(true);
+    expect(result.maxActionsPerMinute).toBe(30);
+  });
 });

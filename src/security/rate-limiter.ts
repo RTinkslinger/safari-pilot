@@ -5,8 +5,13 @@ import { RateLimitedError } from '../errors.js';
 // Sliding-window rate limiter. Tracks action timestamps per domain in the last
 // 60 seconds. Enforces a global default limit and per-domain overrides.
 
-const WINDOW_MS = 60_000; // 60-second sliding window
-const GLOBAL_DEFAULT_LIMIT = 120; // actions per 60 seconds
+const DEFAULT_WINDOW_MS = 60_000;
+const DEFAULT_GLOBAL_LIMIT = 120;
+
+export interface RateLimiterOptions {
+  windowMs?: number;
+  globalLimit?: number;
+}
 
 export interface CheckResult {
   allowed: boolean;
@@ -15,10 +20,15 @@ export interface CheckResult {
 }
 
 export class RateLimiter {
-  // domain → sorted list of timestamp (ms) entries within the window
   private windows: Map<string, number[]> = new Map();
-  // per-domain limit overrides (set from DomainPolicy)
   private domainLimits: Map<string, number> = new Map();
+  private readonly windowMs: number;
+  private readonly globalLimit: number;
+
+  constructor(options: RateLimiterOptions = {}) {
+    this.windowMs = options.windowMs ?? DEFAULT_WINDOW_MS;
+    this.globalLimit = options.globalLimit ?? DEFAULT_GLOBAL_LIMIT;
+  }
 
   // ── Configuration ───────────────────────────────────────────────────────────
 
@@ -41,7 +51,7 @@ export class RateLimiter {
     const remaining = Math.max(0, limit - count);
 
     // Time until the oldest entry would fall out of the window
-    const resetMs = entries.length > 0 ? Math.max(0, entries[0]! + WINDOW_MS - now) : 0;
+    const resetMs = entries.length > 0 ? Math.max(0, entries[0]! + this.windowMs - now) : 0;
 
     return { allowed, remaining, resetMs };
   }
@@ -74,7 +84,7 @@ export class RateLimiter {
   // ── Internal helpers ────────────────────────────────────────────────────────
 
   private limitFor(domain: string): number {
-    return this.domainLimits.get(domain) ?? GLOBAL_DEFAULT_LIMIT;
+    return this.domainLimits.get(domain) ?? this.globalLimit;
   }
 
   /**
@@ -83,7 +93,7 @@ export class RateLimiter {
    */
   private prune(domain: string, now: number): number[] {
     const entries = this.windows.get(domain) ?? [];
-    const cutoff = now - WINDOW_MS;
+    const cutoff = now - this.windowMs;
     const pruned = entries.filter((ts) => ts > cutoff);
     this.windows.set(domain, pruned);
     return pruned;

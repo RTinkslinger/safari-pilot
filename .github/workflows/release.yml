@@ -89,12 +89,14 @@ jobs:
         run: |
           tar -czf SafariPilotd-${{ github.ref_name }}-universal.tar.gz \
             -C dist-bin SafariPilotd
+          cp SafariPilotd-${{ github.ref_name }}-universal.tar.gz SafariPilotd-universal.tar.gz
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
             SafariPilotd-${{ github.ref_name }}-universal.tar.gz
+            SafariPilotd-universal.tar.gz
             bin/Safari Pilot.zip
           generate_release_notes: true
 
