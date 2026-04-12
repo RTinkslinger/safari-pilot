@@ -18,7 +18,24 @@ The goal: **no Mac user running Claude Code should ever need Playwright or Chrom
 
 ---
 
-## P0 — Must Have (Closes 80% of the Playwright Gap)
+## P0 — Must Have (Foundations + Closes 80% of the Playwright Gap)
+
+### Daemon Lifecycle Commands (NEXT UP)
+
+**Plugin commands for daemon management.** Currently the daemon has no lifecycle management — no way to start, stop, or check status through the plugin. Users have to manually find and kill the process.
+
+**What to build:**
+- `/safari-pilot start` — starts SafariPilotd, outputs PID, confirms running
+- `/safari-pilot stop` — stops daemon gracefully; if shutdown fails, outputs `kill <PID>` fallback
+- Both commands note that the extension is managed in Safari > Settings > Extensions
+- Fix postinstall to properly `launchctl load` the LaunchAgent
+- All configuration (rate limits, domain policies, security) stays conversational through Claude Code
+
+**Mac app stays unchanged** — extension container only. No GUI controls for daemon.
+
+**Estimated effort:** Half session.
+
+---
 
 ### Structured Accessibility Snapshots
 
