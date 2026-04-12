@@ -41,10 +41,10 @@ jobs:
         run: |
           mkdir -p dist-bin
           lipo -create \
-            daemon/.build/arm64-apple-macosx/release/safari-pilot-daemon \
-            daemon/.build/x86_64-apple-macosx/release/safari-pilot-daemon \
-            -output dist-bin/safari-pilot-daemon
-          chmod +x dist-bin/safari-pilot-daemon
+            daemon/.build/arm64-apple-macosx/release/SafariPilotd \
+            daemon/.build/x86_64-apple-macosx/release/SafariPilotd \
+            -output dist-bin/SafariPilotd
+          chmod +x dist-bin/SafariPilotd
 
       - name: Import Developer ID certificate
         env:
@@ -66,8 +66,7 @@ jobs:
         run: |
           codesign --force --options runtime \
             --sign "$DEVELOPER_ID_IDENTITY" \
-            --entitlements daemon/Entitlements.plist \
-            dist-bin/safari-pilot-daemon
+            dist-bin/SafariPilotd
 
       - name: Notarize binary
         env:
@@ -75,8 +74,8 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
         run: |
-          ditto -c -k --keepParent dist-bin/safari-pilot-daemon dist-bin/safari-pilot-daemon.zip
-          xcrun notarytool submit dist-bin/safari-pilot-daemon.zip \
+          ditto -c -k --keepParent dist-bin/SafariPilotd dist-bin/SafariPilotd.zip
+          xcrun notarytool submit dist-bin/SafariPilotd.zip \
             --apple-id "$APPLE_ID" \
             --team-id "$APPLE_TEAM_ID" \
             --password "$APPLE_APP_PASSWORD" \
@@ -84,17 +83,19 @@ jobs:
 
       - name: Staple notarization ticket
         run: |
-          xcrun stapler staple dist-bin/safari-pilot-daemon || true
+          xcrun stapler staple dist-bin/SafariPilotd || true
 
       - name: Create release archive
         run: |
-          tar -czf safari-pilot-daemon-${{ github.ref_name }}-universal.tar.gz \
-            -C dist-bin safari-pilot-daemon
+          tar -czf SafariPilotd-${{ github.ref_name }}-universal.tar.gz \
+            -C dist-bin SafariPilotd
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: safari-pilot-daemon-${{ github.ref_name }}-universal.tar.gz
+          files: |
+            SafariPilotd-${{ github.ref_name }}-universal.tar.gz
+            bin/Safari Pilot.zip
           generate_release_notes: true
 
       - name: Publish to npm
