@@ -1,0 +1,12 @@
+test/
+daemon/Sources/
+daemon/Tests/
+daemon/.build/
+.github/
+*.test.ts
+*.test.js
+vitest.config.ts
+tsconfig.json
+.DS_Store
+coverage/
+app/

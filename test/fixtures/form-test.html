@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html>
+<head><title>Form Test</title></head>
+<body>
+  <form id="test-form">
+    <input id="name" name="name" type="text" required>
+    <input id="email" name="email" type="email" required>
+    <select id="role" name="role">
+      <option value="dev">Developer</option>
+      <option value="design">Designer</option>
+    </select>
+    <input id="agree" type="checkbox" name="agree">
+    <button type="submit">Submit</button>
+  </form>
+  <div id="result" style="display:none">Form submitted!</div>
+  <script>
+    document.getElementById('test-form').addEventListener('submit', (e) => {
+      e.preventDefault();
+      document.getElementById('result').style.display = 'block';
+    });
+  </script>
+</body>
+</html>

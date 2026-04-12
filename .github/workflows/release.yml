@@ -1,0 +1,103 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  release:
+    name: Build, Sign, Notarize, and Release
+    runs-on: macos-15
+    permissions:
+      contents: write
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build TypeScript
+        run: npm run build
+
+      - name: Build Swift daemon (arm64)
+        run: swift build -c release --arch arm64
+        working-directory: daemon
+
+      - name: Build Swift daemon (x86_64)
+        run: swift build -c release --arch x86_64
+        working-directory: daemon
+
+      - name: Create universal binary with lipo
+        run: |
+          mkdir -p dist-bin
+          lipo -create \
+            daemon/.build/arm64-apple-macosx/release/safari-pilot-daemon \
+            daemon/.build/x86_64-apple-macosx/release/safari-pilot-daemon \
+            -output dist-bin/safari-pilot-daemon
+          chmod +x dist-bin/safari-pilot-daemon
+
+      - name: Import Developer ID certificate
+        env:
+          DEVELOPER_ID_CERT_BASE64: ${{ secrets.DEVELOPER_ID_CERT_BASE64 }}
+          DEVELOPER_ID_CERT_PASSWORD: ${{ secrets.DEVELOPER_ID_CERT_PASSWORD }}
+        run: |
+          KEYCHAIN_PATH=$(mktemp -d)/build.keychain
+          security create-keychain -p "" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "" "$KEYCHAIN_PATH"
+          echo "$DEVELOPER_ID_CERT_BASE64" | base64 --decode > /tmp/cert.p12
+          security import /tmp/cert.p12 -k "$KEYCHAIN_PATH" -P "$DEVELOPER_ID_CERT_PASSWORD" -T /usr/bin/codesign
+          security list-keychain -d user -s "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "" "$KEYCHAIN_PATH"
+
+      - name: Sign universal binary
+        env:
+          DEVELOPER_ID_IDENTITY: ${{ secrets.DEVELOPER_ID_IDENTITY }}
+        run: |
+          codesign --force --options runtime \
+            --sign "$DEVELOPER_ID_IDENTITY" \
+            --entitlements daemon/Entitlements.plist \
+            dist-bin/safari-pilot-daemon
+
+      - name: Notarize binary
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          ditto -c -k --keepParent dist-bin/safari-pilot-daemon dist-bin/safari-pilot-daemon.zip
+          xcrun notarytool submit dist-bin/safari-pilot-daemon.zip \
+            --apple-id "$APPLE_ID" \
+            --team-id "$APPLE_TEAM_ID" \
+            --password "$APPLE_APP_PASSWORD" \
+            --wait
+
+      - name: Staple notarization ticket
+        run: |
+          xcrun stapler staple dist-bin/safari-pilot-daemon || true
+
+      - name: Create release archive
+        run: |
+          tar -czf safari-pilot-daemon-${{ github.ref_name }}-universal.tar.gz \
+            -C dist-bin safari-pilot-daemon
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: safari-pilot-daemon-${{ github.ref_name }}-universal.tar.gz
+          generate_release_notes: true
+
+      - name: Publish to npm
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
