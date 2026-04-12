@@ -23,7 +23,7 @@ Safari Pilot gives Claude Code direct control of Safari through AppleScript and 
 ### As a Claude Code Plugin (Recommended)
 
 ```bash
-claude plugin add safari-pilot
+claude plugin add --from npm safari-pilot
 ```
 
 ### From npm
