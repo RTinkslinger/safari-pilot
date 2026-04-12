@@ -11,6 +11,7 @@
     "skills/",
     "hooks/",
     "extension/",
+    "scripts/",
     ".claude-plugin/",
     ".mcp.json",
     "README.md",
@@ -25,7 +26,7 @@
     "test:e2e": "vitest run test/e2e/",
     "test:security": "vitest run test/security/",
     "lint": "tsc --noEmit",
-    "postinstall": "scripts/postinstall.sh",
+    "postinstall": "bash scripts/postinstall.sh",
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
