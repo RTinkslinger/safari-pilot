@@ -94,7 +94,8 @@ describe('Signing Validation — codesign --verify', () => {
 
   it('.app has a secure timestamp', () => {
     const output = run(`codesign -dvvv "${APP_PATH}" 2>&1`);
-    expect(output).toMatch(/Timestamp=\d/);
+    // Timestamp format: "Timestamp=Apr 12, 2026 at 1:33:01 PM" or "Timestamp=2026-04-12..."
+    expect(output).toMatch(/Timestamp=\S/);
   });
 });
 

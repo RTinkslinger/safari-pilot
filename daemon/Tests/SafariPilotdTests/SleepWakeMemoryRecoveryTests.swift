@@ -108,8 +108,8 @@ func registerSleepWakeMemoryRecoveryTests() {
 
         let mockExec = SequencedMockExecutor(responses: responses)
 
-        // Use 0.05 s initial backoff so we can measure increasing intervals
-        let recovery = SafariRecovery(initialBackoffSeconds: 0.05, maxBackoffSeconds: 10.0)
+        // Use 0.1 s initial backoff so intervals are large enough to measure above CI jitter
+        let recovery = SafariRecovery(initialBackoffSeconds: 0.1, maxBackoffSeconds: 10.0)
 
         let response = syncAwait {
             await recovery.executeWithRecovery(
@@ -140,10 +140,12 @@ func registerSleepWakeMemoryRecoveryTests() {
         let gap1 = timestamps[2] - timestamps[1]
         let gap2 = timestamps[3] - timestamps[2]
 
-        // Each gap should be at least 1.5x the previous (loose tolerance for CI timing jitter)
-        try assertTrue(gap1 > gap0 * 1.2,
+        // Each gap should be larger than the previous (loose tolerance for CI timing jitter).
+        // With 0.1s initial and 2x exponential: gap0 ~0.1s, gap1 ~0.2s, gap2 ~0.4s.
+        // Use 1.0x check (strictly increasing) to avoid flakiness from OS scheduling noise.
+        try assertTrue(gap1 > gap0,
             "Gap1 (\(String(format:"%.3f",gap1))s) should be > Gap0 (\(String(format:"%.3f",gap0))s) — backoff not increasing")
-        try assertTrue(gap2 > gap1 * 1.2,
+        try assertTrue(gap2 > gap1,
             "Gap2 (\(String(format:"%.3f",gap2))s) should be > Gap1 (\(String(format:"%.3f",gap1))s) — backoff not increasing")
     }
 

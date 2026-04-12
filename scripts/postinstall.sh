@@ -43,4 +43,49 @@ if [ -f "$DAEMON_DIR/SafariPilotd" ]; then
   fi
 fi
 
+# Download signed Safari extension from GitHub Releases
+EXTENSION_ZIP="$DAEMON_DIR/Safari Pilot.zip"
+EXTENSION_APP="$DAEMON_DIR/Safari Pilot.app"
+
+if [ ! -d "$EXTENSION_APP" ]; then
+  echo "safari-pilot: Downloading signed Safari extension..."
+  RELEASE_URL="https://github.com/RTinkslinger/safari-pilot/releases/latest/download/Safari%20Pilot.zip"
+  if command -v curl &>/dev/null; then
+    curl -fsSL "$RELEASE_URL" -o "$EXTENSION_ZIP" 2>/dev/null || true
+  elif command -v wget &>/dev/null; then
+    wget -q "$RELEASE_URL" -O "$EXTENSION_ZIP" 2>/dev/null || true
+  fi
+
+  if [ -f "$EXTENSION_ZIP" ]; then
+    # Extract the .app from the zip
+    ditto -x -k "$EXTENSION_ZIP" "$DAEMON_DIR/" 2>/dev/null || unzip -qo "$EXTENSION_ZIP" -d "$DAEMON_DIR/" 2>/dev/null || true
+    rm -f "$EXTENSION_ZIP"
+
+    if [ -d "$EXTENSION_APP" ]; then
+      echo "safari-pilot: Safari extension downloaded successfully"
+      echo ""
+      echo "  ┌─────────────────────────────────────────────────────────────┐"
+      echo "  │  Safari Extension Setup                                     │"
+      echo "  │                                                             │"
+      echo "  │  1. Open the app:                                           │"
+      echo "  │     open \"$EXTENSION_APP\"                                   │"
+      echo "  │                                                             │"
+      echo "  │  2. Enable in Safari:                                       │"
+      echo "  │     Safari > Settings > Extensions > Safari Pilot Extension │"
+      echo "  │                                                             │"
+      echo "  │  Signed with Developer ID and notarized by Apple.           │"
+      echo "  └─────────────────────────────────────────────────────────────┘"
+      echo ""
+    else
+      echo "safari-pilot: Extension extraction failed — download manually from:"
+      echo "  https://github.com/RTinkslinger/safari-pilot/releases/latest"
+    fi
+  else
+    echo "safari-pilot: Could not download extension — download manually from:"
+    echo "  https://github.com/RTinkslinger/safari-pilot/releases/latest"
+  fi
+else
+  echo "safari-pilot: Safari extension already present"
+fi
+
 echo "safari-pilot: Postinstall complete"

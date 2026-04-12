@@ -125,10 +125,11 @@ describe('.github/workflows/test.yml', () => {
     expect(content).toContain('e2e-tests');
   });
 
-  it('runs unit-tests on ubuntu-latest', () => {
+  it('runs unit-tests on macos-15 (macOS-only package)', () => {
     const content = readFileSync(rootPath('.github/workflows/test.yml'), 'utf8');
-    // unit-tests section should reference ubuntu-latest
-    expect(content).toContain('ubuntu-latest');
+    // unit-tests and integration-tests both run on macOS since package has "os": ["darwin"]
+    const unitSection = content.split('unit-tests:')[1]?.split('integration-tests:')[0] ?? '';
+    expect(unitSection).toContain('macos-15');
   });
 
   it('runs integration-tests on macos-15', () => {
