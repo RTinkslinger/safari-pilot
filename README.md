@@ -230,11 +230,11 @@ Safari Pilot runs on your local machine with access to your real browser session
 
 **Domain Policy** — Per-domain rate limits prevent runaway automation. Banking and financial domains flagged as untrusted by default.
 
-**Rate Limiter + Circuit Breaker** — Global limit of 120 actions/minute. Circuit breaker trips after 5 consecutive errors, backs off for 120 seconds.
+**Rate Limiter + Circuit Breaker** — Configurable via `safari-pilot.config.json`. Defaults: 120 actions/minute, circuit breaker trips at 5 errors with 120s cooldown.
 
 **IDPI Scanner** — Indirect Prompt Injection defense. Scans extracted text for 9 known injection patterns.
 
-**Kill Switch** — `safari_emergency_stop` immediately halts all automation. One command, full stop.
+**Kill Switch** — `safari_emergency_stop` immediately halts all automation. Configurable auto-activation on error threshold.
 
 **Human Approval** — Sensitive actions (OAuth consent, financial forms, downloads) flagged for explicit approval.
 
@@ -244,6 +244,34 @@ Safari Pilot runs on your local machine with access to your real browser session
 
 **No Credential Access** — Safari Pilot **never** accesses the macOS Keychain. Authentication works through real browser interaction.
 
+## Configuration
+
+All security settings are tunable via `safari-pilot.config.json` in the package root:
+
+```json
+{
+  "schemaVersion": "1.0",
+  "rateLimit": { "maxActionsPerMinute": 120, "windowMs": 60000 },
+  "circuitBreaker": { "errorThreshold": 5, "windowMs": 60000, "cooldownMs": 120000 },
+  "domainPolicy": { "defaultMaxActionsPerMinute": 60, "blocked": [], "trusted": [] },
+  "killSwitch": { "autoActivation": false, "maxErrors": 5, "windowSeconds": 60 },
+  "audit": { "maxEntries": 10000, "logPath": "~/.safari-pilot/audit.log" },
+  "daemon": { "timeoutMs": 30000 },
+  "healthCheck": { "timeoutMs": 3000 }
+}
+```
+
+Missing file → all defaults. Partial file → deep-merge with defaults. Sensitive domain protections (banking, PayPal, etc.) cannot be overridden via config.
+
+Set `SAFARI_PILOT_CONFIG` env var to use a custom config path.
+
+### Daemon Lifecycle
+
+```bash
+/safari-pilot start   # Start daemon, report PID (idempotent)
+/safari-pilot stop    # Graceful shutdown with SIGKILL fallback
+```
+
 ## Development
 
 ### Building from Source
@@ -252,11 +280,10 @@ Safari Pilot runs on your local machine with access to your real browser session
 # TypeScript server
 npm run build
 
-# Swift daemon
-cd daemon && swift build -c release
-cp .build/release/SafariPilotd ../bin/
+# Swift daemon (rebuild + atomic swap + launchctl restart)
+bash scripts/update-daemon.sh
 
-# Safari extension (requires Xcode)
+# Safari extension (Xcode archive → sign → notarize)
 bash scripts/build-extension.sh
 ```
 
@@ -267,16 +294,13 @@ bash scripts/build-extension.sh
 npm test
 
 # By category
-npm run test:unit          # 705 tests, no Safari needed
-npm run test:integration   # 372 tests, some need Safari
+npm run test:unit          # 777 tests, no Safari needed
+npm run test:integration   # Multi-component workflows
 npm run test:security      # 27 security-focused tests
-npm run test:e2e           # 31 tests against real Safari
+npm run test:e2e           # Against real Safari (optional)
 
 # Swift daemon tests
 cd daemon && swift run SafariPilotdTests
-
-# Canary deployment
-bash test/canary/install-test.sh
 ```
 
 ### Adding a New Tool
@@ -314,7 +338,7 @@ The daemon detects Safari crashes (error codes -600/-609) and retries with expon
 Safari Pilot is built from scratch — no code from third-party Safari MCP packages. Every line that touches your browser is first-party and auditable. We also add 9 security layers, a persistent Swift daemon (92x faster), and structured extraction tools.
 
 **Q: Does the Swift daemon run all the time?**
-Only when Claude Code is active. The LaunchAgent starts the daemon on demand and it shuts down with the session.
+The daemon starts on Claude Code session start (via the SessionStart hook) and stays running between sessions for fast restart. Use `/safari-pilot stop` to shut it down manually. The LaunchAgent auto-restarts it if it crashes.
 
 **Q: Do I need the Safari extension?**
 No — Safari Pilot works without it for ~80% of use cases. The extension adds Shadow DOM traversal, CSP bypass, dialog interception, and network mocking. Install it from the [GitHub Release](https://github.com/RTinkslinger/safari-pilot/releases/latest) if you need those features.
