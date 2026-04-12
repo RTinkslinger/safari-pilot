@@ -26,7 +26,9 @@ Safari Pilot gives Claude Code direct control of Safari through AppleScript and 
 claude plugin add --from npm safari-pilot
 ```
 
-### From npm
+This installs the MCP server, Swift daemon, and skill definition. The plugin activates automatically on macOS.
+
+### From npm (standalone)
 
 ```bash
 npm install -g safari-pilot
@@ -39,41 +41,35 @@ git clone https://github.com/RTinkslinger/safari-pilot.git
 cd safari-pilot
 npm install
 npm run build
+cd daemon && swift build -c release && cp .build/release/SafariPilotd ../bin/
 ```
 
-## Prerequisites
+## Setup
 
-- **macOS 12.0 (Monterey)** or later
-- **Safari** (pre-installed on every Mac)
-- **Node.js 20+**
-
-### Required Safari Setting
-
-Enable "Allow JavaScript from Apple Events":
+### 1. Enable JavaScript from Apple Events (Required, one-time)
 
 1. Open **Safari > Settings > Advanced**
 2. Check **"Show features for web developers"**
 3. Go to **Safari > Develop** menu
 4. Check **"Allow JavaScript from Apple Events"**
 
-This is a one-time setting that persists across Safari restarts.
+This persists across Safari restarts.
 
-### Safari Web Extension (Recommended)
+### 2. Install the Safari Extension (Recommended)
 
-The extension unlocks advanced features that are impossible without it: closed Shadow DOM traversal, CSP bypass, dialog interception, and network request mocking.
+The extension unlocks advanced features that are impossible without it.
 
-**Option A: Download the signed, notarized extension (easiest)**
+**Download the signed, notarized extension** from the [latest GitHub Release](https://github.com/RTinkslinger/safari-pilot/releases/latest):
 
-Download `Safari Pilot.zip` from the [latest GitHub Release](https://github.com/RTinkslinger/safari-pilot/releases/latest), extract it, and open `Safari Pilot.app`. The extension is signed with Developer ID and notarized by Apple — it persists across Safari restarts.
+1. Download `Safari Pilot.zip`
+2. Extract it
+3. Open `Safari Pilot.app`
+4. Go to **Safari > Settings > Extensions**
+5. Enable **Safari Pilot**
+6. Set to **"Allow on all websites"** when prompted
+7. Click **"Manage Profiles"** and enable for your active profile
 
-**Option B: Build from source (requires Xcode)**
-
-```bash
-bash scripts/build-extension.sh
-open "bin/Safari Pilot.app"
-```
-
-Then enable it in **Safari > Settings > Extensions > Safari Pilot**. Enable for all profiles and all websites when prompted.
+The extension is signed with Developer ID and notarized by Apple — it persists permanently across Safari restarts. No "Allow Unsigned Extensions" needed.
 
 **What the extension adds:**
 
@@ -84,6 +80,14 @@ Then enable it in **Safari > Settings > Extensions > Safari Pilot**. Enable for 
 | alert()/confirm()/prompt() | Blocks JS forever | Intercepted, returns instantly |
 | Network request capture | Read-only via Performance API | Full intercept, mock, throttle |
 | React/Vue internal state | Basic native setter | Deep framework manipulation |
+
+Without the extension, Safari Pilot still works for ~80% of use cases (navigation, form filling, text extraction, screenshots, cookies, tab management).
+
+### System Requirements
+
+- **macOS 12.0 (Monterey)** or later
+- **Safari** (pre-installed on every Mac)
+- **Node.js 20+**
 
 ## Quick Start
 
@@ -103,6 +107,10 @@ Test the checkout flow on staging.mystore.com — add to cart, fill payment, ver
 
 ```
 Monitor news.ycombinator.com for any post about our company
+```
+
+```
+Open my X.com bookmarks and extract the top 5 posts with author profiles
 ```
 
 ## Tool Catalog (74 Tools)
@@ -172,8 +180,14 @@ Claude Code
 |  | (deep DOM)|  | (1ms p50) |  | (fallback)     | |
 |  +-----------+  +-----------+  +----------------+ |
 +--------------------------------------------------+
-         |               |                |
-         v               v                v
+    |                   |                |
+    v                   v                v
++--------------------------------------------------+
+|  Safari Web Extension    Swift Daemon    osascript|
+|  (MAIN world access)    (persistent)   (fallback) |
++--------------------------------------------------+
+    |                   |                |
+    v                   v                v
 +--------------------------------------------------+
 |              Safari (macOS native)                 |
 |  Your real browser with all your sessions          |
@@ -188,7 +202,7 @@ Claude Code
 | **Swift Daemon** | **1ms p50** | All AppleScript capabilities, persistent process | Default when daemon is running |
 | **AppleScript (osascript)** | ~90ms | Basic navigation, forms, extraction, screenshots | Fallback when daemon unavailable |
 
-The engine selector automatically picks the best available engine for each command. If the daemon isn't running, it falls back to raw AppleScript. If a command needs Shadow DOM access and the extension isn't installed, it returns a clear error with instructions.
+The engine selector automatically picks the best available engine for each command. Each tier falls back gracefully to the next — no configuration needed.
 
 ## Performance
 
@@ -206,65 +220,27 @@ Over a 500-command session, the daemon saves ~40 seconds of pure overhead vs raw
 
 Safari Pilot runs on your local machine with access to your real browser sessions. The security model is defense-in-depth:
 
-### Tab Ownership
-The agent can **only** interact with tabs it created via `safari_new_tab`. Your existing tabs (banking, email, personal) are untouchable. Ownership is enforced at the server level — there is no bypass.
+**Tab Ownership** — The agent can **only** interact with tabs it created via `safari_new_tab`. Your existing tabs (banking, email, personal) are untouchable. Enforced at the server level — no bypass.
 
-### Domain Policy
-Per-domain rate limits prevent runaway automation. Banking and financial domains are flagged as untrusted by default.
+**Domain Policy** — Per-domain rate limits prevent runaway automation. Banking and financial domains flagged as untrusted by default.
 
-### Rate Limiter + Circuit Breaker
-Global limit of 120 actions/minute. Per-domain limits configurable. Circuit breaker trips after 5 consecutive errors, backs off for 120 seconds.
+**Rate Limiter + Circuit Breaker** — Global limit of 120 actions/minute. Circuit breaker trips after 5 consecutive errors, backs off for 120 seconds.
 
-### IDPI Scanner
-Indirect Prompt Injection defense. Scans extracted text for 9 known injection patterns (role reassignment, fake system prompts, base64 payloads, hidden text, etc.).
+**IDPI Scanner** — Indirect Prompt Injection defense. Scans extracted text for 9 known injection patterns.
 
-### Kill Switch
-`safari_emergency_stop` immediately halts all automation and blocks further calls. One command, full stop.
+**Kill Switch** — `safari_emergency_stop` immediately halts all automation. One command, full stop.
 
-### Human Approval
-Sensitive actions (OAuth consent, financial forms, downloads) are flagged and require explicit approval.
+**Human Approval** — Sensitive actions (OAuth consent, financial forms, downloads) flagged for explicit approval.
 
-### Audit Logging
-Every tool call is logged with timestamp, tool name, URL, parameters (passwords redacted), result, and latency. Session-end hook produces a summary.
+**Audit Logging** — Every tool call logged with timestamp, tool name, URL, parameters (passwords redacted), result, and latency.
 
-### Screenshot Redaction
-Cross-origin iframes are blurred in screenshots. Password fields are redacted.
+**Screenshot Redaction** — Cross-origin iframes blurred. Password fields redacted.
 
-### No Credential Access
-Safari Pilot **never** accesses the macOS Keychain. Authentication works through real browser interaction, same as you clicking.
+**No Credential Access** — Safari Pilot **never** accesses the macOS Keychain. Authentication works through real browser interaction.
 
 ## Development
 
-### Project Structure
-
-```
-safari-pilot/
-├── src/                    # TypeScript MCP server
-│   ├── server.ts           # Main server + tool registration
-│   ├── engines/            # AppleScript, Daemon, Extension engines
-│   ├── security/           # 9 security modules
-│   └── tools/              # 14 tool category modules
-├── daemon/                 # Swift persistent daemon
-│   ├── Sources/            # Swift source code
-│   └── Tests/              # Swift tests (custom runner)
-├── extension/              # Safari Web Extension
-│   ├── manifest.json       # Manifest V3
-│   ├── content-main.js     # MAIN world (Shadow DOM, React filling)
-│   ├── content-isolated.js # ISOLATED world relay
-│   └── background.js       # Service worker + native messaging
-├── skills/                 # Claude Code skill definition
-├── hooks/                  # Session start/end hooks
-├── scripts/                # Install, update, build scripts
-└── test/                   # 1,167 tests
-    ├── unit/               # 705 unit tests
-    ├── integration/        # 372 integration tests
-    ├── security/           # 27 security tests
-    ├── e2e/                # 31 E2E tests (real Safari)
-    ├── canary/             # Deployment canary test
-    └── fixtures/           # HTML test pages
-```
-
-### Building
+### Building from Source
 
 ```bash
 # TypeScript server
@@ -334,10 +310,13 @@ Safari Pilot is built from scratch — no code from third-party Safari MCP packa
 **Q: Does the Swift daemon run all the time?**
 Only when Claude Code is active. The LaunchAgent starts the daemon on demand and it shuts down with the session.
 
+**Q: Do I need the Safari extension?**
+No — Safari Pilot works without it for ~80% of use cases. The extension adds Shadow DOM traversal, CSP bypass, dialog interception, and network mocking. Install it from the [GitHub Release](https://github.com/RTinkslinger/safari-pilot/releases/latest) if you need those features.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
 
 ## Author
 
-Built by [Aakash Kumar](https://github.com/aakashkumar) with Claude.
+Built by [Aakash Kumar](https://github.com/RTinkslinger) with Claude.
