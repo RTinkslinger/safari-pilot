@@ -168,38 +168,31 @@ export async function executeTask(
     await new Promise<void>((resolve, reject) => {
       const args = buildClaudeArgs(task, model, windowIndex, mcpConfigPath);
       const proc = spawn('claude', args, { stdio: ['ignore', 'pipe', 'inherit'] });
+      let settled = false;
 
-      let timer: ReturnType<typeof setTimeout> | null = setTimeout(() => {
+      const timer = setTimeout(() => {
         timedOut = true;
         proc.kill('SIGTERM');
-        timer = null;
       }, timeoutMs);
+
+      const settle = (fn: () => void) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        fn();
+      };
 
       proc.stdout.on('data', (chunk: Buffer) => {
         stdout += chunk.toString();
       });
 
       proc.on('close', (code) => {
-        if (timer !== null) {
-          clearTimeout(timer);
-          timer = null;
-        }
-        if (timedOut) {
-          reject(new Error(`Task timed out after ${timeoutMs}ms`));
-        } else if (code !== 0 && code !== null) {
-          reject(new Error(`Claude CLI exited with code ${code}`));
-        } else {
-          resolve();
-        }
+        if (timedOut) settle(() => reject(new Error(`Task timed out after ${timeoutMs}ms`)));
+        else if (code !== 0 && code !== null) settle(() => reject(new Error(`Claude CLI exited with code ${code}`)));
+        else settle(resolve);
       });
 
-      proc.on('error', (err) => {
-        if (timer !== null) {
-          clearTimeout(timer);
-          timer = null;
-        }
-        reject(err);
-      });
+      proc.on('error', (err) => settle(() => reject(err)));
     });
   } catch (err) {
     const durationMs = Date.now() - startMs;

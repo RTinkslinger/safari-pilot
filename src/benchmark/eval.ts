@@ -89,6 +89,20 @@ export function validateSchemaSimple(
                 `field "${key}" must have at least ${minItems} items (got ${value.length})`
               );
             }
+            const itemsSchema = propSchema['items'] as Record<string, unknown> | undefined;
+            if (itemsSchema && value.length > 0) {
+              for (let i = 0; i < value.length; i++) {
+                const itemErrors = validateSchemaSimple(itemsSchema, value[i]);
+                for (const ie of itemErrors) {
+                  errors.push(`${key}[${i}]: ${ie}`);
+                }
+              }
+            }
+          }
+        } else if (expectedType === 'object') {
+          const nestedErrors = validateSchemaSimple(propSchema, value);
+          for (const ne of nestedErrors) {
+            errors.push(`${key}.${ne}`);
           }
         }
       }
@@ -101,6 +115,15 @@ export function validateSchemaSimple(
     const minItems = schema['minItems'];
     if (typeof minItems === 'number' && data.length < minItems) {
       errors.push(`array must have at least ${minItems} items (got ${data.length})`);
+    }
+    const itemsSchema = schema['items'] as Record<string, unknown> | undefined;
+    if (itemsSchema && data.length > 0) {
+      for (let i = 0; i < data.length; i++) {
+        const itemErrors = validateSchemaSimple(itemsSchema, data[i]);
+        for (const ie of itemErrors) {
+          errors.push(`[${i}]: ${ie}`);
+        }
+      }
     }
   }
 
