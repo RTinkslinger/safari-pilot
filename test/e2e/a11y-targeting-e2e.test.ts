@@ -61,11 +61,30 @@ function extractRefs(yaml: string): string[] {
 let server: SafariPilotServer;
 const openTabUrls: string[] = [];
 
-/** Open a tab and track it for cleanup. Returns the resolved tabUrl. */
+/** Open a tab, wait for load, resolve actual URL (Safari may redirect). */
 async function openTab(url: string): Promise<string> {
   const result = await server.executeToolWithSecurity('safari_new_tab', { url });
   const data = JSON.parse(result.content[0].text!);
-  const tabUrl = data.tabUrl as string;
+  let tabUrl = data.tabUrl as string;
+
+  await waitForLoad(3000);
+
+  // Resolve actual URL — Safari may have redirected (e.g., example.com → example.com/)
+  const urlVariants = [tabUrl, tabUrl.endsWith('/') ? tabUrl.slice(0, -1) : tabUrl + '/'];
+  for (const variant of urlVariants) {
+    try {
+      const evalResult = await server.executeToolWithSecurity('safari_evaluate', {
+        tabUrl: variant,
+        script: 'return window.location.href',
+      });
+      const evalData = JSON.parse(evalResult.content[0].text!);
+      if (evalData.value && typeof evalData.value === 'string') {
+        tabUrl = evalData.value;
+        break;
+      }
+    } catch { /* try next variant */ }
+  }
+
   openTabUrls.push(tabUrl);
   return tabUrl;
 }
