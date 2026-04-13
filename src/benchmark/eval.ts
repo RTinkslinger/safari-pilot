@@ -1,4 +1,7 @@
-import { execFileSync } from 'node:child_process';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+
+const execFileAsync = promisify(execFile);
 import type { TaskEval, EvalType } from './types.js';
 
 // ─── EvalResult ───────────────────────────────────────────────────────────────
@@ -225,11 +228,12 @@ export async function evaluateWithLlmJudge(
 
   let responseText = '';
   try {
-    responseText = execFileSync(
+    const { stdout } = await execFileAsync(
       'claude',
-      ['-p', prompt, '--model', 'claude-haiku-4-5', '--output-format', 'text', '--bare', '--no-session-persistence', '--max-budget-usd', '0.02'],
+      ['-p', prompt, '--model', 'claude-haiku-4-5', '--output-format', 'text', '--no-session-persistence'],
       { encoding: 'utf-8', timeout: 30_000 }
     );
+    responseText = stdout;
   } catch (err) {
     return {
       passed: false,
