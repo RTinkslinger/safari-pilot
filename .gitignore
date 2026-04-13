@@ -9,3 +9,5 @@ coverage/
 ROADMAP.md
 .build/
 app/
+benchmark/traces/
+benchmark/reports/

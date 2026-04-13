@@ -5,6 +5,9 @@
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "bin": {
+    "safari-pilot-bench": "dist/benchmark/runner.js"
+  },
   "files": [
     "dist/",
     "bin/",
@@ -27,6 +30,8 @@
     "test:integration": "vitest run test/integration/",
     "test:e2e": "vitest run test/e2e/",
     "test:security": "vitest run test/security/",
+    "benchmark": "node dist/benchmark/runner.js",
+    "benchmark:dry": "node dist/benchmark/runner.js --dry-run",
     "lint": "tsc --noEmit",
     "postinstall": "bash scripts/postinstall.sh",
     "prepublishOnly": "npm run build"
