@@ -179,6 +179,48 @@ These are non-negotiable. Every one of these was learned through a catastrophic 
    codesign -d --entitlements - "bin/Safari Pilot.app/Contents/PlugIns/Safari Pilot Extension.appex"
    ```
 
+## End-to-End Testing (HARD RULES)
+
+E2E tests verify the **shipped artifact works as an end user would experience it**. Not the internal API. Not mocked components. The actual product, through the actual interfaces, producing actual results.
+
+### The principle
+
+If a user installs Safari Pilot and uses it through Claude Code, every step of that workflow must be tested by a real e2e test: MCP server starts → tools are listed → tool is called → Safari is controlled → result comes back. If any link in that chain breaks, an e2e test must catch it.
+
+This applies to **every shipped component**, not just the ones listed below. If something new is built and ships to users, it needs e2e coverage of the user-facing path before shipping.
+
+### What e2e means for each component
+
+| Component | E2E test must... | NOT acceptable |
+|-----------|-----------------|----------------|
+| **MCP server** | Spawn `node dist/index.js`, send JSON-RPC over stdin, verify stdout responses | Importing `SafariPilotServer` and calling methods |
+| **Daemon engine** | Spawn `bin/SafariPilotd`, send NDJSON over stdin, verify responses | `vi.mock('child_process')` |
+| **Tools** | Go through MCP protocol → server → engine → Safari → verify real DOM/page state | Mocking the engine and checking return shape |
+| **Extension** | Execute via real Safari JS through MCP, verify extension namespace/functions | Importing extension code directly |
+| **Security pipeline** | Run adversarial scenarios through MCP, verify enforcement | Testing security layers in isolation with mocked inputs |
+| **Distribution** | `npm pack` → install in temp dir → start server → verify MCP handshake | Checking file existence without running anything |
+| **Benchmark** | Spawn Claude CLI → verify Safari Pilot MCP tools are used → verify eval works | Using built-in tools (Bash/WebFetch) instead of Safari Pilot |
+
+### What is NEVER allowed in test/e2e/
+
+1. `vi.mock`, `vi.spyOn`, `jest.mock`, or any mock/stub/fake
+2. `import { ... } from '../../src/'` — never import source modules directly
+3. Calling `server.executeToolWithSecurity()` or any internal method
+4. Skipping the user-facing protocol (MCP JSON-RPC, daemon NDJSON, HTTP)
+5. Claiming "e2e" for a test that only exercises internal code paths
+
+If a test does any of these, it belongs in `test/integration/`, not `test/e2e/`.
+
+### Enforcement
+
+- **Pre-commit hook** (`hooks/e2e-no-mocks.sh`): blocks `vi.mock`/`vi.spyOn`/`mockImplementation` and `import from '../../src/'` in `test/e2e/` files
+- **Stop hook**: before session end, verifies e2e tests exist and pass if source files changed
+- **CLAUDE.md** (this section): defines what e2e means — every session starts with this context
+
+### Before shipping any feature
+
+Ask: "Does a real e2e test exercise the path a user would take?" If not, the feature is not tested and must not ship.
+
 ## Non-Obvious Constraints
 
 - **macOS only** — package.json enforces `"os": ["darwin"]`. Node 20+.

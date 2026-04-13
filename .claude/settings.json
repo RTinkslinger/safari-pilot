@@ -31,6 +31,17 @@
           }
         ]
       }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash hooks/e2e-coverage-check.sh",
+            "timeout": 10
+          }
+        ]
+      }
     ]
   }
 }
