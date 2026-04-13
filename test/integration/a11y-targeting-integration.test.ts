@@ -16,14 +16,23 @@ import { NavigationTools } from '../../src/tools/navigation.js';
 import { ExtractionTools } from '../../src/tools/extraction.js';
 import { InteractionTools } from '../../src/tools/interaction.js';
 
-// ── Safari availability check (skip entire file in CI / headless) ────────────
+// ── Safari availability check ────────────────────────────────────────────────
+// These tests need Safari running with JS from Apple Events enabled + authenticated
+// sessions. Skip in CI (Safari.app exists on macOS runners but isn't configured
+// for automation). Run locally only.
 
-let safariAvailable = false;
-try {
-  execFileSync('osascript', ['-e', 'tell application "Safari" to return name'], { timeout: 5000 });
-  safariAvailable = true;
-} catch {
-  console.log('Safari not available — skipping a11y targeting integration tests (expected in CI)');
+let safariAvailable = !process.env.CI;
+if (safariAvailable) {
+  try {
+    execFileSync('osascript', [
+      '-e', 'tell application "Safari" to do JavaScript "1+1" in current tab of front window',
+    ], { timeout: 5000 });
+  } catch {
+    safariAvailable = false;
+  }
+}
+if (!safariAvailable) {
+  console.log('Safari not configured for automation — skipping a11y targeting integration tests');
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────

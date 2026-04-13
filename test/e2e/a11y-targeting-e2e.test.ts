@@ -16,14 +16,21 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import { SafariPilotServer } from '../../src/server.js';
 
-// ── Safari availability check (skip entire file in CI / headless) ────────────
+// ── Safari availability check ────────────────────────────────────────────────
+// Skip in CI. Locally, verify Safari JS execution actually works.
 
-let safariAvailable = false;
-try {
-  execFileSync('osascript', ['-e', 'tell application "Safari" to return name'], { timeout: 5000 });
-  safariAvailable = true;
-} catch {
-  console.log('Safari not available — skipping a11y targeting e2e tests (expected in CI)');
+let safariAvailable = !process.env.CI;
+if (safariAvailable) {
+  try {
+    execFileSync('osascript', [
+      '-e', 'tell application "Safari" to do JavaScript "1+1" in current tab of front window',
+    ], { timeout: 5000 });
+  } catch {
+    safariAvailable = false;
+  }
+}
+if (!safariAvailable) {
+  console.log('Safari not configured for automation — skipping a11y targeting e2e tests');
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
