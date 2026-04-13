@@ -78,6 +78,7 @@ export function buildClaudeArgs(
   const args = [
     '--print', prompt,
     '--output-format', 'stream-json',
+    '--verbose',
     '--model', model,
     '--bare',
     '--permission-mode', 'bypassPermissions',
