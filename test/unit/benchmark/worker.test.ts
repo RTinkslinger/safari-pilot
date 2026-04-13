@@ -53,7 +53,7 @@ describe('buildClaudeArgs', () => {
     expect(args).toContain('--verbose');
     expect(args).toContain('--model');
     expect(args).toContain('sonnet');
-    expect(args).toContain('--bare');
+    expect(args).toContain('--disable-slash-commands');
     expect(args).toContain('--permission-mode');
     expect(args).toContain('bypassPermissions');
     expect(args).toContain('--no-session-persistence');
