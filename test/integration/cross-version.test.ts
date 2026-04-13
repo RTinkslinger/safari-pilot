@@ -182,23 +182,20 @@ describe('Cross-Version — postinstall.sh graceful degradation', () => {
     expect(true).toBe(true);
   });
 
-  it('postinstall.sh has a user-visible message when swift is missing', () => {
+  it('postinstall.sh has a fallback when swift is unavailable', () => {
     const content = readFileSync(postinstallPath, 'utf-8');
-    // Must print something useful when swift is absent
-    expect(content).toMatch(/Swift not available|swift is not installed|Install Xcode|Command Line Tools/i);
+    // When swift is absent, the script should download from GitHub Releases
+    // or report a clear message — never silently fail
+    expect(content).toMatch(/Downloading daemon|Could not obtain daemon|Download from|download manually/i);
   });
 
   it('postinstall.sh exits 0 even without swift (no hard crash)', () => {
     const content = readFileSync(postinstallPath, 'utf-8');
-    // After the "swift not available" message block, script should not exit non-zero
-    // Check for either `exit 0` or that the else/fi block ends without an exit 1
-    // Most implementations use: echo "..." (and then continue or exit 0)
+    // The swift check is part of a compound condition, not a standalone block
     const swiftCheckIdx = content.search(/command -v swift|which swift/);
-    expect(swiftCheckIdx, 'swift check block not found').toBeGreaterThan(-1);
-    // Check that after the else block there's no hard `exit 1`
-    const afterCheck = content.slice(swiftCheckIdx);
-    // The else block should not force exit 1 when swift is absent
-    expect(afterCheck).not.toMatch(/else[\s\S]{0,200}exit 1/);
+    expect(swiftCheckIdx, 'swift check not found').toBeGreaterThan(-1);
+    // Script should never exit 1 on missing swift — it downloads instead
+    expect(content).not.toMatch(/command -v swift[\s\S]{0,100}exit 1/);
   });
 });
 
