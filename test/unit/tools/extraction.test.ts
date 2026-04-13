@@ -206,12 +206,12 @@ describe('safari_get_html', () => {
 // ── safari_get_attribute ──────────────────────────────────────────────────────
 
 describe('safari_get_attribute', () => {
-  it('requires tabUrl, selector, and attribute in schema', () => {
+  it('requires tabUrl and attribute in schema (selector is optional — ref or locator can substitute)', () => {
     const def = tools.getDefinitions().find((d) => d.name === 'safari_get_attribute')!;
     const required = (def.inputSchema as { required: string[] }).required;
     expect(required).toContain('tabUrl');
-    expect(required).toContain('selector');
     expect(required).toContain('attribute');
+    expect(required).not.toContain('selector');
   });
 
   it('returns attribute value and element info', async () => {

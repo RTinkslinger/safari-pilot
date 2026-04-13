@@ -1,6 +1,9 @@
 import type { ToolResponse, ToolRequirements } from '../types.js';
 import type { AppleScriptEngine } from '../engines/applescript.js';
 import type { Engine } from '../types.js';
+import { buildRefSelector } from '../aria.js';
+import { generateAutoWaitJs, ACTION_CHECKS } from '../auto-wait.js';
+import { hasLocatorParams, extractLocatorFromParams, generateLocatorJs } from '../locator.js';
 
 export interface ToolDefinition {
   name: string;
@@ -34,53 +37,141 @@ export class InteractionTools {
     this.handlers.set('safari_handle_dialog', this.handleHandleDialog.bind(this));
   }
 
+  // ── Element Resolution & Auto-Wait ─────────────────────────────────────────
+
+  /**
+   * Resolve an element target from params. Priority: ref > locator > selector.
+   * Returns a CSS selector string usable in querySelector().
+   */
+  private async resolveElement(
+    tabUrl: string,
+    params: Record<string, unknown>,
+  ): Promise<string> {
+    const ref = params['ref'] as string | undefined;
+    if (ref) return buildRefSelector(ref);
+
+    if (hasLocatorParams(params)) {
+      const locator = extractLocatorFromParams(params)!;
+      const locatorJs = generateLocatorJs(locator);
+      const result = await this.engine.executeJsInTab(tabUrl, locatorJs);
+      if (result.ok && result.value) {
+        const parsed = JSON.parse(result.value);
+        if (parsed.found && parsed.selector) return parsed.selector;
+        throw new Error(parsed.hint || 'Locator did not match any element');
+      }
+      throw new Error('Locator resolution failed');
+    }
+
+    const selector = params['selector'] as string | undefined;
+    if (!selector) throw new Error('No element targeting provided. Use ref, selector, or a locator (role, text, label, testId, placeholder).');
+    return selector;
+  }
+
+  /**
+   * Run auto-wait actionability checks, then execute the action JS.
+   * Skips waiting if checks are empty or force mode is on.
+   */
+  private async waitAndExecute(
+    tabUrl: string,
+    selector: string,
+    actionType: string,
+    actionJs: string,
+    options: { timeout?: number; force?: boolean },
+  ): Promise<ToolResponse> {
+    const start = Date.now();
+    const checks = ACTION_CHECKS[actionType] ?? [];
+    const timeout = options.timeout ?? 5000;
+
+    // Auto-wait (skip if no checks or force mode)
+    if (checks.length > 0 && !options.force) {
+      const waitJs = generateAutoWaitJs(selector, checks, { timeout, force: false });
+      const waitResult = await this.engine.executeJsInTab(tabUrl, waitJs, timeout + 1000);
+      if (waitResult.ok && waitResult.value) {
+        const parsed = JSON.parse(waitResult.value);
+        if (!parsed.ready) {
+          const hints = parsed.hints?.join(' ') ?? '';
+          throw new Error(`Element not actionable: ${parsed.failedCheck}. ${hints}`);
+        }
+      }
+      // If wait itself fails (e.g., JS error), fall through to action — it will fail with its own error
+    }
+
+    // Execute the action
+    const result = await this.engine.executeJsInTab(tabUrl, actionJs, timeout);
+    if (!result.ok) throw new Error(result.error?.message ?? `${actionType} failed`);
+
+    return this.makeResponse(
+      result.value ? JSON.parse(result.value) : { [actionType]: true },
+      Date.now() - start,
+    );
+  }
+
   // ── Public API ──────────────────────────────────────────────────────────────
 
   getDefinitions(): ToolDefinition[] {
+    // Shared element targeting params — added to every tool that targets an element
+    const elementTargetingParams = {
+      ref: { type: 'string', description: "Element ref from snapshot (e.g. 'e5'). Takes priority over selector." },
+      role: { type: 'string', description: "ARIA role to target (e.g. 'button', 'link', 'textbox')" },
+      name: { type: 'string', description: 'Accessible name to match (with role)' },
+      text: { type: 'string', description: 'Visible text content to match' },
+      label: { type: 'string', description: 'Associated label text to match' },
+      testId: { type: 'string', description: 'data-testid attribute value (exact match)' },
+      placeholder: { type: 'string', description: 'Placeholder attribute to match' },
+      exact: { type: 'boolean', description: 'Use exact matching instead of substring', default: false },
+      force: { type: 'boolean', description: 'Skip auto-wait actionability checks', default: false },
+    };
+
     return [
       {
         name: 'safari_click',
         description:
-          'Click an element identified by CSS selector. Dispatches full click event sequence (mousedown, mouseup, click).',
+          'Click an element. Auto-waits for the element to be visible, stable, enabled, and receiving events. ' +
+          'Target via ref (from snapshot), locator (role/text/label/testId/placeholder), or CSS selector.',
         inputSchema: {
           type: 'object',
           properties: {
             tabUrl: { type: 'string', description: 'Current URL of the tab' },
             selector: { type: 'string', description: 'CSS selector for the element to click' },
+            ...elementTargetingParams,
             shadowSelector: { type: 'string', description: 'Selector within Shadow DOM (extension-only)' },
             button: { type: 'string', enum: ['left', 'right', 'middle'], default: 'left' },
             modifiers: { type: 'array', items: { type: 'string', enum: ['ctrl', 'shift', 'alt', 'meta'] } },
             waitForNavigation: { type: 'boolean', default: false },
             timeout: { type: 'number', default: 5000 },
           },
-          required: ['tabUrl', 'selector'],
+          required: ['tabUrl'],
         },
         requirements: {},
       },
       {
         name: 'safari_double_click',
-        description: 'Double-click an element. Often used to select text or trigger edit modes.',
+        description:
+          'Double-click an element. Auto-waits for actionability. ' +
+          'Often used to select text or trigger edit modes.',
         inputSchema: {
           type: 'object',
           properties: {
             tabUrl: { type: 'string', description: 'Current URL of the tab' },
             selector: { type: 'string', description: 'CSS selector for the element to double-click' },
+            ...elementTargetingParams,
             timeout: { type: 'number', default: 5000 },
           },
-          required: ['tabUrl', 'selector'],
+          required: ['tabUrl'],
         },
         requirements: {},
       },
       {
         name: 'safari_fill',
         description:
-          'Fill a form input with text. Uses framework-aware filling for React, Vue, and Web Components. ' +
-          'Clears existing value before typing.',
+          'Fill a form input with text. Auto-waits for the element to be visible, enabled, and editable. ' +
+          'Uses framework-aware filling for React, Vue, and Web Components. Clears existing value before typing.',
         inputSchema: {
           type: 'object',
           properties: {
             tabUrl: { type: 'string', description: 'Current URL of the tab' },
             selector: { type: 'string', description: 'CSS selector for the input element' },
+            ...elementTargetingParams,
             value: { type: 'string', description: 'Text to fill' },
             framework: {
               type: 'string',
@@ -92,51 +183,59 @@ export class InteractionTools {
             pressEnterAfter: { type: 'boolean', default: false },
             timeout: { type: 'number' },
           },
-          required: ['tabUrl', 'selector', 'value'],
+          required: ['tabUrl', 'value'],
         },
         requirements: {},
       },
       {
         name: 'safari_select_option',
-        description: 'Select an option from a <select> dropdown.',
+        description:
+          'Select an option from a <select> dropdown. Auto-waits for the element to be visible and enabled. ' +
+          'Use optionValue, optionLabel, or optionIndex to pick which option.',
         inputSchema: {
           type: 'object',
           properties: {
             tabUrl: { type: 'string', description: 'Current URL of the tab' },
             selector: { type: 'string', description: 'Selector for the <select> element' },
-            value: { type: 'string', description: 'Option value attribute' },
-            label: { type: 'string', description: 'Option visible text' },
-            index: { type: 'number', description: 'Option index' },
+            ...elementTargetingParams,
+            optionValue: { type: 'string', description: 'Option value attribute to select' },
+            optionLabel: { type: 'string', description: 'Option visible text to select' },
+            optionIndex: { type: 'number', description: 'Option index to select' },
           },
-          required: ['tabUrl', 'selector'],
+          required: ['tabUrl'],
         },
         requirements: {},
       },
       {
         name: 'safari_check',
-        description: 'Check or uncheck a checkbox or radio button.',
+        description:
+          'Check or uncheck a checkbox or radio button. Auto-waits for the element to be visible, stable, enabled, and receiving events.',
         inputSchema: {
           type: 'object',
           properties: {
             tabUrl: { type: 'string', description: 'Current URL of the tab' },
             selector: { type: 'string', description: 'CSS selector for the checkbox/radio' },
+            ...elementTargetingParams,
             checked: { type: 'boolean', description: 'true to check, false to uncheck' },
           },
-          required: ['tabUrl', 'selector', 'checked'],
+          required: ['tabUrl', 'checked'],
         },
         requirements: {},
       },
       {
         name: 'safari_hover',
-        description: 'Hover over an element. Triggers CSS :hover states and mouseover/mouseenter events.',
+        description:
+          'Hover over an element. Auto-waits for the element to be visible, stable, and receiving events. ' +
+          'Triggers CSS :hover states and mouseover/mouseenter events.',
         inputSchema: {
           type: 'object',
           properties: {
             tabUrl: { type: 'string', description: 'Current URL of the tab' },
             selector: { type: 'string', description: 'CSS selector for the element to hover' },
+            ...elementTargetingParams,
             duration: { type: 'number', description: 'How long to hover in ms', default: 0 },
           },
-          required: ['tabUrl', 'selector'],
+          required: ['tabUrl'],
         },
         requirements: {},
       },
@@ -144,16 +243,17 @@ export class InteractionTools {
         name: 'safari_type',
         description:
           'Type text character by character with key events. Unlike fill, dispatches individual ' +
-          'keydown/keypress/keyup events per character.',
+          'keydown/keypress/keyup events per character. No auto-wait (fires immediately).',
         inputSchema: {
           type: 'object',
           properties: {
             tabUrl: { type: 'string', description: 'Current URL of the tab' },
             selector: { type: 'string', description: 'CSS selector for the target element' },
-            text: { type: 'string', description: 'Text to type' },
+            ...elementTargetingParams,
+            content: { type: 'string', description: 'Text to type' },
             delay: { type: 'number', description: 'Delay between keystrokes in ms', default: 50 },
           },
-          required: ['tabUrl', 'selector', 'text'],
+          required: ['tabUrl', 'content'],
         },
         requirements: {},
       },
@@ -161,7 +261,7 @@ export class InteractionTools {
         name: 'safari_press_key',
         description:
           'Press a keyboard key or key combination. Works globally (not targeted to an element) ' +
-          'unless selector is provided.',
+          'unless a target is provided via ref, selector, or locator. No auto-wait.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -172,6 +272,10 @@ export class InteractionTools {
               items: { type: 'string', enum: ['ctrl', 'shift', 'alt', 'meta'] },
             },
             selector: { type: 'string', description: 'Focus this element before pressing' },
+            ref: { type: 'string', description: "Element ref from snapshot (e.g. 'e5'). Focus before pressing." },
+            role: { type: 'string', description: "ARIA role to target (e.g. 'textbox')" },
+            name: { type: 'string', description: 'Accessible name to match (with role)' },
+            testId: { type: 'string', description: 'data-testid attribute value' },
           },
           required: ['tabUrl', 'key'],
         },
@@ -179,12 +283,18 @@ export class InteractionTools {
       },
       {
         name: 'safari_scroll',
-        description: 'Scroll the page or a specific element.',
+        description:
+          'Scroll the page or a specific element. No auto-wait. ' +
+          'Target via ref, selector, or locator. If omitted, scrolls the page.',
         inputSchema: {
           type: 'object',
           properties: {
             tabUrl: { type: 'string', description: 'Current URL of the tab' },
             selector: { type: 'string', description: 'Element to scroll. If omitted, scrolls the page.' },
+            ref: { type: 'string', description: "Element ref from snapshot to scroll" },
+            role: { type: 'string', description: 'ARIA role to target' },
+            name: { type: 'string', description: 'Accessible name to match (with role)' },
+            testId: { type: 'string', description: 'data-testid attribute value' },
             direction: { type: 'string', enum: ['up', 'down', 'left', 'right'] },
             amount: { type: 'number', description: 'Pixels to scroll', default: 500 },
             toTop: { type: 'boolean' },
@@ -197,16 +307,22 @@ export class InteractionTools {
       },
       {
         name: 'safari_drag',
-        description: 'Drag an element from one position to another.',
+        description:
+          'Drag an element from one position to another. Auto-waits for source to be visible, stable, and receiving events. ' +
+          'Source and target can each be specified via ref or CSS selector.',
         inputSchema: {
           type: 'object',
           properties: {
             tabUrl: { type: 'string', description: 'Current URL of the tab' },
             sourceSelector: { type: 'string', description: 'CSS selector for the drag source element' },
+            sourceRef: { type: 'string', description: 'Element ref for drag source (from snapshot)' },
             targetSelector: { type: 'string', description: 'CSS selector for the drag target element' },
+            targetRef: { type: 'string', description: 'Element ref for drag target (from snapshot)' },
             steps: { type: 'number', description: 'Number of intermediate mousemove steps', default: 10 },
+            force: { type: 'boolean', description: 'Skip auto-wait actionability checks', default: false },
+            timeout: { type: 'number', default: 5000 },
           },
-          required: ['tabUrl', 'sourceSelector', 'targetSelector'],
+          required: ['tabUrl'],
         },
         requirements: {},
       },
@@ -250,16 +366,16 @@ export class InteractionTools {
   // ── Handlers ────────────────────────────────────────────────────────────────
 
   private async handleClick(params: Record<string, unknown>): Promise<ToolResponse> {
-    const start = Date.now();
     const tabUrl = params['tabUrl'] as string;
-    const selector = params['selector'] as string;
     const timeout = typeof params['timeout'] === 'number' ? params['timeout'] : 5000;
+    const force = params['force'] === true;
 
+    const selector = await this.resolveElement(tabUrl, params);
     const escapedSelector = selector.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-    const js = `
+
+    const actionJs = `
       var el = document.querySelector('${escapedSelector}');
       if (!el) throw Object.assign(new Error('Element not found: ${escapedSelector}'), { name: 'ELEMENT_NOT_FOUND' });
-      if (el.offsetParent === null && getComputedStyle(el).display === 'none') throw Object.assign(new Error('Element not visible'), { name: 'ELEMENT_NOT_VISIBLE' });
 
       var rect = el.getBoundingClientRect();
       var opts = { bubbles: true, cancelable: true, view: window, clientX: rect.x + rect.width/2, clientY: rect.y + rect.height/2 };
@@ -277,21 +393,18 @@ export class InteractionTools {
       };
     `;
 
-    const result = await this.engine.executeJsInTab(tabUrl, js, timeout);
-    if (!result.ok) throw new Error(result.error?.message ?? 'Click failed');
-
-    const data = result.value ? JSON.parse(result.value) : { clicked: true };
-    return this.makeResponse(data, Date.now() - start);
+    return this.waitAndExecute(tabUrl, selector, 'click', actionJs, { timeout, force });
   }
 
   private async handleDoubleClick(params: Record<string, unknown>): Promise<ToolResponse> {
-    const start = Date.now();
     const tabUrl = params['tabUrl'] as string;
-    const selector = params['selector'] as string;
     const timeout = typeof params['timeout'] === 'number' ? params['timeout'] : 5000;
+    const force = params['force'] === true;
 
+    const selector = await this.resolveElement(tabUrl, params);
     const escapedSelector = selector.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-    const js = `
+
+    const actionJs = `
       var el = document.querySelector('${escapedSelector}');
       if (!el) throw Object.assign(new Error('Element not found: ${escapedSelector}'), { name: 'ELEMENT_NOT_FOUND' });
 
@@ -313,26 +426,23 @@ export class InteractionTools {
       };
     `;
 
-    const result = await this.engine.executeJsInTab(tabUrl, js, timeout);
-    if (!result.ok) throw new Error(result.error?.message ?? 'Double click failed');
-
-    return this.makeResponse(result.value ? JSON.parse(result.value) : { clicked: true }, Date.now() - start);
+    return this.waitAndExecute(tabUrl, selector, 'dblclick', actionJs, { timeout, force });
   }
 
   private async handleFill(params: Record<string, unknown>): Promise<ToolResponse> {
-    const start = Date.now();
     const tabUrl = params['tabUrl'] as string;
-    const selector = params['selector'] as string;
     const value = params['value'] as string;
     const framework = (params['framework'] as string | undefined) ?? 'auto';
     const clearFirst = params['clearFirst'] !== false;
     const pressEnterAfter = params['pressEnterAfter'] === true;
     const timeout = typeof params['timeout'] === 'number' ? params['timeout'] : 10000;
+    const force = params['force'] === true;
 
+    const selector = await this.resolveElement(tabUrl, params);
     const escapedSelector = selector.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
     const escapedValue = value.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
 
-    const js = `
+    const actionJs = `
       var el = document.querySelector('${escapedSelector}');
       if (!el) throw Object.assign(new Error('Element not found: ${escapedSelector}'), { name: 'ELEMENT_NOT_FOUND' });
 
@@ -387,31 +497,31 @@ export class InteractionTools {
       };
     `;
 
-    const result = await this.engine.executeJsInTab(tabUrl, js, timeout);
-    if (!result.ok) throw new Error(result.error?.message ?? 'Fill failed');
-
-    return this.makeResponse(result.value ? JSON.parse(result.value) : { filled: true }, Date.now() - start);
+    return this.waitAndExecute(tabUrl, selector, 'fill', actionJs, { timeout, force });
   }
 
   private async handleSelectOption(params: Record<string, unknown>): Promise<ToolResponse> {
-    const start = Date.now();
     const tabUrl = params['tabUrl'] as string;
-    const selector = params['selector'] as string;
-    const value = params['value'] as string | undefined;
-    const label = params['label'] as string | undefined;
-    const index = params['index'] as number | undefined;
+    const timeout = typeof params['timeout'] === 'number' ? params['timeout'] : 5000;
+    const force = params['force'] === true;
 
+    // Option selection params (renamed to avoid collision with locator 'label')
+    const optionValue = params['optionValue'] as string | undefined;
+    const optionLabel = params['optionLabel'] as string | undefined;
+    const optionIndex = params['optionIndex'] as number | undefined;
+
+    const selector = await this.resolveElement(tabUrl, params);
     const escapedSelector = selector.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
 
-    const js = `
+    const actionJs = `
       var el = document.querySelector('${escapedSelector}');
       if (!el) throw Object.assign(new Error('Element not found'), { name: 'ELEMENT_NOT_FOUND' });
       if (el.tagName !== 'SELECT') throw new Error('Element is not a <select>');
 
       var option;
-      ${value !== undefined ? `option = Array.from(el.options).find(function(o) { return o.value === '${value.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'; });` : ''}
-      ${label !== undefined ? `if (!option) option = Array.from(el.options).find(function(o) { return o.textContent.trim() === '${label.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'; });` : ''}
-      ${index !== undefined ? `if (!option) option = el.options[${index}];` : ''}
+      ${optionValue !== undefined ? `option = Array.from(el.options).find(function(o) { return o.value === '${optionValue.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'; });` : ''}
+      ${optionLabel !== undefined ? `if (!option) option = Array.from(el.options).find(function(o) { return o.textContent.trim() === '${optionLabel.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'; });` : ''}
+      ${optionIndex !== undefined ? `if (!option) option = el.options[${optionIndex}];` : ''}
       if (!option) throw Object.assign(new Error('Option not found'), { name: 'ELEMENT_NOT_FOUND' });
 
       el.value = option.value;
@@ -424,20 +534,19 @@ export class InteractionTools {
       };
     `;
 
-    const result = await this.engine.executeJsInTab(tabUrl, js);
-    if (!result.ok) throw new Error(result.error?.message ?? 'Select failed');
-
-    return this.makeResponse(result.value ? JSON.parse(result.value) : { selected: true }, Date.now() - start);
+    return this.waitAndExecute(tabUrl, selector, 'selectOption', actionJs, { timeout, force });
   }
 
   private async handleCheck(params: Record<string, unknown>): Promise<ToolResponse> {
-    const start = Date.now();
     const tabUrl = params['tabUrl'] as string;
-    const selector = params['selector'] as string;
     const checked = params['checked'] as boolean;
+    const timeout = typeof params['timeout'] === 'number' ? params['timeout'] : 5000;
+    const force = params['force'] === true;
 
+    const selector = await this.resolveElement(tabUrl, params);
     const escapedSelector = selector.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-    const js = `
+
+    const actionJs = `
       var el = document.querySelector('${escapedSelector}');
       if (!el) throw Object.assign(new Error('Element not found'), { name: 'ELEMENT_NOT_FOUND' });
 
@@ -452,19 +561,18 @@ export class InteractionTools {
       };
     `;
 
-    const result = await this.engine.executeJsInTab(tabUrl, js);
-    if (!result.ok) throw new Error(result.error?.message ?? 'Check failed');
-
-    return this.makeResponse(result.value ? JSON.parse(result.value) : { toggled: true }, Date.now() - start);
+    return this.waitAndExecute(tabUrl, selector, 'check', actionJs, { timeout, force });
   }
 
   private async handleHover(params: Record<string, unknown>): Promise<ToolResponse> {
-    const start = Date.now();
     const tabUrl = params['tabUrl'] as string;
-    const selector = params['selector'] as string;
+    const timeout = typeof params['timeout'] === 'number' ? params['timeout'] : 5000;
+    const force = params['force'] === true;
 
+    const selector = await this.resolveElement(tabUrl, params);
     const escapedSelector = selector.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-    const js = `
+
+    const actionJs = `
       var el = document.querySelector('${escapedSelector}');
       if (!el) throw Object.assign(new Error('Element not found'), { name: 'ELEMENT_NOT_FOUND' });
 
@@ -480,20 +588,18 @@ export class InteractionTools {
       };
     `;
 
-    const result = await this.engine.executeJsInTab(tabUrl, js);
-    if (!result.ok) throw new Error(result.error?.message ?? 'Hover failed');
-
-    return this.makeResponse(result.value ? JSON.parse(result.value) : { hovered: true }, Date.now() - start);
+    return this.waitAndExecute(tabUrl, selector, 'hover', actionJs, { timeout, force });
   }
 
   private async handleType(params: Record<string, unknown>): Promise<ToolResponse> {
     const start = Date.now();
     const tabUrl = params['tabUrl'] as string;
-    const selector = params['selector'] as string;
-    const text = params['text'] as string;
+    // 'content' avoids collision with locator 'text' param
+    const content = params['content'] as string;
 
+    const selector = await this.resolveElement(tabUrl, params);
     const escapedSelector = selector.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-    const escapedText = text.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    const escapedText = content.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
 
     const js = `
       var el = document.querySelector('${escapedSelector}');
@@ -513,6 +619,7 @@ export class InteractionTools {
       return { typed: true, length: text.length };
     `;
 
+    // type has no actionability checks (ACTION_CHECKS.type = []), execute directly
     const result = await this.engine.executeJsInTab(tabUrl, js);
     if (!result.ok) throw new Error(result.error?.message ?? 'Type failed');
 
@@ -524,14 +631,20 @@ export class InteractionTools {
     const tabUrl = params['tabUrl'] as string;
     const key = params['key'] as string;
     const modifiers = (params['modifiers'] as string[] | undefined) ?? [];
-    const selector = params['selector'] as string | undefined;
+
+    // press_key optionally targets an element for focus
+    const hasTarget = params['ref'] || params['selector'] || hasLocatorParams(params);
+    let escapedSelector = '';
+    if (hasTarget) {
+      const selector = await this.resolveElement(tabUrl, params);
+      escapedSelector = selector.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    }
 
     const escapedKey = key.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-    const escapedSelector = selector ? selector.replace(/\\/g, '\\\\').replace(/'/g, "\\'") : '';
 
     const js = `
-      ${selector ? `var el = document.querySelector('${escapedSelector}'); if (el) el.focus();` : ''}
-      var target = ${selector ? `(el || document.activeElement || document.body)` : 'document.activeElement || document.body'};
+      ${escapedSelector ? `var el = document.querySelector('${escapedSelector}'); if (el) el.focus();` : ''}
+      var target = ${escapedSelector ? `(el || document.activeElement || document.body)` : 'document.activeElement || document.body'};
       var opts = {
         key: '${escapedKey}',
         code: '${escapedKey}'.length === 1 ? 'Key' + '${escapedKey}'.toUpperCase() : '${escapedKey}',
@@ -549,6 +662,7 @@ export class InteractionTools {
       return { pressed: true, key: '${escapedKey}', modifiers: [${modifiers.map(m => `'${m}'`).join(',')}] };
     `;
 
+    // pressKey has no actionability checks, execute directly
     const result = await this.engine.executeJsInTab(tabUrl, js);
     if (!result.ok) throw new Error(result.error?.message ?? 'Press key failed');
 
@@ -558,18 +672,24 @@ export class InteractionTools {
   private async handleScroll(params: Record<string, unknown>): Promise<ToolResponse> {
     const start = Date.now();
     const tabUrl = params['tabUrl'] as string;
-    const selector = params['selector'] as string | undefined;
     const direction = (params['direction'] as string | undefined) ?? 'down';
     const amount = typeof params['amount'] === 'number' ? params['amount'] : 500;
     const toTop = params['toTop'] === true;
     const toBottom = params['toBottom'] === true;
     const toElement = params['toElement'] as string | undefined;
 
-    const escapedSelector = selector ? selector.replace(/\\/g, '\\\\').replace(/'/g, "\\'") : '';
+    // scroll optionally targets an element (if omitted, scrolls page)
+    const hasTarget = params['ref'] || params['selector'] || hasLocatorParams(params);
+    let escapedSelector = '';
+    if (hasTarget) {
+      const selector = await this.resolveElement(tabUrl, params);
+      escapedSelector = selector.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    }
+
     const escapedToElement = toElement ? toElement.replace(/\\/g, '\\\\').replace(/'/g, "\\'") : '';
 
     const js = `
-      var target = ${selector ? `document.querySelector('${escapedSelector}')` : 'document.documentElement'};
+      var target = ${escapedSelector ? `document.querySelector('${escapedSelector}')` : 'document.documentElement'};
       if (!target) throw Object.assign(new Error('Scroll target not found'), { name: 'ELEMENT_NOT_FOUND' });
 
       ${toTop ? 'target.scrollTo({ top: 0, behavior: "smooth" });' : ''}
@@ -592,6 +712,7 @@ export class InteractionTools {
       };
     `;
 
+    // scroll has no actionability checks, execute directly
     const result = await this.engine.executeJsInTab(tabUrl, js);
     if (!result.ok) throw new Error(result.error?.message ?? 'Scroll failed');
 
@@ -599,16 +720,39 @@ export class InteractionTools {
   }
 
   private async handleDrag(params: Record<string, unknown>): Promise<ToolResponse> {
-    const start = Date.now();
     const tabUrl = params['tabUrl'] as string;
-    const sourceSelector = params['sourceSelector'] as string;
-    const targetSelector = params['targetSelector'] as string;
     const steps = typeof params['steps'] === 'number' ? params['steps'] : 10;
+    const timeout = typeof params['timeout'] === 'number' ? params['timeout'] : 5000;
+    const force = params['force'] === true;
 
-    const escapedSource = sourceSelector.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-    const escapedTarget = targetSelector.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    // Resolve source: sourceRef > sourceSelector
+    const sourceRef = params['sourceRef'] as string | undefined;
+    const sourceSelector = params['sourceSelector'] as string | undefined;
+    let resolvedSource: string;
+    if (sourceRef) {
+      resolvedSource = buildRefSelector(sourceRef);
+    } else if (sourceSelector) {
+      resolvedSource = sourceSelector;
+    } else {
+      throw new Error('No source element specified. Use sourceRef or sourceSelector.');
+    }
 
-    const js = `
+    // Resolve target: targetRef > targetSelector
+    const targetRef = params['targetRef'] as string | undefined;
+    const targetSelector = params['targetSelector'] as string | undefined;
+    let resolvedTarget: string;
+    if (targetRef) {
+      resolvedTarget = buildRefSelector(targetRef);
+    } else if (targetSelector) {
+      resolvedTarget = targetSelector;
+    } else {
+      throw new Error('No target element specified. Use targetRef or targetSelector.');
+    }
+
+    const escapedSource = resolvedSource.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    const escapedTarget = resolvedTarget.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+
+    const actionJs = `
       var source = document.querySelector('${escapedSource}');
       var target = document.querySelector('${escapedTarget}');
       if (!source) throw Object.assign(new Error('Source element not found'), { name: 'ELEMENT_NOT_FOUND' });
@@ -644,10 +788,8 @@ export class InteractionTools {
       };
     `;
 
-    const result = await this.engine.executeJsInTab(tabUrl, js);
-    if (!result.ok) throw new Error(result.error?.message ?? 'Drag failed');
-
-    return this.makeResponse(result.value ? JSON.parse(result.value) : { dragged: true }, Date.now() - start);
+    // Auto-wait on source element only (the element being dragged)
+    return this.waitAndExecute(tabUrl, resolvedSource, 'drag', actionJs, { timeout, force });
   }
 
   private async handleHandleDialog(params: Record<string, unknown>): Promise<ToolResponse> {

@@ -2,6 +2,8 @@ import { execFile } from 'node:child_process';
 import { readFile, unlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { generateSnapshotJs, buildRefSelector } from '../aria.js';
+import { hasLocatorParams, extractLocatorFromParams, generateLocatorJs } from '../locator.js';
 import type { AppleScriptEngine } from '../engines/applescript.js';
 import type { Engine, ToolResponse, ToolRequirements } from '../types.js';
 
@@ -40,8 +42,8 @@ export class ExtractionTools {
       {
         name: 'safari_snapshot',
         description:
-          'Capture the page accessibility tree as a compact representation. The primary way the agent "sees" the page. ' +
-          'Returns roles, names, states, and interactive element metadata.',
+          'Capture a Playwright-compatible accessibility tree snapshot. Returns ARIA roles, names, states, and [ref=eN] identifiers ' +
+          'for interactive elements. Use refs to target elements in subsequent actions (click, fill, etc.).',
         inputSchema: {
           type: 'object',
           properties: {
@@ -57,7 +59,7 @@ export class ExtractionTools {
               description: 'Output format for the snapshot',
               default: 'yaml',
             },
-            maxDepth: { type: 'number', description: 'Maximum DOM traversal depth', default: 10 },
+            maxDepth: { type: 'number', description: 'Maximum DOM traversal depth', default: 15 },
             includeHidden: {
               type: 'boolean',
               description: 'Include hidden elements in snapshot',
@@ -76,6 +78,14 @@ export class ExtractionTools {
           properties: {
             tabUrl: { type: 'string', description: 'Current URL of the tab' },
             selector: { type: 'string', description: 'CSS selector. If omitted, returns full page text.' },
+            ref: { type: 'string', description: "Element ref from snapshot (e.g. 'e5'). Takes priority over selector." },
+            role: { type: 'string', description: "ARIA role to search for (e.g. 'button', 'link', 'textbox')" },
+            name: { type: 'string', description: 'Accessible name to match (substring, case-insensitive)' },
+            text: { type: 'string', description: 'Visible text content to match' },
+            label: { type: 'string', description: 'Associated label text to match' },
+            testId: { type: 'string', description: 'data-testid attribute value (exact match)' },
+            placeholder: { type: 'string', description: 'placeholder attribute value' },
+            exact: { type: 'boolean', description: 'Use exact matching instead of substring', default: false },
             maxLength: { type: 'number', description: 'Maximum characters to return', default: 50000 },
           },
           required: ['tabUrl'],
@@ -90,6 +100,14 @@ export class ExtractionTools {
           properties: {
             tabUrl: { type: 'string', description: 'Current URL of the tab' },
             selector: { type: 'string', description: 'CSS selector. If omitted, returns full page HTML.' },
+            ref: { type: 'string', description: "Element ref from snapshot (e.g. 'e5'). Takes priority over selector." },
+            role: { type: 'string', description: "ARIA role to search for (e.g. 'button', 'link', 'textbox')" },
+            name: { type: 'string', description: 'Accessible name to match (substring, case-insensitive)' },
+            text: { type: 'string', description: 'Visible text content to match' },
+            label: { type: 'string', description: 'Associated label text to match' },
+            testId: { type: 'string', description: 'data-testid attribute value (exact match)' },
+            placeholder: { type: 'string', description: 'placeholder attribute value' },
+            exact: { type: 'boolean', description: 'Use exact matching instead of substring', default: false },
             outer: {
               type: 'boolean',
               description: 'true = outerHTML (includes the element itself), false = innerHTML (just contents)',
@@ -108,9 +126,17 @@ export class ExtractionTools {
           properties: {
             tabUrl: { type: 'string', description: 'Current URL of the tab' },
             selector: { type: 'string', description: 'CSS selector for the element' },
+            ref: { type: 'string', description: "Element ref from snapshot (e.g. 'e5'). Takes priority over selector." },
+            role: { type: 'string', description: "ARIA role to search for (e.g. 'button', 'link', 'textbox')" },
+            name: { type: 'string', description: 'Accessible name to match (substring, case-insensitive)' },
+            text: { type: 'string', description: 'Visible text content to match' },
+            label: { type: 'string', description: 'Associated label text to match' },
+            testId: { type: 'string', description: 'data-testid attribute value (exact match)' },
+            placeholder: { type: 'string', description: 'placeholder attribute value' },
+            exact: { type: 'boolean', description: 'Use exact matching instead of substring', default: false },
             attribute: { type: 'string', description: 'Attribute name: href, src, data-id, aria-label, etc.' },
           },
-          required: ['tabUrl', 'selector', 'attribute'],
+          required: ['tabUrl', 'attribute'],
         },
         requirements: {},
       },
@@ -188,98 +214,16 @@ export class ExtractionTools {
     const start = Date.now();
     const tabUrl = params['tabUrl'] as string;
     const scope = (params['scope'] as string | undefined) ?? 'page';
-    const maxDepth = typeof params['maxDepth'] === 'number' ? params['maxDepth'] : 10;
+    const maxDepth = typeof params['maxDepth'] === 'number' ? params['maxDepth'] : 15;
     const includeHidden = params['includeHidden'] === true;
-    const scopeSelector = scope === 'page' || !scope ? '' : scope.replace(/'/g, "\\'");
+    const format = (params['format'] as string | undefined) ?? 'yaml';
 
-    const js = `
-      var maxD = ${maxDepth};
-      var inclHidden = ${includeHidden};
-      var scopeSelector = '${scopeSelector}';
-
-      function getRole(el) {
-        if (el.getAttribute('role')) return el.getAttribute('role');
-        var tag = el.tagName.toLowerCase();
-        var typeMap = {
-          a: 'link', button: 'button', input: 'textbox', select: 'combobox',
-          textarea: 'textbox', img: 'img', h1: 'heading', h2: 'heading', h3: 'heading',
-          h4: 'heading', h5: 'heading', h6: 'heading', nav: 'navigation', main: 'main',
-          form: 'form', table: 'table', ul: 'list', ol: 'list', li: 'listitem'
-        };
-        return typeMap[tag] || '';
-      }
-
-      function getName(el) {
-        return el.getAttribute('aria-label') || el.getAttribute('alt') ||
-          el.getAttribute('title') || el.getAttribute('placeholder') ||
-          (el.labels && el.labels[0] ? el.labels[0].textContent.trim() : '') ||
-          (el.textContent || '').trim().slice(0, 80);
-      }
-
-      function getState(el) {
-        var states = [];
-        if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT') {
-          if (el.required) states.push('required');
-          if (el.disabled) states.push('disabled');
-          if (el.readOnly) states.push('readonly');
-          if (el.type === 'checkbox' || el.type === 'radio') states.push(el.checked ? 'checked' : 'unchecked');
-          if (el.type) states.push('type=' + el.type);
-        }
-        if (el.tagName === 'BUTTON' || (el.tagName === 'INPUT' && el.type === 'submit')) {
-          states.push(el.disabled ? 'disabled' : 'enabled');
-        }
-        var level = el.tagName.match(/^H(\\d)$/i);
-        if (level) states.push('level=' + level[1]);
-        return states;
-      }
-
-      function isInteractive(el) {
-        var tag = el.tagName.toLowerCase();
-        return ['a', 'button', 'input', 'select', 'textarea'].indexOf(tag) !== -1 ||
-          el.getAttribute('role') === 'button' || el.getAttribute('tabindex') !== null ||
-          el.onclick !== null;
-      }
-
-      var lines = [];
-      var elementCount = 0;
-      var interactiveCount = 0;
-
-      function walk(node, depth) {
-        if (depth > maxD) return;
-        if (node.nodeType !== 1) return;
-        if (!inclHidden && (node.offsetParent === null && getComputedStyle(node).position !== 'fixed')) return;
-
-        var role = getRole(node);
-        var name = getName(node);
-        if (role || isInteractive(node)) {
-          elementCount++;
-          if (isInteractive(node)) interactiveCount++;
-          var indent = '';
-          for (var i = 0; i < depth; i++) indent += '  ';
-          var states = getState(node);
-          var stateStr = states.length ? ' [' + states.join(', ') + ']' : '';
-          var idStr = node.id ? ' #' + node.id : '';
-          var hrefStr = node.tagName === 'A' && node.href ? ' -> ' + new URL(node.href).pathname : '';
-          lines.push(indent + '- ' + (role || node.tagName.toLowerCase()) + (name ? ' "' + name.replace(/"/g, '\\\\"').slice(0, 80) + '"' : '') + stateStr + idStr + hrefStr);
-        }
-
-        for (var ci = 0; ci < node.children.length; ci++) {
-          walk(node.children[ci], depth + (role ? 1 : 0));
-        }
-      }
-
-      var root = scopeSelector ? document.querySelector(scopeSelector) : document.body;
-      if (!root) throw Object.assign(new Error('Scope element not found'), { name: 'ELEMENT_NOT_FOUND' });
-      walk(root, 0);
-
-      return {
-        snapshot: lines.join('\\n'),
-        url: window.location.href,
-        title: document.title,
-        elementCount: elementCount,
-        interactiveCount: interactiveCount,
-      };
-    `;
+    const js = generateSnapshotJs({
+      scopeSelector: scope === 'page' ? undefined : scope,
+      maxDepth,
+      includeHidden,
+      format: format as 'yaml' | 'json',
+    });
 
     const result = await this.engine.executeJsInTab(tabUrl, js);
     if (!result.ok) throw new Error(result.error?.message ?? 'Snapshot failed');
@@ -290,8 +234,27 @@ export class ExtractionTools {
   private async handleGetText(params: Record<string, unknown>): Promise<ToolResponse> {
     const start = Date.now();
     const tabUrl = params['tabUrl'] as string;
-    const selector = params['selector'] as string | undefined;
     const maxLength = typeof params['maxLength'] === 'number' ? params['maxLength'] : 50000;
+
+    // Resolve targeting: ref → locator → selector
+    let selector = params['selector'] as string | undefined;
+    const ref = params['ref'] as string | undefined;
+    if (ref) {
+      selector = buildRefSelector(ref);
+    }
+    if (!selector && hasLocatorParams(params)) {
+      const locator = extractLocatorFromParams(params)!;
+      const locatorJs = generateLocatorJs(locator);
+      const locatorResult = await this.engine.executeJsInTab(tabUrl, locatorJs);
+      if (locatorResult.ok && locatorResult.value) {
+        const parsed = JSON.parse(locatorResult.value);
+        if (parsed.found && parsed.selector) {
+          selector = parsed.selector;
+        } else {
+          throw new Error(parsed.hint || 'Locator did not match any element');
+        }
+      }
+    }
 
     const escapedSelector = selector ? selector.replace(/'/g, "\\'") : '';
     const js = `
@@ -311,8 +274,27 @@ export class ExtractionTools {
   private async handleGetHtml(params: Record<string, unknown>): Promise<ToolResponse> {
     const start = Date.now();
     const tabUrl = params['tabUrl'] as string;
-    const selector = params['selector'] as string | undefined;
     const outer = params['outer'] !== false;
+
+    // Resolve targeting: ref → locator → selector
+    let selector = params['selector'] as string | undefined;
+    const ref = params['ref'] as string | undefined;
+    if (ref) {
+      selector = buildRefSelector(ref);
+    }
+    if (!selector && hasLocatorParams(params)) {
+      const locator = extractLocatorFromParams(params)!;
+      const locatorJs = generateLocatorJs(locator);
+      const locatorResult = await this.engine.executeJsInTab(tabUrl, locatorJs);
+      if (locatorResult.ok && locatorResult.value) {
+        const parsed = JSON.parse(locatorResult.value);
+        if (parsed.found && parsed.selector) {
+          selector = parsed.selector;
+        } else {
+          throw new Error(parsed.hint || 'Locator did not match any element');
+        }
+      }
+    }
 
     const escapedSelector = selector ? selector.replace(/'/g, "\\'") : '';
     const js = `
@@ -331,8 +313,30 @@ export class ExtractionTools {
   private async handleGetAttribute(params: Record<string, unknown>): Promise<ToolResponse> {
     const start = Date.now();
     const tabUrl = params['tabUrl'] as string;
-    const selector = params['selector'] as string;
     const attribute = params['attribute'] as string;
+
+    // Resolve targeting: ref → locator → selector
+    let selector = params['selector'] as string | undefined;
+    const ref = params['ref'] as string | undefined;
+    if (ref) {
+      selector = buildRefSelector(ref);
+    }
+    if (!selector && hasLocatorParams(params)) {
+      const locator = extractLocatorFromParams(params)!;
+      const locatorJs = generateLocatorJs(locator);
+      const locatorResult = await this.engine.executeJsInTab(tabUrl, locatorJs);
+      if (locatorResult.ok && locatorResult.value) {
+        const parsed = JSON.parse(locatorResult.value);
+        if (parsed.found && parsed.selector) {
+          selector = parsed.selector;
+        } else {
+          throw new Error(parsed.hint || 'Locator did not match any element');
+        }
+      }
+    }
+    if (!selector) {
+      throw new Error('safari_get_attribute requires a target element: provide selector, ref, or a locator (role, text, label, testId, placeholder)');
+    }
 
     const escapedSelector = selector.replace(/'/g, "\\'");
     const escapedAttribute = attribute.replace(/'/g, "\\'");
