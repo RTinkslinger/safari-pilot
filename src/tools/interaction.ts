@@ -1,6 +1,7 @@
 import type { ToolResponse, ToolRequirements } from '../types.js';
 import type { AppleScriptEngine } from '../engines/applescript.js';
 import type { Engine } from '../types.js';
+import type { SafariPilotServer } from '../server.js';
 import { buildRefSelector } from '../aria.js';
 import { generateAutoWaitJs, ACTION_CHECKS } from '../auto-wait.js';
 import { hasLocatorParams, extractLocatorFromParams, generateLocatorJs } from '../locator.js';
@@ -16,10 +17,12 @@ type Handler = (params: Record<string, unknown>) => Promise<ToolResponse>;
 
 export class InteractionTools {
   private engine: AppleScriptEngine;
+  private server: SafariPilotServer;
   private handlers: Map<string, Handler> = new Map();
 
-  constructor(engine: AppleScriptEngine) {
+  constructor(engine: AppleScriptEngine, server: SafariPilotServer) {
     this.engine = engine;
+    this.server = server;
     this.registerHandlers();
   }
 
@@ -383,17 +386,43 @@ export class InteractionTools {
       el.dispatchEvent(new MouseEvent('mouseup', opts));
       el.dispatchEvent(new MouseEvent('click', opts));
 
+      var linkEl = el.tagName === 'A' ? el : el.closest('a');
       return {
         clicked: true,
         element: {
           tagName: el.tagName,
           id: el.id || undefined,
           textContent: (el.textContent || '').slice(0, 100),
-        }
+        },
+        downloadContext: linkEl ? {
+          href: linkEl.href || undefined,
+          downloadAttr: linkEl.getAttribute('download') || undefined,
+          isDownloadLink: linkEl.hasAttribute('download'),
+        } : undefined
       };
     `;
 
-    return this.waitAndExecute(tabUrl, selector, 'click', actionJs, { timeout, force });
+    const response = await this.waitAndExecute(tabUrl, selector, 'click', actionJs, { timeout, force });
+
+    try {
+      const resultText = response.content[0]?.text;
+      if (resultText) {
+        const parsed = JSON.parse(resultText);
+        if (parsed.downloadContext) {
+          this.server.setClickContext({
+            href: parsed.downloadContext.href ?? undefined,
+            downloadAttr: parsed.downloadContext.downloadAttr ?? undefined,
+            isDownloadLink: !!parsed.downloadContext.isDownloadLink,
+            tabUrl,
+            timestamp: Date.now(),
+          });
+        }
+      }
+    } catch {
+      // Click context extraction is best-effort — never block the click response
+    }
+
+    return response;
   }
 
   private async handleDoubleClick(params: Record<string, unknown>): Promise<ToolResponse> {

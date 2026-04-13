@@ -187,7 +187,7 @@ export class SafariPilotServer {
 
     // Instantiate all tool modules
     const navTools = new NavigationTools(engine);
-    const interactionTools = new InteractionTools(engine);
+    const interactionTools = new InteractionTools(engine, this);
     const extractionTools = new ExtractionTools(engine);
     const networkTools = new NetworkTools(engine);
     const storageTools = new StorageTools(engine);
