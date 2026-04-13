@@ -1,11 +1,14 @@
 # Build Traces
 
 ## Project Summary
-*No milestones yet.*
+- **Milestone 1 (iter 1-3):** Extension build pipeline, config externalisation, distribution hardening, enforcement hooks
+- **Milestone 2 (iter 4-6):** P0 accessibility/ARIA/auto-wait/locator, benchmark fixture server, benchmark reporter. Fixed type contract mismatches in types.ts (enginesUsed, perTask, evalDetails).
 
 ## Milestone Index
 | # | Iterations | Focus | Key Decisions |
 |---|------------|-------|---------------|
+| 1 | 1-3 | Extension pipeline + config + hardening | Three-persona distribution model; codesign via xcodebuild only; enforcement hooks |
+| 2 | 4-6 | ARIA/auto-wait/locator + benchmark foundation | enginesUsed→Record<string,number>; perTask→Record<string,PerTaskSummary>; flakiness threshold 0.2-0.8 |
 
 ## Current Work
 
@@ -32,3 +35,5 @@
 **Changes:** `src/aria.ts` (created — Playwright-compatible ARIA tree with refs, role/name computation, data-sp-ref stamping), `src/auto-wait.ts` (created — actionability checks: visible/stable/enabled/editable/receivesEvents, rAF-based stability, backoff retry), `src/locator.ts` (created — role+name/text/label/testId/placeholder resolution with CSS pre-filter), `src/tools/extraction.ts` (snapshot rewritten to use aria.ts, ref+locator params on get_text/get_html/get_attribute), `src/tools/interaction.ts` (all 10 handlers: resolveElement priority ref>locator>selector, waitAndExecute with auto-wait, force option, selector no longer required), `test/unit/aria.test.ts` (152 tests), `test/unit/auto-wait.test.ts` (99 tests), `test/unit/locator.test.ts` (106 tests), `test/unit/tools/interaction.test.ts` (updated for new schemas + auto-wait mock pattern), `test/unit/tools/extraction.test.ts` (updated)
 **Context:** Three parallel sub-agents wrote core modules simultaneously. safari_type.text renamed to content, safari_select_option value/label/index renamed to optionValue/optionLabel/optionIndex to avoid collision with locator params. computedRole/computedName (Safari 16.4+) used with full fallback chains. 1590/1591 tests pass (1 pre-existing flaky e2e benchmark).
 ---
+
+<!-- Iterations 5-6 archived to traces/archive/milestone-2.md -->
