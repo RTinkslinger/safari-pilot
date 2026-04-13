@@ -10,10 +10,21 @@
  * - "Allow JavaScript from Apple Events" enabled in Safari > Develop
  */
 import { describe, it, expect, afterAll } from 'vitest';
+import { execFileSync } from 'node:child_process';
 import { AppleScriptEngine } from '../../src/engines/applescript.js';
 import { NavigationTools } from '../../src/tools/navigation.js';
 import { ExtractionTools } from '../../src/tools/extraction.js';
 import { InteractionTools } from '../../src/tools/interaction.js';
+
+// ── Safari availability check (skip entire file in CI / headless) ────────────
+
+let safariAvailable = false;
+try {
+  execFileSync('osascript', ['-e', 'tell application "Safari" to return name'], { timeout: 5000 });
+  safariAvailable = true;
+} catch {
+  console.log('Safari not available — skipping a11y targeting integration tests (expected in CI)');
+}
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -104,7 +115,9 @@ afterAll(async () => {
 // Suite 1: Structured Accessibility Snapshot (Wikipedia)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-describe('Suite 1: Structured Accessibility Snapshot (Wikipedia)', () => {
+const describeWithSafari = safariAvailable ? describe : describe.skip;
+
+describeWithSafari('Suite 1: Structured Accessibility Snapshot (Wikipedia)', () => {
   let wikiTabUrl: string;
 
   it('setup: open Wikipedia', async () => {
@@ -207,7 +220,7 @@ describe('Suite 1: Structured Accessibility Snapshot (Wikipedia)', () => {
 // Suite 2: Ref Lifecycle (example.com)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-describe('Suite 2: Ref Lifecycle (example.com)', () => {
+describeWithSafari('Suite 2: Ref Lifecycle (example.com)', () => {
   let exTabUrl: string;
 
   it('setup: open example.com', async () => {
@@ -342,7 +355,7 @@ describe('Suite 2: Ref Lifecycle (example.com)', () => {
 // Suite 3: Auto-Waiting (example.com)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-describe('Suite 3: Auto-Waiting (example.com)', () => {
+describeWithSafari('Suite 3: Auto-Waiting (example.com)', () => {
   let autoTabUrl: string;
 
   it('setup: open example.com', async () => {
@@ -397,7 +410,7 @@ describe('Suite 3: Auto-Waiting (example.com)', () => {
 // Suite 4: Locator Targeting (Wikipedia)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-describe('Suite 4: Locator Targeting (Wikipedia)', () => {
+describeWithSafari('Suite 4: Locator Targeting (Wikipedia)', () => {
   let locatorTabUrl: string;
 
   it('setup: open Wikipedia', async () => {
@@ -511,7 +524,7 @@ describe('Suite 4: Locator Targeting (Wikipedia)', () => {
 // Requires: logged in to X in Safari
 // ═══════════════════════════════════════════════════════════════════════════════
 
-describe('Suite 5: X (Twitter) — Authenticated', () => {
+describeWithSafari('Suite 5: X (Twitter) — Authenticated', () => {
   let xTabUrl: string;
 
   it('setup: open X home', async () => {
@@ -611,7 +624,7 @@ describe('Suite 5: X (Twitter) — Authenticated', () => {
 // Requires: logged in to Reddit in Safari
 // ═══════════════════════════════════════════════════════════════════════════════
 
-describe('Suite 6: Reddit — Authenticated', () => {
+describeWithSafari('Suite 6: Reddit — Authenticated', () => {
   let redditTabUrl: string;
 
   it('setup: open Reddit', async () => {
@@ -729,7 +742,7 @@ describe('Suite 6: Reddit — Authenticated', () => {
 // Requires: logged in to LinkedIn in Safari
 // ═══════════════════════════════════════════════════════════════════════════════
 
-describe('Suite 7: LinkedIn — Authenticated', () => {
+describeWithSafari('Suite 7: LinkedIn — Authenticated', () => {
   let liTabUrl: string;
 
   it('setup: open LinkedIn feed', async () => {

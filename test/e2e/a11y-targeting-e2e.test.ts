@@ -13,7 +13,18 @@
  * - Logged in to X, Reddit, LinkedIn in Safari (for suites 5-7)
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { execFileSync } from 'node:child_process';
 import { SafariPilotServer } from '../../src/server.js';
+
+// ── Safari availability check (skip entire file in CI / headless) ────────────
+
+let safariAvailable = false;
+try {
+  execFileSync('osascript', ['-e', 'tell application "Safari" to return name'], { timeout: 5000 });
+  safariAvailable = true;
+} catch {
+  console.log('Safari not available — skipping a11y targeting e2e tests (expected in CI)');
+}
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -82,7 +93,9 @@ afterAll(async () => {
 // Suite 1: Full Pipeline Snapshot on Wikipedia
 // =============================================================================
 
-describe('Suite 1: Full Pipeline Snapshot on Wikipedia', () => {
+const describeWithSafari = safariAvailable ? describe : describe.skip;
+
+describeWithSafari('Suite 1: Full Pipeline Snapshot on Wikipedia', () => {
   let wikiTabUrl: string;
   let firstSnapshotYaml: string;
   let firstSnapshotRefs: string[];
@@ -288,7 +301,7 @@ describe('Suite 1: Full Pipeline Snapshot on Wikipedia', () => {
 // Suite 2: Locator Targeting on Hacker News
 // =============================================================================
 
-describe('Suite 2: Locator Targeting on Hacker News', () => {
+describeWithSafari('Suite 2: Locator Targeting on Hacker News', () => {
   let hnTabUrl: string;
 
   it('7. Open Hacker News', async () => {
@@ -453,7 +466,7 @@ describe('Suite 2: Locator Targeting on Hacker News', () => {
 // Suite 3: Auto-Wait Behavior (against example.com)
 // =============================================================================
 
-describe('Suite 3: Auto-Wait Behavior', () => {
+describeWithSafari('Suite 3: Auto-Wait Behavior', () => {
   let exTabUrl: string;
 
   it('12. Open example.com, click via auto-wait', async () => {
@@ -540,7 +553,7 @@ describe('Suite 3: Auto-Wait Behavior', () => {
 // Suite 4: Ref + Locator Combined on GitHub
 // =============================================================================
 
-describe('Suite 4: Ref + Locator Combined on GitHub', () => {
+describeWithSafari('Suite 4: Ref + Locator Combined on GitHub', () => {
   let ghTabUrl: string;
   let ghSnapshotData: any;
 
@@ -625,7 +638,7 @@ describe('Suite 4: Ref + Locator Combined on GitHub', () => {
 // Suite 5: X (Twitter) — Authenticated, Shadow DOM, Complex ARIA
 // =============================================================================
 
-describe('Suite 5: X (Twitter) — Authenticated SPA', () => {
+describeWithSafari('Suite 5: X (Twitter) — Authenticated SPA', () => {
   let xTabUrl: string;
   let xSnapshotData: any;
 
@@ -772,7 +785,7 @@ describe('Suite 5: X (Twitter) — Authenticated SPA', () => {
 // Suite 6: Reddit — Authenticated, Modern React SPA
 // =============================================================================
 
-describe('Suite 6: Reddit — Authenticated SPA', () => {
+describeWithSafari('Suite 6: Reddit — Authenticated SPA', () => {
   let redditTabUrl: string;
   let redditSnapshotData: any;
 
@@ -925,7 +938,7 @@ describe('Suite 6: Reddit — Authenticated SPA', () => {
 // Suite 7: LinkedIn — Authenticated, Rich ARIA, Complex Forms
 // =============================================================================
 
-describe('Suite 7: LinkedIn — Authenticated, Rich ARIA', () => {
+describeWithSafari('Suite 7: LinkedIn — Authenticated, Rich ARIA', () => {
   let liTabUrl: string;
   let liSnapshotData: any;
 
