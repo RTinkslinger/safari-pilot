@@ -201,7 +201,7 @@ export class DownloadTools {
       if (result.ok && result.value) {
         const currentUrl = result.value.trim();
         // If the current tab navigated to the clicked href, it was rendered inline
-        if (currentUrl.startsWith(clickCtx.href) || clickCtx.href.startsWith(currentUrl)) {
+        if (currentUrl.startsWith(clickCtx.href)) {
           return this.makeErrorResponse(
             'DOWNLOAD_INLINE_RENDER',
             `File was opened inline in the browser tab instead of downloading. ` +
@@ -240,6 +240,7 @@ export class DownloadTools {
             downloadAttr: clickCtx.downloadAttr ?? null,
             isDownloadLink: clickCtx.isDownloadLink,
             tabUrl: clickCtx.tabUrl,
+            timestamp: clickCtx.timestamp,
           }
         : null,
     };
