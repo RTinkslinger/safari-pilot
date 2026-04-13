@@ -222,17 +222,84 @@ These are structural advantages — no amount of Playwright development can matc
 
 ---
 
-## Estimated Total Effort to Full Parity
+## P1 — Benchmark Suite & Eval Framework
 
-| Priority | Items | Sessions (revised from research) |
+### Task-Completion Benchmark (NEW)
+
+**The measurement system.** Before optimizing, measure. A structured benchmark that runs after every roadmap item ships, tracking whether Safari Pilot is actually getting better at real-world tasks.
+
+**What to build:**
+- 120 task definitions across 11 categories (JSON schema, programmatic eval)
+- Task categories: navigation, forms, extraction, multi-step workflows, DOM complexity, auth flows, accessibility-first, error recovery, Safari-specific, **intelligence-tier** (12 tasks requiring human-like inference), **competitive dual-mode** (12 tasks run on both Safari Pilot and Playwright MCP)
+- Benchmark runner: `npx safari-pilot-bench` — reads tasks, executes via MCP, evaluates, generates delta report
+- Trace capture: every run emits structured JSON traces per task (tools called, timing, domain observations)
+- Environment: 30% local fixtures, 40% stable live sites, 20% authenticated (X, Reddit, LinkedIn), 10% competitive
+- Delta reports: per-category success rates, intelligence-tier KPI, competitive win rate, regression detection
+
+**Intelligence-tier tasks** (the future recipe system's KPI): real-world goals like "Find 3 engineers at Anthropic on LinkedIn and list their titles" or "Find the most discussed HN post today and summarize its top comments." Low success rates initially — climbing as the roadmap progresses and recipes are built.
+
+**Design spec:** `docs/superpowers/specs/2026-04-13-benchmark-recipe-system-design.md`
+**Research:** `docs/research/competitive-browser-benchmarks.md`, `docs/research/competitive-classic-automation-tools.md`
+**Estimated effort:** 2-3 sessions.
+
+---
+
+## P3 — Learnability & Recipe System
+
+### Domain Learning & Recipes (NEW — Back-end of Roadmap)
+
+**The moat.** Every competitor (Playwright, Browser Use, Stagehand, Skyvern) is stateless — each session starts from scratch. Safari Pilot should get better with every use, accumulating domain knowledge that makes it faster and more reliable over time. No production browser tool has cross-session learning. This would be first-in-industry.
+
+**What to build — 3-layer architecture:**
+
+**Layer 1 — Domain Knowledge (curated facts):**
+Per-domain JSON files with timestamped, confidence-scored facts: "LinkedIn search requires click-to-focus," "X feed loads dynamically on scroll," "Reddit comments need click-to-expand." Facts have ExpeL-style voting (ADD/UPVOTE/DOWNVOTE/EDIT) — cross-site patterns get promoted, site-specific quirks get scoped.
+
+**Layer 2 — Recorded Workflows (AWM-style):**
+Abstracted, parameterized multi-step procedures extracted from successful benchmark traces. "Search and extract results" with `{query}` and `{result_count}` parameters. Applicable across domains. Based on Agent Workflow Memory (ICML 2025) — 24-51% improvement on Mind2Web/WebArena.
+
+**Layer 3 — Learned Heuristics (ExpeL-style):**
+Universal behavioral rules extracted from success/failure patterns: "On SPAs, always re-snapshot after navigation," "When fill fails with not-editable, click element first." Confidence-scored via voting across benchmark runs.
+
+**MCP-native delivery:**
+When `safari_snapshot` runs on a known domain, the response includes `domain_hints[]`, `applicable_workflows[]`, and `heuristics[]` — zero extra tool calls. Claude sees the knowledge inline and adjusts behavior.
+
+**Seeding pipeline:**
+Benchmark traces → auto-extract domain observations → candidate recipes → human review + manual input → active recipes → next benchmark measures impact → feedback loop.
+
+**Design spec:** `docs/superpowers/specs/2026-04-13-benchmark-recipe-system-design.md`
+**Research:**
+- `docs/research/competitive-ai-native-browser-agents.md` — Browser Use, Stagehand, AgentQL, Skyvern competitive analysis
+- `docs/research/competitive-computer-use-visual-agents.md` — Claude CU, OpenAI CUA, UI-TARS, WebArena/Mind2Web benchmarks
+- `docs/research/competitive-adaptive-learning-systems.md` — Letta, Voyager, ExpeL, AWM, WALT, SkillWeaver architectures
+- `docs/research/competitive-browser-benchmarks.md` — WebArena, Mind2Web, WebVoyager, BrowserGym analysis
+- `docs/research/competitive-classic-automation-tools.md` — Playwright, Puppeteer, Selenium, Cypress feature matrix
+
+**Key research findings:**
+- AWM (ICML 2025): abstract parameterized workflows, 24-51% improvement
+- WALT (Salesforce): reverse-engineers site functionality into tools, 50% WebArena
+- ExpeL: insight extraction from success/failure pairs with confidence voting
+- Voyager (NVIDIA): skill library as executable code, indexed by description embeddings
+- Letta/MemGPT: tiered memory (core/archival/recall) with sleeptime consolidation
+- Zep: temporal knowledge graphs with fact validity windows
+
+**Estimated effort:** 4-6 sessions (after benchmark suite is running).
+
+---
+
+## Estimated Total Effort to Full Parity + Beyond
+
+| Priority | Items | Sessions (revised) |
 |---|---|---|
-| P0 | Daemon lifecycle + a11y snapshots + auto-waiting | 1 + 2-3 + 1 = **4-5** |
-| P1 | Locators + downloads + PDF | 1-2 + 1 + 2-3 = **4-6** |
+| P0 | ~~Daemon lifecycle~~ + ~~a11y snapshots~~ + ~~auto-waiting~~ | ~~4-5~~ **SHIPPED** |
+| P1 | ~~Locators~~ + downloads + PDF + **benchmark suite** | ~~1-2~~ + 1 + 2-3 + 2-3 = **5-8** |
 | P2 | CI runner + visual regression + video | 4-5 + 2-3 + 1-2 = **7-10** |
-| P3 | Route modification + HTTP auth | 1 + 0.5 = **1.5** |
-| **Total** | **11 items** | **~17-22 sessions** |
+| P3 | Route modification + HTTP auth + **recipe system** | 1 + 0.5 + 4-6 = **5.5-7.5** |
+| **Total** | **14 items** | **~18-26 sessions** |
 
-After P0 + P1 (~9-11 sessions), Safari Pilot would cover 95%+ of what any Mac Claude Code user needs from a browser automation tool.
+After P0 + P1: 95%+ Playwright parity + measurable benchmarks.
+After P2: full testing infrastructure.
+After P3: **self-improving tool that gets better with every use — first-in-industry.**
 
 **Additional research (post-roadmap):**
 - Auth strategy: `docs/research/auth-strategy-research.md` + `.claude/plans/auth-strategy-assessment.md`
