@@ -207,5 +207,15 @@ export function validateTask(task: BenchmarkTask): string[] {
     errors.push(`max_budget_usd must be non-negative (got ${task.max_budget_usd})`);
   }
 
+  if (!task.requires || typeof task.requires !== 'object') {
+    errors.push('requires must be a non-null object');
+  } else {
+    if (!Array.isArray(task.requires.tools)) errors.push('requires.tools must be an array');
+    if (!Array.isArray(task.requires.engines)) errors.push('requires.engines must be an array');
+    if (!Array.isArray(task.requires.auth_domains)) errors.push('requires.auth_domains must be an array');
+    if (!Array.isArray(task.requires.features)) errors.push('requires.features must be an array');
+    if (typeof task.requires.competitive !== 'boolean') errors.push('requires.competitive must be a boolean');
+  }
+
   return errors;
 }

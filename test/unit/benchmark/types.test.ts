@@ -105,4 +105,10 @@ describe('benchmark types', () => {
     const errors = validateTask(null as any);
     expect(errors).toContain('task must be a non-null object');
   });
+
+  it('rejects task with missing requires.tools', () => {
+    const bad = { ...validTask, requires: { ...validTask.requires, tools: 'not-array' as any } };
+    const errors = validateTask(bad);
+    expect(errors[0]).toContain('requires.tools');
+  });
 });

@@ -1,4 +1,4 @@
-import { execSync } from 'child_process';
+import { execFileSync } from 'node:child_process';
 import type { TaskEval, EvalType } from './types.js';
 
 // ─── EvalResult ───────────────────────────────────────────────────────────────
@@ -225,8 +225,9 @@ export async function evaluateWithLlmJudge(
 
   let responseText = '';
   try {
-    responseText = execSync(
-      `claude -p ${JSON.stringify(prompt)} --model claude-haiku-4-5 --output-format text --no-session-persistence --max-budget-usd 0.02`,
+    responseText = execFileSync(
+      'claude',
+      ['-p', prompt, '--model', 'claude-haiku-4-5', '--output-format', 'text', '--bare', '--no-session-persistence', '--max-budget-usd', '0.02'],
       { encoding: 'utf-8', timeout: 30_000 }
     );
   } catch (err) {

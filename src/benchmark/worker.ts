@@ -135,7 +135,7 @@ export async function executeTask(
   try {
     await new Promise<void>((resolve, reject) => {
       const args = buildClaudeArgs(task, model, windowIndex, mcpConfigPath);
-      const proc = spawn('claude', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+      const proc = spawn('claude', args, { stdio: ['ignore', 'pipe', 'inherit'] });
 
       let timer: ReturnType<typeof setTimeout> | null = setTimeout(() => {
         timedOut = true;
