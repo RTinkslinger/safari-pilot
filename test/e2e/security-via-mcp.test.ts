@@ -22,159 +22,18 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { spawn, type ChildProcess } from 'node:child_process';
 import { join } from 'node:path';
+import { McpTestClient, initClient, callTool } from '../helpers/mcp-client.js';
 
 // ── Configuration ──────────────────────────────────────────────────────────
 
 const SERVER_PATH = join(import.meta.dirname, '../../dist/index.js');
 const SAFARI_AVAILABLE = process.env.CI !== 'true' && process.env.SAFARI_AVAILABLE !== 'false';
 
-// ── McpTestClient ──────────────────────────────────────────────────────────
-
-/**
- * Minimal MCP test client. FIFO queue of resolvers; id-bearing server
- * responses are dispatched in arrival order.
- */
-class McpTestClient {
-  private proc: ChildProcess;
-  private buffer = '';
-  private responseQueue: Array<(data: unknown) => void> = [];
-
-  constructor() {
-    this.proc = spawn('node', [SERVER_PATH], {
-      stdio: ['pipe', 'pipe', 'pipe'],
-      cwd: join(import.meta.dirname, '../..'),
-    });
-
-    this.proc.stdout!.on('data', (chunk: Buffer) => {
-      this.buffer += chunk.toString();
-      const lines = this.buffer.split('\n');
-      this.buffer = lines.pop()!;
-
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        let msg: unknown;
-        try {
-          msg = JSON.parse(line);
-        } catch {
-          continue;
-        }
-        if (msg !== null && typeof msg === 'object' && 'id' in (msg as object)) {
-          const resolver = this.responseQueue.shift();
-          if (resolver) resolver(msg);
-        }
-      }
-    });
-
-    // Uncomment for debugging: this.proc.stderr!.on('data', (c: Buffer) => process.stderr.write(c));
-  }
-
-  async send(msg: Record<string, unknown>, timeoutMs = 25000): Promise<unknown> {
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(
-        () => reject(new Error(`MCP timeout (${timeoutMs}ms) for method: ${msg['method']}`)),
-        timeoutMs,
-      );
-      this.responseQueue.push((data) => {
-        clearTimeout(timer);
-        resolve(data);
-      });
-      this.proc.stdin!.write(JSON.stringify(msg) + '\n');
-    });
-  }
-
-  notify(msg: Record<string, unknown>): void {
-    this.proc.stdin!.write(JSON.stringify(msg) + '\n');
-  }
-
-  async close(): Promise<void> {
-    this.proc.kill('SIGTERM');
-    return new Promise((resolve) => {
-      this.proc.on('close', () => resolve());
-      setTimeout(resolve, 3000);
-    });
-  }
-}
-
 // ── Helpers ────────────────────────────────────────────────────────────────
-
-let nextId = 2; // id=1 reserved for initialize
-
-const id = () => nextId++;
 
 function waitMs(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
-}
-
-async function doHandshake(client: McpTestClient): Promise<void> {
-  await client.send({
-    jsonrpc: '2.0',
-    id: 1,
-    method: 'initialize',
-    params: {
-      protocolVersion: '2024-11-05',
-      capabilities: {},
-      clientInfo: { name: 'security-via-mcp-e2e', version: '1.0.0' },
-    },
-  });
-  client.notify({ jsonrpc: '2.0', method: 'notifications/initialized' });
-}
-
-/**
- * Send a tools/call request and return the raw JSON-RPC response object.
- * Unlike callTool() in other suites, this returns the full response — callers
- * need to inspect both 'result' and 'error' branches for security tests.
- */
-async function sendToolCall(
-  client: McpTestClient,
-  name: string,
-  args: Record<string, unknown> = {},
-  timeoutMs?: number,
-): Promise<Record<string, unknown>> {
-  return (await client.send(
-    {
-      jsonrpc: '2.0',
-      id: id(),
-      method: 'tools/call',
-      params: { name, arguments: args },
-    },
-    timeoutMs,
-  )) as Record<string, unknown>;
-}
-
-/**
- * Send a tools/call and parse content[0].text JSON if successful.
- * Throws on protocol-level errors (kill switch, malformed, etc.).
- */
-async function callTool(
-  client: McpTestClient,
-  name: string,
-  args: Record<string, unknown> = {},
-  timeoutMs?: number,
-): Promise<Record<string, unknown>> {
-  const resp = await sendToolCall(client, name, args, timeoutMs);
-
-  if ('error' in resp) {
-    const err = resp['error'] as Record<string, unknown>;
-    throw new Error(`MCP protocol error ${err['code']}: ${err['message']}`);
-  }
-
-  const result = resp['result'] as Record<string, unknown>;
-  const content = result['content'] as Array<Record<string, unknown>> | undefined;
-  if (!content || content.length === 0) return result;
-
-  const firstItem = content[0];
-  if (firstItem['type'] === 'image') return result;
-
-  const text = firstItem['text'] as string | undefined;
-  if (!text) return result;
-
-  try {
-    return JSON.parse(text) as Record<string, unknown>;
-  } catch {
-    return { text };
-  }
 }
 
 /**
@@ -183,8 +42,9 @@ async function callTool(
 async function resolveTabUrl(
   client: McpTestClient,
   rawUrl: string,
+  idRef: { value: number },
 ): Promise<string> {
-  const data = await callTool(client, 'safari_list_tabs', {});
+  const data = await callTool(client, 'safari_list_tabs', {}, idRef.value++);
   const tabs = data['tabs'] as Array<Record<string, unknown>>;
   const canonical = rawUrl.replace(/\/$/, '');
   const match = tabs.find(
@@ -199,10 +59,12 @@ async function resolveTabUrl(
 
 describe('Security pipeline via MCP — real Safari, no mocks', () => {
   let client: McpTestClient;
+  const idRef = { value: 100 };
 
   beforeAll(async () => {
-    client = new McpTestClient();
-    await doHandshake(client);
+    const init = await initClient(SERVER_PATH, 1);
+    client = init.client;
+    idRef.value = init.nextId;
   }, 25000);
 
   afterAll(async () => {
@@ -216,7 +78,7 @@ describe('Security pipeline via MCP — real Safari, no mocks', () => {
 
   describe('safari_health_check — structured response through MCP', () => {
     it('returns healthy field and a checks array with named entries', async () => {
-      const data = await callTool(client, 'safari_health_check', {}, 20000);
+      const data = await callTool(client, 'safari_health_check', {}, idRef.value++, 20000);
 
       // { healthy: boolean, checks: [{name, ok}], failedChecks: string[], sessionId }
       expect(typeof data['healthy']).toBe('boolean');
@@ -227,7 +89,7 @@ describe('Security pipeline via MCP — real Safari, no mocks', () => {
     }, 25000);
 
     it('checks array contains expected check names', async () => {
-      const data = await callTool(client, 'safari_health_check', {}, 20000);
+      const data = await callTool(client, 'safari_health_check', {}, idRef.value++, 20000);
       const checks = data['checks'] as Array<Record<string, unknown>>;
 
       // Each check must have a name (string) and ok (boolean) field
@@ -250,14 +112,14 @@ describe('Security pipeline via MCP — real Safari, no mocks', () => {
     let ownedTabUrl: string;
 
     beforeAll(async () => {
-      const data = await callTool(client, 'safari_new_tab', { url: 'https://example.com' });
+      const data = await callTool(client, 'safari_new_tab', { url: 'https://example.com' }, idRef.value++);
       await waitMs(2000);
-      ownedTabUrl = await resolveTabUrl(client, data['tabUrl'] as string);
+      ownedTabUrl = await resolveTabUrl(client, data['tabUrl'] as string, idRef);
     }, 30000);
 
     afterAll(async () => {
       if (ownedTabUrl) {
-        await callTool(client, 'safari_close_tab', { tabUrl: ownedTabUrl }).catch(() => {});
+        await callTool(client, 'safari_close_tab', { tabUrl: ownedTabUrl }, idRef.value++).catch(() => {});
       }
     });
 
@@ -268,7 +130,7 @@ describe('Security pipeline via MCP — real Safari, no mocks', () => {
       // Safari-level error, not an ownership error)
       const data = await callTool(client, 'safari_get_text', {
         tabUrl: ownedTabUrl,
-      }, 20000);
+      }, idRef.value++, 20000);
 
       // Ownership was not the failure mode — either text was returned or a
       // Safari-level issue occurred. An ownership rejection would have thrown
@@ -282,7 +144,7 @@ describe('Security pipeline via MCP — real Safari, no mocks', () => {
 
     it('safari_list_tabs (ownership-exempt tool) lists tabs without restriction', async () => {
       // safari_list_tabs is in SKIP_OWNERSHIP_TOOLS — must always work
-      const data = await callTool(client, 'safari_list_tabs', {}, 15000);
+      const data = await callTool(client, 'safari_list_tabs', {}, idRef.value++, 15000);
       expect(Array.isArray(data['tabs'])).toBe(true);
       expect((data['tabs'] as Array<unknown>).length).toBeGreaterThan(0);
     }, 20000);
@@ -294,14 +156,14 @@ describe('Security pipeline via MCP — real Safari, no mocks', () => {
     let ownedTabUrl: string;
 
     beforeAll(async () => {
-      const data = await callTool(client, 'safari_new_tab', { url: 'https://example.com' });
+      const data = await callTool(client, 'safari_new_tab', { url: 'https://example.com' }, idRef.value++);
       await waitMs(2000);
-      ownedTabUrl = await resolveTabUrl(client, data['tabUrl'] as string);
+      ownedTabUrl = await resolveTabUrl(client, data['tabUrl'] as string, idRef);
     }, 30000);
 
     afterAll(async () => {
       if (ownedTabUrl) {
-        await callTool(client, 'safari_close_tab', { tabUrl: ownedTabUrl }).catch(() => {});
+        await callTool(client, 'safari_close_tab', { tabUrl: ownedTabUrl }, idRef.value++).catch(() => {});
       }
     });
 
@@ -309,14 +171,14 @@ describe('Security pipeline via MCP — real Safari, no mocks', () => {
       if (!ownedTabUrl) return;
 
       // Global limit is 120/min. 5 requests are trivially within budget.
-      // We fire them sequentially to avoid FIFO queue ambiguity.
+      // We fire them sequentially to avoid any response-ordering ambiguity.
       const results: Record<string, unknown>[] = [];
 
       for (let i = 0; i < 5; i++) {
         // callTool throws on protocol error (including rate-limit rejection)
         const data = await callTool(client, 'safari_get_text', {
           tabUrl: ownedTabUrl,
-        }, 15000);
+        }, idRef.value++, 15000);
         results.push(data);
       }
 
@@ -343,23 +205,12 @@ describe('Security pipeline via MCP — real Safari, no mocks', () => {
 
   describe('kill switch — safari_emergency_stop blocks subsequent calls', () => {
     let killClient: McpTestClient;
-    let killClientNextId = 2;
-    const killId = () => killClientNextId++;
+    const killIdRef = { value: 100 };
 
     beforeAll(async () => {
-      killClient = new McpTestClient();
-      // Perform the MCP handshake on this dedicated client
-      await killClient.send({
-        jsonrpc: '2.0',
-        id: 1,
-        method: 'initialize',
-        params: {
-          protocolVersion: '2024-11-05',
-          capabilities: {},
-          clientInfo: { name: 'kill-switch-e2e', version: '1.0.0' },
-        },
-      });
-      killClient.notify({ jsonrpc: '2.0', method: 'notifications/initialized' });
+      const init = await initClient(SERVER_PATH, 1);
+      killClient = init.client;
+      killIdRef.value = init.nextId;
     }, 25000);
 
     afterAll(async () => {
@@ -369,7 +220,7 @@ describe('Security pipeline via MCP — real Safari, no mocks', () => {
     it('safari_emergency_stop returns stopped: true with the given reason', async () => {
       const resp = await killClient.send({
         jsonrpc: '2.0',
-        id: killId(),
+        id: killIdRef.value++,
         method: 'tools/call',
         params: {
           name: 'safari_emergency_stop',
@@ -398,7 +249,7 @@ describe('Security pipeline via MCP — real Safari, no mocks', () => {
       // protocol-level error response (not a result.content tool error).
       const resp = await killClient.send({
         jsonrpc: '2.0',
-        id: killId(),
+        id: killIdRef.value++,
         method: 'tools/call',
         params: {
           name: 'safari_health_check',

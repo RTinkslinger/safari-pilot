@@ -21,9 +21,9 @@
  * internally, then passing that URL to all subsequent tool calls.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { spawn, type ChildProcess } from 'node:child_process';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { McpTestClient, initClient, callTool } from '../helpers/mcp-client.js';
 
 // ── Configuration ──────────────────────────────────────────────────────────
 
@@ -33,136 +33,10 @@ const FIXTURE_URL = pathToFileURL(FIXTURE_PATH).toString();
 
 const SAFARI_AVAILABLE = process.env.CI !== 'true' && process.env.SAFARI_AVAILABLE !== 'false';
 
-// ── McpTestClient (inlined from mcp-protocol.test.ts for standalone use) ──
-//
-// Duplicated intentionally — keeping this file self-contained avoids import
-// coupling. Extract to test/helpers/mcp-client.ts if a third test file needs it.
-
-class McpTestClient {
-  private proc: ChildProcess;
-  private buffer = '';
-  private responseQueue: Array<(data: unknown) => void> = [];
-
-  constructor() {
-    this.proc = spawn('node', [SERVER_PATH], {
-      stdio: ['pipe', 'pipe', 'pipe'],
-      cwd: join(import.meta.dirname, '../..'),
-    });
-
-    this.proc.stdout!.on('data', (chunk: Buffer) => {
-      this.buffer += chunk.toString();
-      const lines = this.buffer.split('\n');
-      this.buffer = lines.pop()!;
-
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        let msg: unknown;
-        try {
-          msg = JSON.parse(line);
-        } catch {
-          continue;
-        }
-        if (msg !== null && typeof msg === 'object' && 'id' in (msg as object)) {
-          const resolver = this.responseQueue.shift();
-          if (resolver) resolver(msg);
-        }
-      }
-    });
-
-    // Uncomment for debugging: this.proc.stderr!.on('data', (c: Buffer) => process.stderr.write(c));
-  }
-
-  async send(msg: Record<string, unknown>, timeoutMs = 25000): Promise<unknown> {
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(
-        () => reject(new Error(`MCP timeout (${timeoutMs}ms) for method: ${msg['method']}`)),
-        timeoutMs,
-      );
-      this.responseQueue.push((data) => {
-        clearTimeout(timer);
-        resolve(data);
-      });
-      this.proc.stdin!.write(JSON.stringify(msg) + '\n');
-    });
-  }
-
-  notify(msg: Record<string, unknown>): void {
-    this.proc.stdin!.write(JSON.stringify(msg) + '\n');
-  }
-
-  async close(): Promise<void> {
-    this.proc.kill('SIGTERM');
-    return new Promise((resolve) => {
-      this.proc.on('close', () => resolve());
-      setTimeout(resolve, 3000);
-    });
-  }
-}
-
 // ── Helpers ────────────────────────────────────────────────────────────────
 
-let nextId = 2; // id=1 reserved for initialize
-
-const id = () => nextId++;
-
-/** Standard MCP handshake. Must complete before calling any tool. */
-async function doHandshake(client: McpTestClient): Promise<void> {
-  await client.send({
-    jsonrpc: '2.0',
-    id: 1,
-    method: 'initialize',
-    params: {
-      protocolVersion: '2024-11-05',
-      capabilities: {},
-      clientInfo: { name: 'tools-via-mcp-e2e', version: '1.0.0' },
-    },
-  });
-  client.notify({ jsonrpc: '2.0', method: 'notifications/initialized' });
-}
-
-/**
- * Send a tools/call request and return the parsed content[0].text JSON.
- *
- * Safari Pilot tools always write their result as JSON into content[0].text.
- * This helper unwraps that layer so tests work directly with tool data.
- * If the server returns a protocol-level error, throws immediately.
- */
-async function callTool(
-  client: McpTestClient,
-  name: string,
-  args: Record<string, unknown>,
-  timeoutMs?: number,
-): Promise<Record<string, unknown>> {
-  const resp = await client.send(
-    {
-      jsonrpc: '2.0',
-      id: id(),
-      method: 'tools/call',
-      params: { name, arguments: args },
-    },
-    timeoutMs,
-  ) as Record<string, unknown>;
-
-  if ('error' in resp) {
-    const err = resp['error'] as Record<string, unknown>;
-    throw new Error(`MCP protocol error ${err['code']}: ${err['message']}`);
-  }
-
-  const result = resp['result'] as Record<string, unknown>;
-  const content = result['content'] as Array<Record<string, unknown>> | undefined;
-  if (!content || content.length === 0) return result;
-
-  const firstItem = content[0];
-  if (firstItem['type'] === 'image') return result; // screenshot — no text to parse
-
-  const text = firstItem['text'] as string | undefined;
-  if (!text) return result;
-
-  try {
-    return JSON.parse(text) as Record<string, unknown>;
-  } catch {
-    return { text };
-  }
+function waitMs(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
 }
 
 /**
@@ -179,9 +53,10 @@ async function callTool(
 async function resolveTabUrl(
   client: McpTestClient,
   rawUrl: string,
-  fallback?: string,
+  fallback: string | undefined,
+  nextIdRef: { value: number },
 ): Promise<string> {
-  const data = await callTool(client, 'safari_list_tabs', {});
+  const data = await callTool(client, 'safari_list_tabs', {}, nextIdRef.value++);
   const tabs = data['tabs'] as Array<Record<string, unknown>>;
 
   // Strip trailing slash for comparison — normalise both sides
@@ -206,25 +81,26 @@ async function navigateAndGetRealUrl(
   client: McpTestClient,
   tabUrl: string,
   targetUrl: string,
+  nextIdRef: { value: number },
 ): Promise<string> {
   await waitMs(500);
-  const data = await callTool(client, 'safari_navigate', { tabUrl, url: targetUrl }, 35000);
+  const data = await callTool(client, 'safari_navigate', { tabUrl, url: targetUrl }, nextIdRef.value++, 35000);
   await waitMs(1500);
 
   // Use the navigate response URL as the rawUrl seed for lookup.
   // If navigate returned an error, fall back to tabUrl.
   const navUrl = typeof data['url'] === 'string' ? data['url'] : tabUrl;
-  return resolveTabUrl(client, navUrl, navUrl);
-}
-
-function waitMs(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
+  return resolveTabUrl(client, navUrl, navUrl, nextIdRef);
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────────
 
 describe('Tools via MCP — real Safari, no mocks', () => {
   let client: McpTestClient;
+  let nextId = 100;
+
+  // Wrap nextId in a ref object so helper functions can increment it
+  const idRef = { value: nextId };
 
   /**
    * ownedTabUrl is always the canonical URL that Safari uses internally.
@@ -234,13 +110,14 @@ describe('Tools via MCP — real Safari, no mocks', () => {
   let ownedTabUrl: string;
 
   beforeAll(async () => {
-    client = new McpTestClient();
-    await doHandshake(client);
+    const init = await initClient(SERVER_PATH, 1);
+    client = init.client;
+    idRef.value = init.nextId;
   }, 25000);
 
   afterAll(async () => {
     if (ownedTabUrl) {
-      await callTool(client, 'safari_close_tab', { tabUrl: ownedTabUrl }).catch(() => {});
+      await callTool(client, 'safari_close_tab', { tabUrl: ownedTabUrl }, idRef.value++).catch(() => {});
     }
     await client.close();
   });
@@ -249,7 +126,7 @@ describe('Tools via MCP — real Safari, no mocks', () => {
 
   describe.skipIf(!SAFARI_AVAILABLE)('Navigation tools', () => {
     it('safari_new_tab — creates a new tab and returns a tabUrl string', async () => {
-      const data = await callTool(client, 'safari_new_tab', { url: 'https://example.com' });
+      const data = await callTool(client, 'safari_new_tab', { url: 'https://example.com' }, idRef.value++);
 
       expect(typeof data['tabUrl']).toBe('string');
       expect((data['tabUrl'] as string).length).toBeGreaterThan(0);
@@ -257,7 +134,7 @@ describe('Tools via MCP — real Safari, no mocks', () => {
 
       // Wait for the tab to load, then resolve the canonical URL from list_tabs
       await waitMs(2000);
-      ownedTabUrl = await resolveTabUrl(client, data['tabUrl'] as string, data['tabUrl'] as string);
+      ownedTabUrl = await resolveTabUrl(client, data['tabUrl'] as string, data['tabUrl'] as string, idRef);
     }, 30000);
 
     it('safari_navigate — navigates to example.com, resolves canonical URL', async () => {
@@ -266,7 +143,7 @@ describe('Tools via MCP — real Safari, no mocks', () => {
       const data = await callTool(client, 'safari_navigate', {
         tabUrl: ownedTabUrl,
         url: 'https://example.com',
-      }, 35000);
+      }, idRef.value++, 35000);
 
       // On success: { url, title } — url may or may not have trailing slash
       // On error: { error } — can happen when tab URL was already normalised
@@ -281,7 +158,7 @@ describe('Tools via MCP — real Safari, no mocks', () => {
       }
 
       // Always re-resolve from list_tabs to get the URL Safari actually uses
-      ownedTabUrl = await resolveTabUrl(client, ownedTabUrl, ownedTabUrl);
+      ownedTabUrl = await resolveTabUrl(client, ownedTabUrl, ownedTabUrl, idRef);
       expect(ownedTabUrl).toMatch(/example\.com/);
     }, 45000);
 
@@ -293,12 +170,13 @@ describe('Tools via MCP — real Safari, no mocks', () => {
         client,
         ownedTabUrl,
         'https://www.iana.org/domains/reserved',
+        idRef,
       );
 
       // go back — the tool uses history.back() and waits 500ms before querying
       const backData = await callTool(client, 'safari_navigate_back', {
         tabUrl: ownedTabUrl,
-      }, 15000);
+      }, idRef.value++, 15000);
 
       // Result is { url, title } or { error }
       const hasUrl = 'url' in backData;
@@ -312,11 +190,11 @@ describe('Tools via MCP — real Safari, no mocks', () => {
 
       // Re-sync ownedTabUrl to wherever we landed
       await waitMs(1000);
-      ownedTabUrl = await resolveTabUrl(client, ownedTabUrl, ownedTabUrl);
+      ownedTabUrl = await resolveTabUrl(client, ownedTabUrl, ownedTabUrl, idRef);
     }, 60000);
 
     it('safari_list_tabs — lists all open tabs, each with a url field', async () => {
-      const data = await callTool(client, 'safari_list_tabs', {});
+      const data = await callTool(client, 'safari_list_tabs', {}, idRef.value++);
 
       expect(Array.isArray(data['tabs'])).toBe(true);
       const tabs = data['tabs'] as Array<Record<string, unknown>>;
@@ -334,7 +212,7 @@ describe('Tools via MCP — real Safari, no mocks', () => {
     beforeAll(async () => {
       if (!ownedTabUrl) return;
       // Navigate to example.com and get the canonical URL Safari assigns it
-      ownedTabUrl = await navigateAndGetRealUrl(client, ownedTabUrl, 'https://example.com');
+      ownedTabUrl = await navigateAndGetRealUrl(client, ownedTabUrl, 'https://example.com', idRef);
     }, 55000);
 
     it('safari_get_text — extracts visible text containing "Example Domain"', async () => {
@@ -342,7 +220,7 @@ describe('Tools via MCP — real Safari, no mocks', () => {
 
       const data = await callTool(client, 'safari_get_text', {
         tabUrl: ownedTabUrl,
-      });
+      }, idRef.value++);
 
       expect(typeof data['text']).toBe('string');
       expect((data['text'] as string).length).toBeGreaterThan(0);
@@ -355,7 +233,7 @@ describe('Tools via MCP — real Safari, no mocks', () => {
       const data = await callTool(client, 'safari_snapshot', {
         tabUrl: ownedTabUrl,
         format: 'yaml',
-      });
+      }, idRef.value++);
 
       const asString = JSON.stringify(data);
       expect(asString.length).toBeGreaterThan(20);
@@ -368,7 +246,7 @@ describe('Tools via MCP — real Safari, no mocks', () => {
 
       const data = await callTool(client, 'safari_get_html', {
         tabUrl: ownedTabUrl,
-      });
+      }, idRef.value++);
 
       expect(typeof data['html']).toBe('string');
       expect((data['html'] as string).length).toBeGreaterThan(0);
@@ -383,7 +261,7 @@ describe('Tools via MCP — real Safari, no mocks', () => {
       const data = await callTool(client, 'safari_extract_links', {
         tabUrl: ownedTabUrl,
         filter: 'all',
-      });
+      }, idRef.value++);
 
       expect(Array.isArray(data['links'])).toBe(true);
       expect(typeof data['count']).toBe('number');
@@ -402,7 +280,7 @@ describe('Tools via MCP — real Safari, no mocks', () => {
     beforeAll(async () => {
       if (!ownedTabUrl) return;
       // Navigate to the local form fixture — file:// URL, no network needed
-      ownedTabUrl = await navigateAndGetRealUrl(client, ownedTabUrl, FIXTURE_URL);
+      ownedTabUrl = await navigateAndGetRealUrl(client, ownedTabUrl, FIXTURE_URL, idRef);
     }, 45000);
 
     it('safari_fill — fills #name input, value verified via safari_evaluate', async () => {
@@ -412,7 +290,7 @@ describe('Tools via MCP — real Safari, no mocks', () => {
         tabUrl: ownedTabUrl,
         selector: '#name',
         value: 'Safari Pilot Test',
-      });
+      }, idRef.value++);
 
       // Tool must not return a top-level string error
       expect('error' in fillData && typeof fillData['error'] === 'string').toBe(false);
@@ -422,7 +300,7 @@ describe('Tools via MCP — real Safari, no mocks', () => {
       const evalData = await callTool(client, 'safari_evaluate', {
         tabUrl: ownedTabUrl,
         script: 'return document.getElementById("name").value',
-      });
+      }, idRef.value++);
       expect(evalData['value'] as string).toBe('Safari Pilot Test');
     }, 25000);
 
@@ -434,12 +312,12 @@ describe('Tools via MCP — real Safari, no mocks', () => {
         tabUrl: ownedTabUrl,
         selector: '#email',
         value: 'test@example.com',
-      });
+      }, idRef.value++);
 
       const clickData = await callTool(client, 'safari_click', {
         tabUrl: ownedTabUrl,
         selector: 'button[type="submit"]',
-      });
+      }, idRef.value++);
 
       // A tool-level error would have a string "error" key at top level
       expect('error' in clickData && typeof clickData['error'] === 'string').toBe(false);
@@ -449,7 +327,7 @@ describe('Tools via MCP — real Safari, no mocks', () => {
       const evalData = await callTool(client, 'safari_evaluate', {
         tabUrl: ownedTabUrl,
         script: 'return document.getElementById("result").style.display',
-      });
+      }, idRef.value++);
       expect(evalData['value']).not.toBe('none');
     }, 30000);
   });
@@ -459,7 +337,7 @@ describe('Tools via MCP — real Safari, no mocks', () => {
   describe.skipIf(!SAFARI_AVAILABLE)('Other tools', () => {
     beforeAll(async () => {
       if (!ownedTabUrl) return;
-      ownedTabUrl = await navigateAndGetRealUrl(client, ownedTabUrl, 'https://example.com');
+      ownedTabUrl = await navigateAndGetRealUrl(client, ownedTabUrl, 'https://example.com', idRef);
     }, 55000);
 
     it('safari_evaluate — executes JS in tab, returns document.title', async () => {
@@ -468,7 +346,7 @@ describe('Tools via MCP — real Safari, no mocks', () => {
       const data = await callTool(client, 'safari_evaluate', {
         tabUrl: ownedTabUrl,
         script: 'return document.title',
-      });
+      }, idRef.value++);
 
       // Returns { value, type }
       expect(data['type']).toBe('string');
@@ -482,7 +360,7 @@ describe('Tools via MCP — real Safari, no mocks', () => {
 
       const data = await callTool(client, 'safari_get_cookies', {
         tabUrl: ownedTabUrl,
-      });
+      }, idRef.value++);
 
       // Returns { cookies: [...], count: N }
       expect(Array.isArray(data['cookies'])).toBe(true);

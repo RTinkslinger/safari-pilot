@@ -19,145 +19,18 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { spawn, type ChildProcess } from 'node:child_process';
 import { join } from 'node:path';
+import { McpTestClient, initClient, callTool } from '../helpers/mcp-client.js';
 
 // ── Configuration ──────────────────────────────────────────────────────────
 
 const SERVER_PATH = join(import.meta.dirname, '../../dist/index.js');
 const SAFARI_AVAILABLE = process.env.CI !== 'true' && process.env.SAFARI_AVAILABLE !== 'false';
 
-// ── McpTestClient ──────────────────────────────────────────────────────────
-
-/**
- * Minimal MCP test client. FIFO queue of resolvers; id-bearing server
- * responses are dispatched in arrival order.
- */
-class McpTestClient {
-  private proc: ChildProcess;
-  private buffer = '';
-  private responseQueue: Array<(data: unknown) => void> = [];
-
-  constructor() {
-    this.proc = spawn('node', [SERVER_PATH], {
-      stdio: ['pipe', 'pipe', 'pipe'],
-      cwd: join(import.meta.dirname, '../..'),
-    });
-
-    this.proc.stdout!.on('data', (chunk: Buffer) => {
-      this.buffer += chunk.toString();
-      const lines = this.buffer.split('\n');
-      this.buffer = lines.pop()!;
-
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        let msg: unknown;
-        try {
-          msg = JSON.parse(line);
-        } catch {
-          continue;
-        }
-        if (msg !== null && typeof msg === 'object' && 'id' in (msg as object)) {
-          const resolver = this.responseQueue.shift();
-          if (resolver) resolver(msg);
-        }
-      }
-    });
-
-    // Uncomment for debugging: this.proc.stderr!.on('data', (c: Buffer) => process.stderr.write(c));
-  }
-
-  async send(msg: Record<string, unknown>, timeoutMs = 25000): Promise<unknown> {
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(
-        () => reject(new Error(`MCP timeout (${timeoutMs}ms) for method: ${msg['method']}`)),
-        timeoutMs,
-      );
-      this.responseQueue.push((data) => {
-        clearTimeout(timer);
-        resolve(data);
-      });
-      this.proc.stdin!.write(JSON.stringify(msg) + '\n');
-    });
-  }
-
-  notify(msg: Record<string, unknown>): void {
-    this.proc.stdin!.write(JSON.stringify(msg) + '\n');
-  }
-
-  async close(): Promise<void> {
-    this.proc.kill('SIGTERM');
-    return new Promise((resolve) => {
-      this.proc.on('close', () => resolve());
-      setTimeout(resolve, 3000);
-    });
-  }
-}
-
 // ── Helpers ────────────────────────────────────────────────────────────────
-
-let nextId = 2; // id=1 reserved for initialize
-
-const id = () => nextId++;
 
 function waitMs(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
-}
-
-async function doHandshake(client: McpTestClient): Promise<void> {
-  await client.send({
-    jsonrpc: '2.0',
-    id: 1,
-    method: 'initialize',
-    params: {
-      protocolVersion: '2024-11-05',
-      capabilities: {},
-      clientInfo: { name: 'a11y-via-mcp-e2e', version: '1.0.0' },
-    },
-  });
-  client.notify({ jsonrpc: '2.0', method: 'notifications/initialized' });
-}
-
-/**
- * Call a tool and return the parsed content[0].text JSON.
- * Throws on protocol-level errors (MCP error in the response).
- */
-async function callTool(
-  client: McpTestClient,
-  name: string,
-  args: Record<string, unknown> = {},
-  timeoutMs?: number,
-): Promise<Record<string, unknown>> {
-  const resp = (await client.send(
-    {
-      jsonrpc: '2.0',
-      id: id(),
-      method: 'tools/call',
-      params: { name, arguments: args },
-    },
-    timeoutMs,
-  )) as Record<string, unknown>;
-
-  if ('error' in resp) {
-    const err = resp['error'] as Record<string, unknown>;
-    throw new Error(`MCP protocol error ${err['code']}: ${err['message']}`);
-  }
-
-  const result = resp['result'] as Record<string, unknown>;
-  const content = result['content'] as Array<Record<string, unknown>> | undefined;
-  if (!content || content.length === 0) return result;
-
-  const firstItem = content[0];
-  if (firstItem['type'] === 'image') return result;
-
-  const text = firstItem['text'] as string | undefined;
-  if (!text) return result;
-
-  try {
-    return JSON.parse(text) as Record<string, unknown>;
-  } catch {
-    return { text };
-  }
 }
 
 /**
@@ -167,8 +40,9 @@ async function callTool(
 async function resolveTabUrl(
   client: McpTestClient,
   rawUrl: string,
+  idRef: { value: number },
 ): Promise<string> {
-  const data = await callTool(client, 'safari_list_tabs', {});
+  const data = await callTool(client, 'safari_list_tabs', {}, idRef.value++);
   const tabs = data['tabs'] as Array<Record<string, unknown>>;
   const canonical = rawUrl.replace(/\/$/, '');
   const match = tabs.find(
@@ -183,10 +57,10 @@ async function resolveTabUrl(
  * Open a new tab at example.com and return the canonical URL Safari uses.
  * Waits for the page to load before returning.
  */
-async function openExampleTab(client: McpTestClient): Promise<string> {
-  const data = await callTool(client, 'safari_new_tab', { url: 'https://example.com' });
+async function openExampleTab(client: McpTestClient, idRef: { value: number }): Promise<string> {
+  const data = await callTool(client, 'safari_new_tab', { url: 'https://example.com' }, idRef.value++);
   await waitMs(2000);
-  return resolveTabUrl(client, data['tabUrl'] as string);
+  return resolveTabUrl(client, data['tabUrl'] as string, idRef);
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────────
@@ -196,10 +70,12 @@ async function openExampleTab(client: McpTestClient): Promise<string> {
 
 describe('Accessibility features via MCP — real Safari, no mocks', () => {
   let client: McpTestClient;
+  const idRef = { value: 100 };
 
   beforeAll(async () => {
-    client = new McpTestClient();
-    await doHandshake(client);
+    const init = await initClient(SERVER_PATH, 1);
+    client = init.client;
+    idRef.value = init.nextId;
   }, 25000);
 
   afterAll(async () => {
@@ -212,12 +88,12 @@ describe('Accessibility features via MCP — real Safari, no mocks', () => {
     let tabUrl: string;
 
     beforeAll(async () => {
-      tabUrl = await openExampleTab(client);
+      tabUrl = await openExampleTab(client, idRef);
     }, 30000);
 
     afterAll(async () => {
       if (tabUrl) {
-        await callTool(client, 'safari_close_tab', { tabUrl }).catch(() => {});
+        await callTool(client, 'safari_close_tab', { tabUrl }, idRef.value++).catch(() => {});
       }
     });
 
@@ -227,7 +103,7 @@ describe('Accessibility features via MCP — real Safari, no mocks', () => {
       const data = await callTool(client, 'safari_snapshot', {
         tabUrl,
         format: 'yaml',
-      });
+      }, idRef.value++);
 
       // SnapshotResult: { snapshot: string, url, title, elementCount, interactiveCount }
       expect(typeof data['snapshot']).toBe('string');
@@ -240,7 +116,7 @@ describe('Accessibility features via MCP — real Safari, no mocks', () => {
       const data = await callTool(client, 'safari_snapshot', {
         tabUrl,
         format: 'yaml',
-      });
+      }, idRef.value++);
 
       const yaml = data['snapshot'] as string;
       // example.com has an <h1> (heading role) and an <a> (link role)
@@ -254,7 +130,7 @@ describe('Accessibility features via MCP — real Safari, no mocks', () => {
       const data = await callTool(client, 'safari_snapshot', {
         tabUrl,
         format: 'yaml',
-      });
+      }, idRef.value++);
 
       const yaml = data['snapshot'] as string;
       // Interactive elements (links on example.com) must get ref annotations.
@@ -268,7 +144,7 @@ describe('Accessibility features via MCP — real Safari, no mocks', () => {
       const data = await callTool(client, 'safari_snapshot', {
         tabUrl,
         format: 'yaml',
-      });
+      }, idRef.value++);
 
       expect(typeof data['url']).toBe('string');
       expect(typeof data['elementCount']).toBe('number');
@@ -285,14 +161,14 @@ describe('Accessibility features via MCP — real Safari, no mocks', () => {
     let tabUrl: string;
 
     beforeAll(async () => {
-      tabUrl = await openExampleTab(client);
+      tabUrl = await openExampleTab(client, idRef);
     }, 30000);
 
     afterAll(async () => {
       // Close whatever URL the tab ended up at after the click.
       // Use the most recently known tabUrl; if it navigated, we close by evaluate.
       if (tabUrl) {
-        await callTool(client, 'safari_close_tab', { tabUrl }).catch(() => {});
+        await callTool(client, 'safari_close_tab', { tabUrl }, idRef.value++).catch(() => {});
       }
     });
 
@@ -303,7 +179,7 @@ describe('Accessibility features via MCP — real Safari, no mocks', () => {
       const snapshotData = await callTool(client, 'safari_snapshot', {
         tabUrl,
         format: 'yaml',
-      });
+      }, idRef.value++);
 
       const yaml = snapshotData['snapshot'] as string;
       const refMatch = yaml.match(/\[ref=(e\d+)\]/);
@@ -316,7 +192,7 @@ describe('Accessibility features via MCP — real Safari, no mocks', () => {
       const clickData = await callTool(client, 'safari_click', {
         tabUrl,
         ref,
-      }, 20000);
+      }, idRef.value++, 20000);
 
       // A ref-not-found or injection error would surface as { error: '...' }
       // A successful click returns something other than a string-typed error field
@@ -336,12 +212,12 @@ describe('Accessibility features via MCP — real Safari, no mocks', () => {
     let tabUrl: string;
 
     beforeAll(async () => {
-      tabUrl = await openExampleTab(client);
+      tabUrl = await openExampleTab(client, idRef);
     }, 30000);
 
     afterAll(async () => {
       if (tabUrl) {
-        await callTool(client, 'safari_close_tab', { tabUrl }).catch(() => {});
+        await callTool(client, 'safari_close_tab', { tabUrl }, idRef.value++).catch(() => {});
       }
     });
 
@@ -350,14 +226,14 @@ describe('Accessibility features via MCP — real Safari, no mocks', () => {
 
       // Re-resolve to get the exact canonical URL Safari uses for this tab.
       // buildTabScript matches by URL of _tab — must be exact (trailing slash matters).
-      const freshTabUrl = await resolveTabUrl(client, tabUrl);
+      const freshTabUrl = await resolveTabUrl(client, tabUrl, idRef);
 
       // Click the only link on example.com using a CSS selector.
       // This exercises the full security pipeline → tool handler → auto-wait → click.
       const data = await callTool(client, 'safari_click', {
         tabUrl: freshTabUrl,
         selector: 'a[href]',
-      }, 25000);
+      }, idRef.value++, 25000);
 
       // Should not return a top-level string error (element-not-found, selector error, etc.)
       const hasStringError = 'error' in data && typeof data['error'] === 'string';
@@ -371,12 +247,12 @@ describe('Accessibility features via MCP — real Safari, no mocks', () => {
     let tabUrl: string;
 
     beforeAll(async () => {
-      tabUrl = await openExampleTab(client);
+      tabUrl = await openExampleTab(client, idRef);
     }, 30000);
 
     afterAll(async () => {
       if (tabUrl) {
-        await callTool(client, 'safari_close_tab', { tabUrl }).catch(() => {});
+        await callTool(client, 'safari_close_tab', { tabUrl }, idRef.value++).catch(() => {});
       }
     });
 
@@ -389,7 +265,7 @@ describe('Accessibility features via MCP — real Safari, no mocks', () => {
         tabUrl,
         text: 'Example Domain',
         exact: false,
-      }, 20000);
+      }, idRef.value++, 20000);
 
       // On success: { text, length, truncated }
       expect(typeof data['text']).toBe('string');
@@ -403,12 +279,12 @@ describe('Accessibility features via MCP — real Safari, no mocks', () => {
     let tabUrl: string;
 
     beforeAll(async () => {
-      tabUrl = await openExampleTab(client);
+      tabUrl = await openExampleTab(client, idRef);
     }, 30000);
 
     afterAll(async () => {
       if (tabUrl) {
-        await callTool(client, 'safari_close_tab', { tabUrl }).catch(() => {});
+        await callTool(client, 'safari_close_tab', { tabUrl }, idRef.value++).catch(() => {});
       }
     });
 
@@ -421,7 +297,7 @@ describe('Accessibility features via MCP — real Safari, no mocks', () => {
       // requiring any explicit wait from the caller.
       const data = await callTool(client, 'safari_get_text', {
         tabUrl,
-      }, 20000);
+      }, idRef.value++, 20000);
 
       // The tab has example.com loaded. Text must be non-empty.
       expect(typeof data['text']).toBe('string');

@@ -13,128 +13,24 @@
  *   process.env.CI detection)
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { spawn, type ChildProcess } from 'node:child_process';
 import { join } from 'node:path';
+import { McpTestClient, initClient, callTool } from '../helpers/mcp-client.js';
 
 // ── Configuration ──────────────────────────────────────────────────────────
 
 const SERVER_PATH = join(import.meta.dirname, '../../dist/index.js');
 const SAFARI_AVAILABLE = process.env.CI !== 'true' && process.env.SAFARI_AVAILABLE !== 'false';
 
-// ── McpTestClient ──────────────────────────────────────────────────────────
-
-/**
- * Minimal MCP test client. Spawns the server as a child process and
- * provides send/notify/close over the newline-delimited JSON wire format.
- *
- * Response routing: a FIFO queue of resolvers. Each `send()` call pushes
- * a resolver; each complete JSON line from stdout pops and resolves one.
- * Notifications (no `id`) are silently dropped — only id-bearing responses
- * are dispatched.
- */
-class McpTestClient {
-  private proc: ChildProcess;
-  private buffer = '';
-  private responseQueue: Array<(data: unknown) => void> = [];
-
-  constructor() {
-    this.proc = spawn('node', [SERVER_PATH], {
-      stdio: ['pipe', 'pipe', 'pipe'],
-      cwd: join(import.meta.dirname, '../..'),
-    });
-
-    this.proc.stdout!.on('data', (chunk: Buffer) => {
-      this.buffer += chunk.toString();
-      const lines = this.buffer.split('\n');
-      // Keep any incomplete trailing fragment for next data event
-      this.buffer = lines.pop()!;
-
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        let msg: unknown;
-        try {
-          msg = JSON.parse(line);
-        } catch {
-          // Skip non-JSON lines (startup logs etc.)
-          continue;
-        }
-        // Only dispatch messages with an `id` — those are responses to requests.
-        // Notifications from server have no `id` and should be ignored.
-        if (msg !== null && typeof msg === 'object' && 'id' in (msg as object)) {
-          const resolver = this.responseQueue.shift();
-          if (resolver) resolver(msg);
-        }
-      }
-    });
-
-    // Propagate stderr to test output for debugging
-    this.proc.stderr!.on('data', (chunk: Buffer) => {
-      // Intentionally silenced — startup banner would clutter vitest output.
-      // Uncomment for debugging: process.stderr.write(chunk);
-    });
-  }
-
-  /** Send a JSON-RPC request and wait for its response (by FIFO). */
-  async send(msg: Record<string, unknown>, timeoutMs = 15000): Promise<unknown> {
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(
-        () => reject(new Error(`MCP response timeout (${timeoutMs}ms) for method: ${msg['method']}`)),
-        timeoutMs,
-      );
-      this.responseQueue.push((data) => {
-        clearTimeout(timer);
-        resolve(data);
-      });
-      this.proc.stdin!.write(JSON.stringify(msg) + '\n');
-    });
-  }
-
-  /** Send a JSON-RPC notification (no response expected). */
-  notify(msg: Record<string, unknown>): void {
-    this.proc.stdin!.write(JSON.stringify(msg) + '\n');
-  }
-
-  async close(): Promise<void> {
-    this.proc.kill('SIGTERM');
-    return new Promise((resolve) => {
-      this.proc.on('close', () => resolve());
-      // Force-resolve after 3s in case SIGTERM is ignored
-      setTimeout(resolve, 3000);
-    });
-  }
-}
-
-// ── Helpers ────────────────────────────────────────────────────────────────
-
-/** Standard initialize handshake. Returns the initialize response. */
-async function doHandshake(client: McpTestClient): Promise<unknown> {
-  const initResp = await client.send({
-    jsonrpc: '2.0',
-    id: 1,
-    method: 'initialize',
-    params: {
-      protocolVersion: '2024-11-05',
-      capabilities: {},
-      clientInfo: { name: 'mcp-protocol-e2e', version: '1.0.0' },
-    },
-  });
-  // Send the required initialized notification (no response)
-  client.notify({ jsonrpc: '2.0', method: 'notifications/initialized' });
-  return initResp;
-}
-
 // ── Tests ──────────────────────────────────────────────────────────────────
 
 describe('MCP Protocol E2E — real child process, no mocks', () => {
   let client: McpTestClient;
-  let nextId = 2; // id=1 is used by initialize in each group
-
-  const id = () => nextId++;
+  let nextId = 100;
 
   beforeAll(async () => {
-    client = new McpTestClient();
-    // Perform the initialize handshake once for the whole suite
-    await doHandshake(client);
+    const init = await initClient(SERVER_PATH, 1);
+    client = init.client;
+    nextId = init.nextId;
   }, 20000);
 
   afterAll(async () => {
@@ -145,8 +41,9 @@ describe('MCP Protocol E2E — real child process, no mocks', () => {
 
   describe('initialize', () => {
     it('spawns cleanly and responds to initialize with correct protocol shape', async () => {
-      // We need a fresh client for this test because our beforeAll already consumed id=1
-      const freshClient = new McpTestClient();
+      // We need a fresh client for this test — beforeAll already consumed id=1 on the
+      // shared client. Spawn a raw McpTestClient and send initialize directly.
+      const freshClient = new McpTestClient(SERVER_PATH);
       const resp = await freshClient.send({
         jsonrpc: '2.0',
         id: 1,
@@ -186,7 +83,7 @@ describe('MCP Protocol E2E — real child process, no mocks', () => {
     it('returns 74+ tools after handshake', async () => {
       const resp = await client.send({
         jsonrpc: '2.0',
-        id: id(),
+        id: nextId++,
         method: 'tools/list',
         params: {},
       }) as Record<string, unknown>;
@@ -205,7 +102,7 @@ describe('MCP Protocol E2E — real child process, no mocks', () => {
     it('each tool entry has required fields: name, description, inputSchema', async () => {
       const resp = await client.send({
         jsonrpc: '2.0',
-        id: id(),
+        id: nextId++,
         method: 'tools/list',
         params: {},
       }) as Record<string, unknown>;
@@ -225,7 +122,7 @@ describe('MCP Protocol E2E — real child process, no mocks', () => {
     it('includes expected core tool names', async () => {
       const resp = await client.send({
         jsonrpc: '2.0',
-        id: id(),
+        id: nextId++,
         method: 'tools/list',
         params: {},
       }) as Record<string, unknown>;
@@ -254,7 +151,7 @@ describe('MCP Protocol E2E — real child process, no mocks', () => {
     it('safari_health_check returns content array', async () => {
       const resp = await client.send({
         jsonrpc: '2.0',
-        id: id(),
+        id: nextId++,
         method: 'tools/call',
         params: {
           name: 'safari_health_check',
@@ -287,7 +184,7 @@ describe('MCP Protocol E2E — real child process, no mocks', () => {
     it('unknown tool returns JSON-RPC error response', async () => {
       const resp = await client.send({
         jsonrpc: '2.0',
-        id: id(),
+        id: nextId++,
         method: 'tools/call',
         params: {
           name: 'safari_does_not_exist_12345',
@@ -314,7 +211,8 @@ describe('MCP Protocol E2E — real child process, no mocks', () => {
 
   describe('multiple rapid requests', () => {
     it('handles 3 sequential tools/list requests and returns all responses', async () => {
-      const requests = [id(), id(), id()].map((reqId) =>
+      const ids = [nextId++, nextId++, nextId++];
+      const requests = ids.map((reqId) =>
         client.send({
           jsonrpc: '2.0',
           id: reqId,
@@ -323,7 +221,7 @@ describe('MCP Protocol E2E — real child process, no mocks', () => {
         }),
       );
 
-      // All three in flight concurrently (FIFO queue handles ordering)
+      // All three in flight concurrently — ID-based routing handles out-of-order responses
       const responses = await Promise.all(requests);
 
       expect(responses).toHaveLength(3);
@@ -344,29 +242,12 @@ describe('MCP Protocol E2E — real child process, no mocks', () => {
     let tabUrl: string | undefined;
 
     it('safari_new_tab creates a tab and returns a URL', async () => {
-      const resp = await client.send({
-        jsonrpc: '2.0',
-        id: id(),
-        method: 'tools/call',
-        params: {
-          name: 'safari_new_tab',
-          arguments: { url: 'https://example.com' },
-        },
-      }) as Record<string, unknown>;
+      const data = await callTool(client, 'safari_new_tab', { url: 'https://example.com' }, nextId++);
 
-      expect(resp).toMatchObject({ jsonrpc: '2.0' });
-      expect(resp).not.toHaveProperty('error');
-
-      const result = resp['result'] as Record<string, unknown>;
-      const content = result['content'] as Array<Record<string, unknown>>;
-      expect(Array.isArray(content)).toBe(true);
-      expect(content.length).toBeGreaterThan(0);
-
-      const text = content[0]['text'] as string;
-      const data = JSON.parse(text) as Record<string, unknown>;
-      expect(data['tabUrl']).toBeDefined();
+      expect(typeof data['tabUrl']).toBe('string');
+      expect((data['tabUrl'] as string).length).toBeGreaterThan(0);
+      expect(data['tabUrl'] as string).toMatch(/^https?:\/\//);
       tabUrl = data['tabUrl'] as string;
-      expect(tabUrl).toMatch(/^https?:\/\//);
 
       if (data['tabId'] !== undefined) {
         newTabId = data['tabId'] as number;
@@ -384,7 +265,7 @@ describe('MCP Protocol E2E — real child process, no mocks', () => {
 
       const resp = await client.send({
         jsonrpc: '2.0',
-        id: id(),
+        id: nextId++,
         method: 'tools/call',
         params: {
           name: 'safari_navigate',
@@ -405,25 +286,8 @@ describe('MCP Protocol E2E — real child process, no mocks', () => {
     }, 25000);
 
     it('safari_list_tabs returns the tabs array with at least one entry', async () => {
-      const resp = await client.send({
-        jsonrpc: '2.0',
-        id: id(),
-        method: 'tools/call',
-        params: {
-          name: 'safari_list_tabs',
-          arguments: {},
-        },
-      }) as Record<string, unknown>;
+      const data = await callTool(client, 'safari_list_tabs', {}, nextId++);
 
-      expect(resp).toMatchObject({ jsonrpc: '2.0' });
-      expect(resp).not.toHaveProperty('error');
-
-      const result = resp['result'] as Record<string, unknown>;
-      const content = result['content'] as Array<Record<string, unknown>>;
-      expect(Array.isArray(content)).toBe(true);
-
-      const text = content[0]['text'] as string;
-      const data = JSON.parse(text) as Record<string, unknown>;
       expect(Array.isArray(data['tabs'])).toBe(true);
       expect((data['tabs'] as Array<unknown>).length).toBeGreaterThan(0);
     }, 15000);
