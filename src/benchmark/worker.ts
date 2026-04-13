@@ -1,5 +1,7 @@
 import { spawn } from 'child_process';
 import { join } from 'path';
+import { writeFileSync, mkdirSync, unlinkSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import type { BenchmarkTask, TaskResult, EvalType } from './types.js';
 import {
   parseStreamEvents,
@@ -21,51 +23,80 @@ export interface ParsedOutput {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-/**
- * Project root: dist/benchmark/worker.js is 2 levels below project root.
- * In source (vitest), import.meta.dirname is src/benchmark/ — still 2 levels up.
- */
 const projectRoot = join(import.meta.dirname, '..', '..');
 
-const DEFAULT_MCP_CONFIG = join(projectRoot, 'benchmark', 'mcp-configs', 'safari-only.json');
+/**
+ * Generate a temporary MCP config file with absolute paths so the Safari Pilot
+ * MCP server starts in the correct working directory regardless of where
+ * Claude Code spawns it. Returns the path to the temp config file.
+ */
+export function generateMcpConfig(serverEntryPoint: string): string {
+  const config = {
+    mcpServers: {
+      safari: {
+        command: 'node',
+        args: [serverEntryPoint],
+        cwd: projectRoot,
+        env: { NODE_ENV: 'production' },
+      },
+    },
+  };
+  const dir = join(tmpdir(), 'safari-pilot-bench');
+  mkdirSync(dir, { recursive: true });
+  const configPath = join(dir, `mcp-config-${process.pid}.json`);
+  writeFileSync(configPath, JSON.stringify(config), 'utf-8');
+  return configPath;
+}
+
+export function cleanupMcpConfig(configPath: string): void {
+  try { unlinkSync(configPath); } catch { /* ignore */ }
+}
+
+let _cachedMcpConfig: string | null = null;
+
+export function getDefaultMcpConfig(): string {
+  if (!_cachedMcpConfig) {
+    _cachedMcpConfig = generateMcpConfig(join(projectRoot, 'dist', 'index.js'));
+  }
+  return _cachedMcpConfig;
+}
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 
-/**
- * Build the system prompt passed to the Claude CLI for a benchmark task.
- * Includes: task intent, start URL, window assignment, and output instructions.
- */
 export function buildSystemPrompt(task: BenchmarkTask, windowIndex: number): string {
   const lines: string[] = [];
 
-  lines.push(`You are a Safari browser automation agent assigned to window ${windowIndex}.`);
+  lines.push('You are a benchmark agent testing Safari Pilot, a Safari browser automation tool.');
+  lines.push('You have Safari Pilot MCP tools available. All tool names start with mcp__safari__safari_.');
   lines.push('');
-  lines.push('Task:');
+  lines.push('RULES:');
+  lines.push('1. First, load the Safari tools: ToolSearch with query "select:mcp__safari__safari_new_tab,mcp__safari__safari_navigate,mcp__safari__safari_get_text,mcp__safari__safari_snapshot,mcp__safari__safari_click,mcp__safari__safari_fill"');
+  lines.push('2. If ToolSearch returns no safari tools, the MCP server is still starting. Call ToolSearch again with the same query — it will be ready within seconds.');
+  lines.push('3. ALWAYS start by creating a new tab with the safari_new_tab tool.');
+  lines.push('4. Then navigate, interact, and extract using Safari Pilot tools ONLY.');
+  lines.push('5. NEVER use Bash, WebFetch, Read, or any non-Safari tool.');
+  lines.push('');
+  lines.push('TASK:');
   lines.push(task.intent);
 
   if (task.start_url) {
     lines.push('');
-    lines.push(`Start URL: ${task.start_url}`);
+    lines.push(`START URL: ${task.start_url}`);
+    lines.push('After creating a new tab, navigate to this URL with mcp__safari__safari_navigate.');
   }
 
   lines.push('');
 
   if (task.eval.type === 'structured_output' && task.eval.schema) {
-    lines.push('Output format: Respond with a single JSON object matching the schema below. Do not include any prose — only the JSON.');
-    lines.push('');
-    lines.push('Schema:');
+    lines.push('OUTPUT: Respond with a single JSON object matching this schema (no prose):');
     lines.push(JSON.stringify(task.eval.schema, null, 2));
   } else {
-    lines.push('Output format: Respond with only the raw answer — no explanation, no prose. One line.');
+    lines.push('OUTPUT: Respond with only the raw answer — no explanation, no prose. One line.');
   }
 
   return lines.join('\n');
 }
 
-/**
- * Build the argument array for spawning the Claude CLI.
- * Uses --print (non-interactive), stream-json output, and bypassPermissions mode.
- */
 export function buildClaudeArgs(
   task: BenchmarkTask,
   model: string,
@@ -73,7 +104,7 @@ export function buildClaudeArgs(
   mcpConfigPath: string | undefined
 ): string[] {
   const prompt = buildSystemPrompt(task, windowIndex);
-  const resolvedConfig = mcpConfigPath ?? DEFAULT_MCP_CONFIG;
+  const resolvedConfig = mcpConfigPath ?? getDefaultMcpConfig();
 
   const args = [
     '--print', prompt,
@@ -81,10 +112,8 @@ export function buildClaudeArgs(
     '--verbose',
     '--model', model,
     '--permission-mode', 'bypassPermissions',
-    '--disable-slash-commands',
     '--no-session-persistence',
-    '--setting-sources', '',
-    '--max-budget-usd', String(task.max_budget_usd),
+    '--tools', 'ToolSearch',
     '--strict-mcp-config',
     '--mcp-config', resolvedConfig,
   ];

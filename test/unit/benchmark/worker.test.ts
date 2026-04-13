@@ -26,9 +26,16 @@ describe('buildSystemPrompt', () => {
     expect(prompt).toContain('https://example.com');
   });
 
-  it('includes window assignment', () => {
-    const prompt = buildSystemPrompt(task, 3);
-    expect(prompt).toContain('window 3');
+  it('instructs to use Safari Pilot MCP tools', () => {
+    const prompt = buildSystemPrompt(task, 1);
+    expect(prompt).toContain('mcp__safari__safari_');
+    expect(prompt).toContain('safari_new_tab');
+  });
+
+  it('forbids Bash and WebFetch', () => {
+    const prompt = buildSystemPrompt(task, 1);
+    expect(prompt).toContain('NEVER use Bash');
+    expect(prompt).toContain('WebFetch');
   });
 
   it('instructs JSON output for structured_output eval', () => {
@@ -46,35 +53,44 @@ describe('buildSystemPrompt', () => {
 
 describe('buildClaudeArgs', () => {
   it('includes required flags', () => {
-    const args = buildClaudeArgs(task, 'sonnet', 1, undefined);
+    const args = buildClaudeArgs(task, 'sonnet', 1, '/tmp/test-config.json');
     expect(args).toContain('--print');
     expect(args).toContain('--output-format');
     expect(args).toContain('stream-json');
     expect(args).toContain('--verbose');
     expect(args).toContain('--model');
     expect(args).toContain('sonnet');
-    expect(args).toContain('--disable-slash-commands');
     expect(args).toContain('--permission-mode');
     expect(args).toContain('bypassPermissions');
     expect(args).toContain('--no-session-persistence');
   });
 
-  it('includes max-budget-usd from task', () => {
-    const args = buildClaudeArgs(task, 'sonnet', 1, undefined);
-    const budgetIdx = args.indexOf('--max-budget-usd');
-    expect(budgetIdx).toBeGreaterThan(-1);
-    expect(args[budgetIdx + 1]).toBe('0.25');
+  it('restricts built-in tools to ToolSearch only', () => {
+    const args = buildClaudeArgs(task, 'sonnet', 1, '/tmp/test-config.json');
+    const toolsIdx = args.indexOf('--tools');
+    expect(toolsIdx).toBeGreaterThan(-1);
+    expect(args[toolsIdx + 1]).toBe('ToolSearch');
+  });
+
+  it('does not include budget cap (subscription mode)', () => {
+    const args = buildClaudeArgs(task, 'sonnet', 1, '/tmp/test-config.json');
+    expect(args).not.toContain('--max-budget-usd');
   });
 
   it('uses strict mcp config', () => {
-    const args = buildClaudeArgs(task, 'sonnet', 1, undefined);
+    const args = buildClaudeArgs(task, 'sonnet', 1, '/tmp/test-config.json');
     expect(args).toContain('--strict-mcp-config');
   });
 
-  it('uses custom mcp config when provided', () => {
+  it('uses provided mcp config path', () => {
     const args = buildClaudeArgs(task, 'sonnet', 1, '/path/to/playwright.json');
     const configIdx = args.indexOf('--mcp-config');
     expect(args[configIdx + 1]).toBe('/path/to/playwright.json');
+  });
+
+  it('does not include --bare or --disable-slash-commands', () => {
+    const args = buildClaudeArgs(task, 'sonnet', 1, '/tmp/test-config.json');
+    expect(args).not.toContain('--bare');
   });
 });
 

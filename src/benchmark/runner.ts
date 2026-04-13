@@ -10,7 +10,7 @@ import type {
   PreflightResult,
 } from './types.js';
 import { loadTasks, filterTasks } from './task-loader.js';
-import { executeTask } from './worker.js';
+import { executeTask, getDefaultMcpConfig, cleanupMcpConfig } from './worker.js';
 import {
   computeRunReport,
   generateDeltaReport,
@@ -310,7 +310,7 @@ export async function runModel(
           task,
           model,
           slot.windowIndex,
-          SAFARI_MCP,
+          getDefaultMcpConfig(),
           config.timeoutMultiplier
         );
         allResults.push(result);
@@ -454,6 +454,10 @@ async function main(): Promise<void> {
     return;
   }
 
+  // Generate MCP config with absolute paths for Safari Pilot server
+  const safariMcpConfig = getDefaultMcpConfig();
+  console.log(`MCP config: ${safariMcpConfig}`);
+
   // Start fixture server if any eligible task uses localhost
   let fixtureServer: FixtureServer | null = null;
   let fixturePort = config.fixturePort;
@@ -551,6 +555,7 @@ async function main(): Promise<void> {
       await fixtureServer.stop();
       console.log('\nFixture server stopped.');
     }
+    cleanupMcpConfig(safariMcpConfig);
   }
 
   console.log('\nBenchmark complete.');
