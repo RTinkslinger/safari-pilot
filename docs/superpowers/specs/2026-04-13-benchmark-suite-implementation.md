@@ -27,21 +27,23 @@ claude -p "<system_prompt + task_intent>" \
   --output-format stream-json \
   --model <model> \
   --json-schema '<eval_schema>' \
-  --allowedTools "mcp__safari__*" \
-  --bare \
+  --tools ToolSearch \
   --permission-mode bypassPermissions \
   --no-session-persistence \
-  --max-budget-usd <cap>
+  --strict-mcp-config --mcp-config <generated-config>
 ```
 
 **Key flags:**
 - `--output-format stream-json` — streams every tool call, result, and reasoning chunk in real-time
 - `--json-schema` — enforces structured output matching the task's eval schema
-- `--allowedTools "mcp__safari__*"` — restricts to Safari Pilot tools only
-- `--bare` — skips hooks, plugins, auto-memory for clean benchmark runs
+- `--tools ToolSearch` — restricts built-in tools to ToolSearch only (blocks Bash, WebFetch). MCP tools remain available.
+- `--strict-mcp-config` — only load the Safari Pilot MCP server (generated config with absolute paths)
 - `--permission-mode bypassPermissions` — no interactive prompts during automated runs
 - `--no-session-persistence` — don't pollute session history with benchmark runs
-- `--max-budget-usd` — per-task budget cap
+
+**Removed from original spec (implementation deviations):**
+- `--bare` — removed because it breaks OAuth/subscription auth (skips keychain reads)
+- `--max-budget-usd` — removed because the benchmark runs on subscription, not API. The field remains in task JSONs for future API-key mode but is not passed to the CLI.
 
 ### 2.2 Parallel Execution
 

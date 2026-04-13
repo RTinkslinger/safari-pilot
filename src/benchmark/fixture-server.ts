@@ -1,6 +1,6 @@
 import { createServer, type Server } from 'node:http';
 import { readFile } from 'node:fs/promises';
-import { join, extname, normalize } from 'node:path';
+import { join, extname, normalize, resolve } from 'node:path';
 
 const CONTENT_TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -25,16 +25,15 @@ export class FixtureServer {
     this.server = createServer((req, res) => {
       const url = req.url ?? '/';
 
-      // Path traversal protection
-      if (url.includes('..')) {
-        res.writeHead(400, { 'Content-Type': 'text/plain' });
-        res.end('Bad Request');
+      // Resolve and verify path stays within fixtures dir
+      const safePath = normalize(url.startsWith('/') ? url.slice(1) : url);
+      const filePath = resolve(this.fixturesDir, safePath);
+      const resolvedBase = resolve(this.fixturesDir);
+      if (!filePath.startsWith(resolvedBase + '/') && filePath !== resolvedBase) {
+        res.writeHead(403, { 'Content-Type': 'text/plain' });
+        res.end('Forbidden');
         return;
       }
-
-      // Resolve file path within fixtures dir
-      const safePath = normalize(url.startsWith('/') ? url.slice(1) : url);
-      const filePath = join(this.fixturesDir, safePath);
 
       readFile(filePath)
         .then((data) => {

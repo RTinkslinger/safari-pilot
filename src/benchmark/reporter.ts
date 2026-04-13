@@ -101,12 +101,8 @@ export function computeRunReport(
       ? intelligenceResults.filter((r) => r.success).length / intelligenceResults.length
       : 0;
 
-  // Competitive win rate (category 'competitive' only)
-  const competitiveResults = eligible.filter((r) => taskMap.get(r.taskId)?.category === 'competitive');
-  const competitiveWinRate =
-    competitiveResults.length > 0
-      ? competitiveResults.filter((r) => r.success).length / competitiveResults.length
-      : 0;
+  // Competitive win rate — set to 0 here, runner overwrites with actual head-to-head results
+  const competitiveWinRate = 0;
 
   // Duration percentiles
   const durations = eligible.map((r) => r.durationMs).sort((a, b) => a - b);
@@ -307,7 +303,12 @@ export async function loadHistory(historyPath: string): Promise<HistoryFile> {
 /**
  * Persist the history file as formatted JSON.
  */
+const MAX_HISTORY_RUNS = 20;
+
 export async function saveHistory(historyPath: string, history: HistoryFile): Promise<void> {
+  if (history.runs.length > MAX_HISTORY_RUNS) {
+    history.runs = history.runs.slice(-MAX_HISTORY_RUNS);
+  }
   await writeFile(historyPath, JSON.stringify(history, null, 2), 'utf-8');
 }
 
