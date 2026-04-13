@@ -88,3 +88,11 @@ export interface AuditEntry {
   elapsed_ms: number;
   session: string;
 }
+
+export interface ClickContext {
+  href: string | undefined;
+  downloadAttr: string | undefined;
+  isDownloadLink: boolean;
+  tabUrl: string;
+  timestamp: number;
+}

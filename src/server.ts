@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import type { Engine, ToolResponse, ToolRequirements } from './types.js';
+import type { Engine, ToolResponse, ToolRequirements, ClickContext } from './types.js';
 import type { IEngine } from './engines/engine.js';
 import { selectEngine, EngineUnavailableError } from './engine-selector.js';
 import { AppleScriptEngine } from './engines/applescript.js';
@@ -117,6 +117,9 @@ export class SafariPilotServer {
   readonly rateLimiter: RateLimiter;
   readonly circuitBreaker: CircuitBreaker;
   readonly idpiScanner: IdpiScanner;
+
+  private clickContext: ClickContext | null = null;
+  private clickContextTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(config?: SafariPilotConfig) {
     this.config = config ?? DEFAULT_CONFIG;
@@ -415,6 +418,25 @@ export class SafariPilotServer {
 
   getSessionId(): string {
     return this.sessionId;
+  }
+
+  setClickContext(ctx: ClickContext): void {
+    if (this.clickContextTimer) clearTimeout(this.clickContextTimer);
+    this.clickContext = ctx;
+    this.clickContextTimer = setTimeout(() => {
+      this.clickContext = null;
+      this.clickContextTimer = null;
+    }, 60_000);
+  }
+
+  consumeClickContext(): ClickContext | null {
+    const ctx = this.clickContext;
+    this.clickContext = null;
+    if (this.clickContextTimer) {
+      clearTimeout(this.clickContextTimer);
+      this.clickContextTimer = null;
+    }
+    return ctx;
   }
 
   getEngine(): AppleScriptEngine | null {
