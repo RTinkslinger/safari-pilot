@@ -60,6 +60,51 @@ export class DaemonEngine extends BaseEngine {
 
   // ── Public interface ────────────────────────────────────────────────────────
 
+  /**
+   * Send an arbitrary command to the daemon.
+   * Unlike `execute()` which always sends `method: "execute"`, this lets
+   * callers invoke any daemon method (e.g. `watch_download`, `ping`).
+   */
+  async command(
+    method: string,
+    params: Record<string, unknown>,
+    timeout?: number,
+  ): Promise<EngineResult> {
+    const start = Date.now();
+    try {
+      await this.ensureRunning();
+      const response = await this.sendCommand(method, params, timeout);
+      if (response.ok) {
+        return {
+          ok: true,
+          value: response.value?.trimEnd(),
+          elapsed_ms: Date.now() - start,
+        };
+      }
+      return {
+        ok: false,
+        error: {
+          code: response.error?.code ?? 'DAEMON_ERROR',
+          message: response.error?.message ?? 'Daemon returned an error',
+          retryable: true,
+        },
+        elapsed_ms: Date.now() - start,
+      };
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const isTimeout = err instanceof DaemonTimeoutError;
+      return {
+        ok: false,
+        error: {
+          code: isTimeout ? 'TIMEOUT' : 'DAEMON_ERROR',
+          message: msg,
+          retryable: true,
+        },
+        elapsed_ms: Date.now() - start,
+      };
+    }
+  }
+
   async isAvailable(): Promise<boolean> {
     try {
       await this.ensureRunning();

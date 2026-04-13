@@ -19,6 +19,7 @@ import { PerformanceTools } from './tools/performance.js';
 import { StructuredExtractionTools } from './tools/structured-extraction.js';
 import { WaitTools } from './tools/wait.js';
 import { CompoundTools } from './tools/compound.js';
+import { DownloadTools } from './tools/downloads.js';
 import { KillSwitch } from './security/kill-switch.js';
 import { TabOwnership } from './security/tab-ownership.js';
 import { AuditLog } from './security/audit-log.js';
@@ -200,6 +201,7 @@ export class SafariPilotServer {
     const structuredExtractionTools = new StructuredExtractionTools(engine);
     const waitTools = new WaitTools(engine);
     const compoundTools = new CompoundTools(engine);
+    const downloadTools = new DownloadTools(this);
 
     // Register all tools from all modules.
     // Each module may have getHandler returning Handler (NavigationTools) or Handler | undefined.
@@ -228,6 +230,7 @@ export class SafariPilotServer {
       structuredExtractionTools as unknown as ToolModule,
       waitTools as unknown as ToolModule,
       compoundTools as unknown as ToolModule,
+      downloadTools,
     ];
 
     for (const module of modules) {
@@ -441,6 +444,10 @@ export class SafariPilotServer {
 
   getEngine(): AppleScriptEngine | null {
     return this._engine;
+  }
+
+  getDaemonEngine(): DaemonEngine | null {
+    return (this.engines.get('daemon') as DaemonEngine) ?? null;
   }
 
   getToolDefinition(name: string): ToolDefinition | undefined {
