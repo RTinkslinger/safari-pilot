@@ -12,9 +12,10 @@
  * - "Allow JavaScript from Apple Events" enabled in Safari > Develop
  * - Logged in to X, Reddit, LinkedIn in Safari (for suites 5-7)
  */
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterEach, afterAll } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import { SafariPilotServer } from '../../src/server.js';
+import { TraceCollector } from '../../src/trace-collector.js';
 
 // ── Safari availability check ────────────────────────────────────────────────
 // Skip in CI. Locally, verify Safari JS execution actually works.
@@ -59,6 +60,7 @@ function extractRefs(yaml: string): string[] {
 // ── Shared state ─────────────────────────────────────────────────────────────
 
 let server: SafariPilotServer;
+let trace: TraceCollector;
 const openTabUrls: string[] = [];
 
 /** Open a tab, wait for load, resolve actual URL (Safari may redirect). */
@@ -105,6 +107,14 @@ async function closeTab(url: string): Promise<void> {
 beforeAll(async () => {
   server = new SafariPilotServer();
   await server.initialize();
+  if (safariAvailable) {
+    trace = new TraceCollector({
+      runId: `e2e-${Date.now()}`,
+      type: 'e2e',
+      testFile: 'test/e2e/a11y-targeting-e2e.test.ts',
+    });
+    trace.wrapServer(server as any);
+  }
 }, 30000);
 
 afterAll(async () => {
@@ -112,7 +122,25 @@ afterAll(async () => {
   for (const url of openTabUrls) {
     await closeTab(url);
   }
+  if (safariAvailable && trace) {
+    trace.unwrap();
+    const tracePath = await trace.flush('benchmark/traces/e2e');
+    if (tracePath) console.log(`\nTrace written to: ${tracePath}`);
+  }
   await server.shutdown();
+});
+
+beforeEach((ctx) => {
+  if (!safariAvailable || !trace) return;
+  const suiteName = ctx.task.suite?.name ?? 'unknown';
+  trace.startSession(ctx.task.name, suiteName, ctx.task.name);
+});
+
+afterEach((ctx) => {
+  if (!safariAvailable || !trace) return;
+  const passed = ctx.task.result?.state === 'pass';
+  const errorMsg = ctx.task.result?.errors?.[0]?.message;
+  trace.endSession(passed, errorMsg);
 });
 
 // =============================================================================

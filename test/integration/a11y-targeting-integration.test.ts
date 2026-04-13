@@ -9,12 +9,13 @@
  * - Safari running
  * - "Allow JavaScript from Apple Events" enabled in Safari > Develop
  */
-import { describe, it, expect, afterAll } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, afterAll } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import { AppleScriptEngine } from '../../src/engines/applescript.js';
 import { NavigationTools } from '../../src/tools/navigation.js';
 import { ExtractionTools } from '../../src/tools/extraction.js';
 import { InteractionTools } from '../../src/tools/interaction.js';
+import { TraceCollector } from '../../src/trace-collector.js';
 
 // ── Safari availability check ────────────────────────────────────────────────
 // These tests need Safari running with JS from Apple Events enabled + authenticated
@@ -41,6 +42,19 @@ const engine = new AppleScriptEngine();
 const nav = new NavigationTools(engine);
 const extract = new ExtractionTools(engine);
 const interact = new InteractionTools(engine);
+
+let trace: TraceCollector;
+
+if (safariAvailable) {
+  trace = new TraceCollector({
+    runId: `integ-${Date.now()}`,
+    type: 'integration',
+    testFile: 'test/integration/a11y-targeting-integration.test.ts',
+  });
+  trace.wrapToolModule(extract as any, 'extraction');
+  trace.wrapToolModule(interact as any, 'interaction');
+  trace.wrapToolModule(nav as any, 'navigation');
+}
 
 /** Use the raw tab URL from openTab — Safari's actual URL. Don't normalize. */
 
@@ -124,6 +138,19 @@ async function closeTab(tabUrl: string): Promise<void> {
   }
 }
 
+beforeEach((ctx) => {
+  if (!safariAvailable || !trace) return;
+  const suiteName = ctx.task.suite?.name ?? 'unknown';
+  trace.startSession(ctx.task.name, suiteName, ctx.task.name);
+});
+
+afterEach((ctx) => {
+  if (!safariAvailable || !trace) return;
+  const passed = ctx.task.result?.state === 'pass';
+  const errorMsg = ctx.task.result?.errors?.[0]?.message;
+  trace.endSession(passed, errorMsg);
+});
+
 afterAll(async () => {
   for (const url of openTabUrls) {
     try {
@@ -131,6 +158,11 @@ afterAll(async () => {
     } catch {
       // Tab may already be closed
     }
+  }
+  if (safariAvailable && trace) {
+    trace.unwrap();
+    const tracePath = await trace.flush('benchmark/traces/integration');
+    if (tracePath) console.log(`\nTrace written to: ${tracePath}`);
   }
 });
 
