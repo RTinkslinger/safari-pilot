@@ -155,6 +155,9 @@ public final class CommandDispatcher: @unchecked Sendable {
         case "extension_status":
             return extensionBridge.handleStatus(commandID: command.id)
 
+        case "watch_download":
+            return await handleWatchDownload(commandID: command.id, params: command.params)
+
         default:
             return Response.failure(
                 id: command.id,
@@ -197,6 +200,109 @@ public final class CommandDispatcher: @unchecked Sendable {
                     message: "Unknown internal method: \"\(method)\"",
                     retryable: false
                 )
+            )
+        }
+    }
+
+    // MARK: - Download Watcher
+
+    private func handleWatchDownload(commandID: String, params: [String: AnyCodable]) async -> Response {
+        let start = CFAbsoluteTimeGetCurrent()
+
+        let timeoutMs = (params["timeout"]?.value as? Double) ?? 30000.0
+        let timeoutSec = timeoutMs / 1000.0
+
+        let filenamePattern = params["filenamePattern"]?.value as? String
+
+        var clickCtx: ClickContextParams? = nil
+        if let ctxDict = params["clickContext"]?.value as? [String: Any] {
+            clickCtx = ClickContextParams(
+                href: ctxDict["href"] as? String,
+                downloadAttr: ctxDict["downloadAttr"] as? String,
+                tabUrl: ctxDict["tabUrl"] as? String,
+                timestamp: ctxDict["timestamp"] as? Double
+            )
+        }
+
+        let watcher: DownloadWatcher
+        do {
+            watcher = try DownloadWatcher(
+                timeout: timeoutSec,
+                filenamePattern: filenamePattern,
+                clickContext: clickCtx
+            )
+        } catch DownloadError.directoryNotFound(let dir) {
+            let elapsed = (CFAbsoluteTimeGetCurrent() - start) * 1000
+            return Response.failure(
+                id: commandID,
+                error: StructuredError(
+                    code: "DOWNLOAD_DIR_NOT_FOUND",
+                    message: "Download directory not found: \(dir)",
+                    retryable: false
+                ),
+                elapsedMs: elapsed
+            )
+        } catch {
+            let elapsed = (CFAbsoluteTimeGetCurrent() - start) * 1000
+            return Response.failure(
+                id: commandID,
+                error: StructuredError(
+                    code: "DOWNLOAD_INIT_ERROR",
+                    message: error.localizedDescription,
+                    retryable: false
+                ),
+                elapsedMs: elapsed
+            )
+        }
+
+        do {
+            let result = try await watcher.watch()
+            let elapsed = (CFAbsoluteTimeGetCurrent() - start) * 1000
+
+            let value: [String: Any] = [
+                "filename": result.filename,
+                "path": result.path,
+                "url": result.url as Any,
+                "referrer": result.referrer as Any,
+                "size": result.size,
+                "mimeType": result.mimeType as Any,
+                "contentType": result.contentType as Any,
+                "duration": result.duration,
+                "quarantined": result.quarantined,
+            ]
+            return Response.success(id: commandID, value: AnyCodable(value), elapsedMs: elapsed)
+        } catch DownloadError.timeout(_) {
+            let elapsed = (CFAbsoluteTimeGetCurrent() - start) * 1000
+            return Response.failure(
+                id: commandID,
+                error: StructuredError(
+                    code: "DOWNLOAD_TIMEOUT",
+                    message: "No download completed within \(Int(timeoutMs))ms",
+                    retryable: true
+                ),
+                elapsedMs: elapsed
+            )
+        } catch DownloadError.cancelled {
+            let elapsed = (CFAbsoluteTimeGetCurrent() - start) * 1000
+            return Response.failure(
+                id: commandID,
+                error: StructuredError(
+                    code: "DOWNLOAD_CANCELLED",
+                    message: "Download was cancelled",
+                    retryable: false
+                ),
+                elapsedMs: elapsed
+            )
+        } catch {
+            let elapsed = (CFAbsoluteTimeGetCurrent() - start) * 1000
+            return Response.failure(
+                id: commandID,
+                error: StructuredError(
+                    code: "DOWNLOAD_ERROR",
+                    message: error.localizedDescription,
+                    retryable: false
+                ),
+                elapsedMs: elapsed
             )
         }
     }
