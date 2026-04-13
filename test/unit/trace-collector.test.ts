@@ -1064,7 +1064,8 @@ describe('TraceCollector', () => {
 
     it('creates output directory if it does not exist', async () => {
       const { rm, stat } = await import('node:fs/promises');
-      const outputDir = `/tmp/trace-test-nested-${Date.now()}/deep/path`;
+      const rootDir = `/tmp/trace-test-nested-${Date.now()}`;
+      const outputDir = `${rootDir}/deep/path`;
 
       collector.startSession('test-1', 'Suite');
       collector.endSession(true);
@@ -1076,7 +1077,7 @@ describe('TraceCollector', () => {
       const dirStat = await stat(outputDir);
       expect(dirStat.isDirectory()).toBe(true);
 
-      await rm(`/tmp/trace-test-nested-${Date.now()}`, { recursive: true }).catch(() => {});
+      await rm(rootDir, { recursive: true }).catch(() => {});
     });
 
     it('environment metadata is populated', async () => {

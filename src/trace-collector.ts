@@ -503,9 +503,14 @@ export class TraceCollector {
 
         try {
           const result = (await originalHandler(params)) as ResponseLike;
-          const resultData = result.content[0]?.text
-            ? (JSON.parse(result.content[0].text) as Record<string, unknown>)
-            : {};
+          let resultData: Record<string, unknown> = {};
+          try {
+            if (result.content[0]?.text) {
+              resultData = JSON.parse(result.content[0].text) as Record<string, unknown>;
+            }
+          } catch {
+            // Non-JSON text content (screenshots, plain strings) — trace records opaque result
+          }
           const { summary, data, snapshot } = TraceCollector.summarizeResult(toolName, resultData);
 
           const event: TraceEvent = {
@@ -573,9 +578,14 @@ export class TraceCollector {
 
       try {
         const result = (await original.call(server, name, params)) as ResponseLike;
-        const resultData = result.content[0]?.text
-          ? (JSON.parse(result.content[0].text) as Record<string, unknown>)
-          : {};
+        let resultData: Record<string, unknown> = {};
+        try {
+          if (result.content[0]?.text) {
+            resultData = JSON.parse(result.content[0].text) as Record<string, unknown>;
+          }
+        } catch {
+          // Non-JSON text content (screenshots, plain strings) — trace records opaque result
+        }
         const { summary, data, snapshot } = TraceCollector.summarizeResult(name, resultData);
 
         const event: TraceEvent = {
@@ -607,7 +617,7 @@ export class TraceCollector {
           success: false,
           result: { summary, error: errInfo },
           timing: { total_ms: Date.now() - start, engine_ms: 0 },
-          engine: 'applescript',
+          engine: 'applescript', // default — no response to read engine from on error
           degraded: false,
           domain: TraceCollector.extractDomain(params),
           tabUrl: params['tabUrl'] as string | undefined,
