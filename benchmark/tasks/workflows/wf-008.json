@@ -1,0 +1,32 @@
+{
+  "id": "wf-008",
+  "category": "workflows",
+  "difficulty": "hard",
+  "intent": "On Hacker News, find a story with a \"Show HN:\" prefix, click its external link to visit the project site, and extract a one-line description of the project",
+  "start_url": "https://news.ycombinator.com",
+  "requires": {
+    "tools": ["safari_navigate", "safari_snapshot", "safari_click", "safari_wait_for", "safari_get_text"],
+    "engines": [],
+    "auth_domains": [],
+    "features": [],
+    "competitive": false
+  },
+  "eval": {
+    "type": "structured_output",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "show_hn_title": { "type": "string" },
+        "project_description": { "type": "string" }
+      },
+      "required": ["show_hn_title", "project_description"]
+    }
+  },
+  "eval_fallback": {
+    "type": "llm_judge",
+    "criteria": "The response contains a Show HN story title and a plausible one-sentence description of the linked project"
+  },
+  "timeout_ms": 60000,
+  "max_budget_usd": 0.50,
+  "tags": ["workflows", "hn", "live", "show-hn", "external-link", "multi-hop"]
+}

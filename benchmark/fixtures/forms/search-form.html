@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Safari Pilot Fixture — Search</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 480px; margin: 4rem auto; padding: 0 1rem; }
+    h1 { margin-bottom: 1.5rem; }
+    .search-row { display: flex; gap: 0.5rem; }
+    input[type="search"] { flex: 1; padding: 0.6rem 0.75rem; font-size: 1rem; border: 1px solid #ccc; border-radius: 4px; }
+    button { padding: 0.6rem 1.25rem; font-size: 1rem; background: #0070f3; color: #fff; border: none; border-radius: 4px; cursor: pointer; }
+    button:hover { background: #005ec2; }
+  </style>
+</head>
+<body>
+  <h1>Search Fixture</h1>
+  <form id="search-form" method="get" action="search-results.html">
+    <div class="search-row">
+      <input type="search" id="q" name="q" placeholder="Search…" aria-label="Search query">
+      <button type="submit">Search</button>
+    </div>
+  </form>
+</body>
+</html>

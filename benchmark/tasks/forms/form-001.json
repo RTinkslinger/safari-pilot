@@ -1,0 +1,22 @@
+{
+  "id": "form-001",
+  "category": "forms",
+  "difficulty": "easy",
+  "intent": "Fill the login form with username \"testuser\" and password \"pass123\", then submit it",
+  "start_url": "http://localhost:9876/forms/login.html",
+  "requires": {
+    "tools": ["safari_navigate", "safari_fill", "safari_click"],
+    "engines": [],
+    "auth_domains": [],
+    "features": [],
+    "competitive": false
+  },
+  "eval": {
+    "type": "contains",
+    "must_include": ["submitted", "login"],
+    "case_insensitive": true
+  },
+  "timeout_ms": 30000,
+  "max_budget_usd": 0.10,
+  "tags": ["forms", "login", "fixture", "fill", "submit"]
+}

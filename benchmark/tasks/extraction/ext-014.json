@@ -1,0 +1,31 @@
+{
+  "id": "ext-014",
+  "category": "extraction",
+  "difficulty": "hard",
+  "intent": "On the Wikipedia article for Tokyo, extract all infobox key-value pairs as a JSON object",
+  "start_url": "https://en.wikipedia.org/wiki/Tokyo",
+  "requires": {
+    "tools": ["safari_navigate", "safari_extract_tables", "safari_evaluate"],
+    "engines": [],
+    "auth_domains": [],
+    "features": [],
+    "competitive": false
+  },
+  "eval": {
+    "type": "structured_output",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "infobox": { "type": "object" }
+      },
+      "required": ["infobox"]
+    }
+  },
+  "eval_fallback": {
+    "type": "llm_judge",
+    "criteria": "The response contains structured key-value data from the Tokyo Wikipedia infobox, including at least country, region, and population information"
+  },
+  "timeout_ms": 60000,
+  "max_budget_usd": 0.40,
+  "tags": ["extraction", "infobox", "wikipedia", "live", "structured", "key-value"]
+}

@@ -1,0 +1,22 @@
+{
+  "id": "ext-001",
+  "category": "extraction",
+  "difficulty": "easy",
+  "intent": "Navigate to example.com and extract the main heading text",
+  "start_url": "https://example.com",
+  "requires": {
+    "tools": ["safari_navigate", "safari_get_text"],
+    "engines": [],
+    "auth_domains": [],
+    "features": [],
+    "competitive": false
+  },
+  "eval": {
+    "type": "exact_match",
+    "expected": "Example Domain",
+    "case_insensitive": false
+  },
+  "timeout_ms": 20000,
+  "max_budget_usd": 0.05,
+  "tags": ["extraction", "heading", "live", "example.com"]
+}

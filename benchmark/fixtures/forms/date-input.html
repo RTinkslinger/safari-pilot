@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Safari Pilot Fixture — Date Input</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 400px; margin: 4rem auto; padding: 0 1rem; }
+    h1 { margin-bottom: 1.5rem; }
+    label { display: block; font-weight: 600; margin-bottom: 0.5rem; }
+    input[type="date"] { display: block; padding: 0.5rem; font-size: 1rem; border: 1px solid #ccc; border-radius: 4px; width: 100%; box-sizing: border-box; }
+    #display { margin-top: 1.5rem; font-size: 1.1rem; color: #333; min-height: 1.5rem; }
+    #display strong { color: #0070f3; }
+  </style>
+</head>
+<body>
+  <h1>Date Selector</h1>
+  <label for="date-field">Pick a date</label>
+  <input type="date" id="date-field" name="date">
+  <div id="display" role="status" aria-live="polite"></div>
+
+  <script>
+    var input = document.getElementById('date-field');
+    var display = document.getElementById('display');
+
+    input.addEventListener('change', function () {
+      if (input.value) {
+        display.innerHTML = 'Selected date: <strong>' + input.value + '</strong>';
+      } else {
+        display.textContent = '';
+      }
+    });
+  </script>
+</body>
+</html>

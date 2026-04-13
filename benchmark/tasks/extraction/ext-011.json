@@ -1,0 +1,30 @@
+{
+  "id": "ext-011",
+  "category": "extraction",
+  "difficulty": "medium",
+  "intent": "Extract the nested list from the fixture page as a hierarchical JSON tree, preserving parent-child relationships",
+  "start_url": "http://localhost:9876/extraction/nested.html",
+  "requires": {
+    "tools": ["safari_navigate", "safari_evaluate"],
+    "engines": [],
+    "auth_domains": [],
+    "features": [],
+    "competitive": false
+  },
+  "eval": {
+    "type": "structured_output",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "tree": {
+          "type": "array",
+          "items": { "type": "object" }
+        }
+      },
+      "required": ["tree"]
+    }
+  },
+  "timeout_ms": 30000,
+  "max_budget_usd": 0.15,
+  "tags": ["extraction", "nested", "hierarchical", "fixture", "structured"]
+}

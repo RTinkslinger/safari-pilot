@@ -1,0 +1,38 @@
+{
+  "id": "wf-010",
+  "category": "workflows",
+  "difficulty": "hard",
+  "intent": "On GitHub Trending, extract the names of the top 3 repositories, then visit each repository page and extract the first line of its README",
+  "start_url": "https://github.com/trending",
+  "requires": {
+    "tools": ["safari_navigate", "safari_smart_scrape", "safari_click", "safari_wait_for", "safari_get_text"],
+    "engines": [],
+    "auth_domains": [],
+    "features": [],
+    "competitive": false
+  },
+  "eval": {
+    "type": "structured_output",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "repos": {
+          "type": "array",
+          "minItems": 3,
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string" },
+              "readme_first_line": { "type": "string" }
+            },
+            "required": ["name", "readme_first_line"]
+          }
+        }
+      },
+      "required": ["repos"]
+    }
+  },
+  "timeout_ms": 60000,
+  "max_budget_usd": 0.50,
+  "tags": ["workflows", "github", "live", "trending", "multi-hop", "readme"]
+}

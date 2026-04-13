@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Safari Pilot Fixture — Nested List</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 500px; margin: 4rem auto; padding: 0 1rem; }
+    h1 { margin-bottom: 1.5rem; }
+    ul { line-height: 1.8; }
+    li { margin: 0.1rem 0; }
+  </style>
+</head>
+<body>
+  <h1>Nested Category Tree</h1>
+  <ul id="root-list">
+    <li data-id="A">Level 1-A
+      <ul>
+        <li data-id="A1">Level 2: A1</li>
+        <li data-id="A2">Level 2: A2</li>
+      </ul>
+    </li>
+    <li data-id="B">Level 1-B
+      <ul>
+        <li data-id="B1">Level 2: B1
+          <ul>
+            <li data-id="B1a">Level 3: B1a</li>
+          </ul>
+        </li>
+      </ul>
+    </li>
+    <li data-id="C">Level 1-C</li>
+  </ul>
+</body>
+</html>

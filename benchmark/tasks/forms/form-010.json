@@ -1,0 +1,22 @@
+{
+  "id": "form-010",
+  "category": "forms",
+  "difficulty": "medium",
+  "intent": "On GitHub, locate the search input using the accessibility tree snapshot, type \"safari-pilot\" into it",
+  "start_url": "https://github.com",
+  "requires": {
+    "tools": ["safari_navigate", "safari_snapshot", "safari_click", "safari_type"],
+    "engines": [],
+    "auth_domains": [],
+    "features": [],
+    "competitive": false
+  },
+  "eval": {
+    "type": "contains",
+    "must_include": ["safari-pilot"],
+    "case_insensitive": false
+  },
+  "timeout_ms": 45000,
+  "max_budget_usd": 0.25,
+  "tags": ["forms", "search", "github", "live", "a11y-tree"]
+}

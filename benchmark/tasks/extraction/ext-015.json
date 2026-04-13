@@ -1,0 +1,22 @@
+{
+  "id": "ext-015",
+  "category": "extraction",
+  "difficulty": "hard",
+  "intent": "On the dynamic fixture page, wait for the content to finish loading after its 2-second JavaScript delay, then extract the loaded data which includes the number 42",
+  "start_url": "http://localhost:9876/extraction/dynamic.html",
+  "requires": {
+    "tools": ["safari_navigate", "safari_wait_for", "safari_get_text"],
+    "engines": [],
+    "auth_domains": [],
+    "features": [],
+    "competitive": false
+  },
+  "eval": {
+    "type": "contains",
+    "must_include": ["42", "loaded"],
+    "case_insensitive": true
+  },
+  "timeout_ms": 30000,
+  "max_budget_usd": 0.15,
+  "tags": ["extraction", "dynamic", "wait", "javascript", "fixture"]
+}

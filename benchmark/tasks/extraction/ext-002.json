@@ -1,0 +1,22 @@
+{
+  "id": "ext-002",
+  "category": "extraction",
+  "difficulty": "easy",
+  "intent": "Navigate to https://en.wikipedia.org and extract the page title from the browser tab or document title",
+  "start_url": "https://en.wikipedia.org",
+  "requires": {
+    "tools": ["safari_navigate", "safari_get_text"],
+    "engines": [],
+    "auth_domains": [],
+    "features": [],
+    "competitive": false
+  },
+  "eval": {
+    "type": "contains",
+    "must_include": ["Wikipedia"],
+    "case_insensitive": false
+  },
+  "timeout_ms": 20000,
+  "max_budget_usd": 0.05,
+  "tags": ["extraction", "title", "live", "wikipedia"]
+}

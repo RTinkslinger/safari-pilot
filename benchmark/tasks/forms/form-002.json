@@ -1,0 +1,22 @@
+{
+  "id": "form-002",
+  "category": "forms",
+  "difficulty": "easy",
+  "intent": "Find the search input on Wikipedia and type \"browser automation\"",
+  "start_url": "https://en.wikipedia.org",
+  "requires": {
+    "tools": ["safari_navigate", "safari_snapshot", "safari_fill"],
+    "engines": [],
+    "auth_domains": [],
+    "features": [],
+    "competitive": false
+  },
+  "eval": {
+    "type": "contains",
+    "must_include": ["browser automation"],
+    "case_insensitive": true
+  },
+  "timeout_ms": 30000,
+  "max_budget_usd": 0.15,
+  "tags": ["forms", "search", "wikipedia", "live", "fill"]
+}

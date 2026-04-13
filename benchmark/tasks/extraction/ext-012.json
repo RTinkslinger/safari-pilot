@@ -1,0 +1,31 @@
+{
+  "id": "ext-012",
+  "category": "extraction",
+  "difficulty": "hard",
+  "intent": "On the Wikipedia article for \"Safari (web browser)\", count the number of external links listed in the References or External links section",
+  "start_url": "https://en.wikipedia.org/wiki/Safari_(web_browser)",
+  "requires": {
+    "tools": ["safari_navigate", "safari_extract_links", "safari_evaluate"],
+    "engines": [],
+    "auth_domains": [],
+    "features": [],
+    "competitive": false
+  },
+  "eval": {
+    "type": "structured_output",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "count": { "type": "number" }
+      },
+      "required": ["count"]
+    }
+  },
+  "eval_fallback": {
+    "type": "llm_judge",
+    "criteria": "The response contains a specific numeric count of external links and explains the methodology used to count them"
+  },
+  "timeout_ms": 60000,
+  "max_budget_usd": 0.35,
+  "tags": ["extraction", "links", "count", "wikipedia", "live", "references"]
+}

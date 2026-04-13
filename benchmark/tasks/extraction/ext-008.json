@@ -1,0 +1,26 @@
+{
+  "id": "ext-008",
+  "category": "extraction",
+  "difficulty": "medium",
+  "intent": "On the Wikipedia article for Tokyo, find and extract the city's population figure",
+  "start_url": "https://en.wikipedia.org/wiki/Tokyo",
+  "requires": {
+    "tools": ["safari_navigate", "safari_get_text", "safari_smart_scrape"],
+    "engines": [],
+    "auth_domains": [],
+    "features": [],
+    "competitive": false
+  },
+  "eval": {
+    "type": "contains",
+    "must_include": ["13", "million"],
+    "case_insensitive": true
+  },
+  "eval_fallback": {
+    "type": "llm_judge",
+    "criteria": "The response contains a plausible population figure for Tokyo (a number in the millions range)"
+  },
+  "timeout_ms": 45000,
+  "max_budget_usd": 0.25,
+  "tags": ["extraction", "population", "wikipedia", "live", "infobox"]
+}

@@ -1,0 +1,22 @@
+{
+  "id": "form-012",
+  "category": "forms",
+  "difficulty": "medium",
+  "intent": "On the date-input fixture, fill the date field with \"2026-04-13\" and confirm the selected date is displayed",
+  "start_url": "http://localhost:9876/forms/date-input.html",
+  "requires": {
+    "tools": ["safari_navigate", "safari_fill", "safari_get_text"],
+    "engines": [],
+    "auth_domains": [],
+    "features": [],
+    "competitive": false
+  },
+  "eval": {
+    "type": "contains",
+    "must_include": ["2026-04-13"],
+    "case_insensitive": false
+  },
+  "timeout_ms": 25000,
+  "max_budget_usd": 0.15,
+  "tags": ["forms", "date", "fill", "fixture"]
+}

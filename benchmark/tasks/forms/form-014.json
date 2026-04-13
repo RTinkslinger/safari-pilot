@@ -1,0 +1,31 @@
+{
+  "id": "form-014",
+  "category": "forms",
+  "difficulty": "hard",
+  "intent": "On Wikipedia, search for \"Safari browser\", click the first article result and note its title; then clear the search and type \"WebKit\", click that first result and note its title; report both article titles",
+  "start_url": "https://en.wikipedia.org",
+  "requires": {
+    "tools": ["safari_navigate", "safari_fill", "safari_click", "safari_wait_for", "safari_get_text"],
+    "engines": [],
+    "auth_domains": [],
+    "features": [],
+    "competitive": false
+  },
+  "eval": {
+    "type": "structured_output",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "titles": {
+          "type": "array",
+          "minItems": 2,
+          "items": { "type": "string" }
+        }
+      },
+      "required": ["titles"]
+    }
+  },
+  "timeout_ms": 60000,
+  "max_budget_usd": 0.40,
+  "tags": ["forms", "search", "multi-hop", "wikipedia", "live", "navigation"]
+}

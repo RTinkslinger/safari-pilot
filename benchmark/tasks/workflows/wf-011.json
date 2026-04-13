@@ -1,0 +1,31 @@
+{
+  "id": "wf-011",
+  "category": "workflows",
+  "difficulty": "hard",
+  "intent": "Open two tabs — tab 1 on Hacker News, tab 2 on Wikipedia. From tab 1, pick the top story topic. Switch to tab 2 and search for that topic on Wikipedia. Report the HN topic and the Wikipedia article title found.",
+  "requires": {
+    "tools": ["safari_new_tab", "safari_navigate", "safari_list_tabs", "safari_get_text", "safari_fill", "safari_click", "safari_wait_for"],
+    "engines": [],
+    "auth_domains": [],
+    "features": [],
+    "competitive": false
+  },
+  "eval": {
+    "type": "structured_output",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "hn_topic": { "type": "string" },
+        "wiki_result": { "type": "string" }
+      },
+      "required": ["hn_topic", "wiki_result"]
+    }
+  },
+  "eval_fallback": {
+    "type": "llm_judge",
+    "criteria": "The response contains a topic from HN and a plausible Wikipedia article title related to that topic, demonstrating cross-tab coordination"
+  },
+  "timeout_ms": 60000,
+  "max_budget_usd": 0.50,
+  "tags": ["workflows", "multi-tab", "live", "hn", "wikipedia", "cross-tab"]
+}

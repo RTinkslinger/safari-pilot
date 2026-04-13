@@ -1,0 +1,27 @@
+{
+  "id": "ext-003",
+  "category": "extraction",
+  "difficulty": "easy",
+  "intent": "Navigate to example.com and count the number of hyperlinks on the page",
+  "start_url": "https://example.com",
+  "requires": {
+    "tools": ["safari_navigate", "safari_extract_links"],
+    "engines": [],
+    "auth_domains": [],
+    "features": [],
+    "competitive": false
+  },
+  "eval": {
+    "type": "structured_output",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "count": { "type": "number" }
+      },
+      "required": ["count"]
+    }
+  },
+  "timeout_ms": 20000,
+  "max_budget_usd": 0.05,
+  "tags": ["extraction", "links", "count", "live", "example.com"]
+}

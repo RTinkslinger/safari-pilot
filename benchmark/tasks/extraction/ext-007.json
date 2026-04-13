@@ -1,0 +1,31 @@
+{
+  "id": "ext-007",
+  "category": "extraction",
+  "difficulty": "medium",
+  "intent": "On Hacker News front page, extract the titles of the top 5 stories",
+  "start_url": "https://news.ycombinator.com",
+  "requires": {
+    "tools": ["safari_navigate", "safari_smart_scrape"],
+    "engines": [],
+    "auth_domains": [],
+    "features": [],
+    "competitive": false
+  },
+  "eval": {
+    "type": "structured_output",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "titles": {
+          "type": "array",
+          "minItems": 5,
+          "items": { "type": "string" }
+        }
+      },
+      "required": ["titles"]
+    }
+  },
+  "timeout_ms": 45000,
+  "max_budget_usd": 0.25,
+  "tags": ["extraction", "titles", "hn", "live", "list"]
+}

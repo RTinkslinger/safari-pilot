@@ -1,0 +1,28 @@
+{
+  "id": "wf-005",
+  "category": "workflows",
+  "difficulty": "medium",
+  "intent": "On GitHub, use the search bar to search for \"safari-pilot\", then extract the name and description of the first repository result",
+  "start_url": "https://github.com",
+  "requires": {
+    "tools": ["safari_navigate", "safari_fill", "safari_click", "safari_wait_for", "safari_smart_scrape"],
+    "engines": [],
+    "auth_domains": [],
+    "features": [],
+    "competitive": false
+  },
+  "eval": {
+    "type": "structured_output",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "description": { "type": "string" }
+      },
+      "required": ["name", "description"]
+    }
+  },
+  "timeout_ms": 60000,
+  "max_budget_usd": 0.30,
+  "tags": ["workflows", "github", "live", "search", "extraction"]
+}

@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Safari Pilot Fixture — Dynamic Content</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 480px; margin: 4rem auto; padding: 0 1rem; }
+    h1 { margin-bottom: 1.5rem; }
+    #content { padding: 1rem; border: 1px solid #ddd; border-radius: 4px; min-height: 3rem; }
+    #loading { color: #888; font-style: italic; }
+    #data { display: none; }
+    #data strong { color: #0070f3; font-size: 1.5rem; }
+  </style>
+</head>
+<body>
+  <h1>Dynamic Content Loader</h1>
+  <div id="content">
+    <p id="loading">Loading…</p>
+    <div id="data" aria-live="polite" role="status">
+      <p>Data loaded: <strong>42</strong></p>
+      <p>Status: <em>loaded</em> — all records fetched successfully.</p>
+    </div>
+  </div>
+
+  <script>
+    setTimeout(function () {
+      document.getElementById('loading').style.display = 'none';
+      document.getElementById('data').style.display = 'block';
+    }, 2000);
+  </script>
+</body>
+</html>

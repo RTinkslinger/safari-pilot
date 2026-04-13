@@ -1,0 +1,22 @@
+{
+  "id": "ext-004",
+  "category": "extraction",
+  "difficulty": "easy",
+  "intent": "Extract all visible text content from the extraction fixture page",
+  "start_url": "http://localhost:9876/extraction/table.html",
+  "requires": {
+    "tools": ["safari_navigate", "safari_get_text"],
+    "engines": [],
+    "auth_domains": [],
+    "features": [],
+    "competitive": false
+  },
+  "eval": {
+    "type": "contains",
+    "must_include": ["Browser Engine"],
+    "case_insensitive": false
+  },
+  "timeout_ms": 20000,
+  "max_budget_usd": 0.05,
+  "tags": ["extraction", "text", "fixture"]
+}

@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Safari Pilot Fixture — Checkboxes</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 400px; margin: 4rem auto; padding: 0 1rem; }
+    h1 { margin-bottom: 1.5rem; }
+    .checkbox-row { display: flex; align-items: center; gap: 0.75rem; margin: 0.75rem 0; }
+    .checkbox-row input[type="checkbox"] { width: 1.1rem; height: 1.1rem; cursor: pointer; }
+    .checkbox-row label { font-size: 1rem; cursor: pointer; }
+    #state-display { margin-top: 2rem; padding: 0.75rem 1rem; background: #f5f5f5; border-radius: 4px; border: 1px solid #ddd; }
+    #state-display h2 { margin: 0 0 0.5rem; font-size: 0.9rem; color: #666; text-transform: uppercase; letter-spacing: 0.05em; }
+    pre { margin: 0; font-size: 0.85rem; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <h1>Checkbox Options</h1>
+  <form id="checkbox-form">
+    <div class="checkbox-row">
+      <input type="checkbox" id="cb1" name="option1">
+      <label for="cb1">Option Alpha</label>
+    </div>
+    <div class="checkbox-row">
+      <input type="checkbox" id="cb2" name="option2">
+      <label for="cb2">Option Beta</label>
+    </div>
+    <div class="checkbox-row">
+      <input type="checkbox" id="cb3" name="option3">
+      <label for="cb3">Option Gamma</label>
+    </div>
+    <div class="checkbox-row">
+      <input type="checkbox" id="cb4" name="option4">
+      <label for="cb4">Option Delta</label>
+    </div>
+  </form>
+
+  <div id="state-display">
+    <h2>Current State</h2>
+    <pre id="state-json">[]</pre>
+  </div>
+
+  <script>
+    var checkboxes = [
+      { id: 'cb1', label: 'Option Alpha' },
+      { id: 'cb2', label: 'Option Beta' },
+      { id: 'cb3', label: 'Option Gamma' },
+      { id: 'cb4', label: 'Option Delta' }
+    ];
+
+    function updateState() {
+      var state = checkboxes.map(function (cb) {
+        return {
+          id: cb.id,
+          label: cb.label,
+          checked: document.getElementById(cb.id).checked
+        };
+      });
+      document.getElementById('state-json').textContent = JSON.stringify(state, null, 2);
+    }
+
+    document.querySelectorAll('input[type="checkbox"]').forEach(function (el) {
+      el.addEventListener('change', updateState);
+    });
+
+    updateState();
+  </script>
+</body>
+</html>

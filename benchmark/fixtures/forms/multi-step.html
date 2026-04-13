@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Safari Pilot Fixture — Multi-Step Form</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 480px; margin: 4rem auto; padding: 0 1rem; }
+    h1 { margin-bottom: 0.5rem; }
+    .step-indicator { color: #666; margin-bottom: 1.5rem; font-size: 0.9rem; }
+    .step { display: none; }
+    .step.active { display: block; }
+    label { display: block; margin-top: 1rem; font-weight: 600; }
+    input { display: block; width: 100%; margin-top: 0.25rem; padding: 0.5rem; font-size: 1rem; box-sizing: border-box; border: 1px solid #ccc; border-radius: 4px; }
+    .btn-row { display: flex; gap: 0.75rem; margin-top: 1.5rem; }
+    button { padding: 0.6rem 1.5rem; font-size: 1rem; border: none; border-radius: 4px; cursor: pointer; }
+    .btn-next { background: #0070f3; color: #fff; }
+    .btn-next:hover { background: #005ec2; }
+    .btn-back { background: #eee; color: #333; }
+    .btn-back:hover { background: #ddd; }
+    .review-table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
+    .review-table th, .review-table td { text-align: left; padding: 0.4rem 0.5rem; border-bottom: 1px solid #eee; }
+    .review-table th { font-weight: 600; width: 40%; }
+    #complete-msg { margin-top: 1.5rem; padding: 0.75rem 1rem; background: #d4edda; color: #155724; border: 1px solid #c3e6cb; border-radius: 4px; display: none; }
+  </style>
+</head>
+<body>
+  <h1>Sign Up</h1>
+
+  <!-- Step 1 -->
+  <div id="step-1" class="step active">
+    <p class="step-indicator">Step 1 of 3 — Personal Details</p>
+    <label for="s1-name">Full Name</label>
+    <input type="text" id="s1-name" placeholder="Your full name">
+    <label for="s1-email">Email Address</label>
+    <input type="email" id="s1-email" placeholder="you@example.com">
+    <div class="btn-row">
+      <button class="btn-next" onclick="goTo(2)">Next →</button>
+    </div>
+  </div>
+
+  <!-- Step 2 -->
+  <div id="step-2" class="step">
+    <p class="step-indicator">Step 2 of 3 — Address</p>
+    <label for="s2-address">Street Address</label>
+    <input type="text" id="s2-address" placeholder="123 Main Street">
+    <label for="s2-city">City</label>
+    <input type="text" id="s2-city" placeholder="Your city">
+    <div class="btn-row">
+      <button class="btn-back" onclick="goTo(1)">← Back</button>
+      <button class="btn-next" onclick="goTo(3)">Next →</button>
+    </div>
+  </div>
+
+  <!-- Step 3 — Review -->
+  <div id="step-3" class="step">
+    <p class="step-indicator">Step 3 of 3 — Review &amp; Complete</p>
+    <p>Please review your details before completing registration.</p>
+    <table class="review-table" id="review-table">
+      <tr><th>Name</th><td id="r-name"></td></tr>
+      <tr><th>Email</th><td id="r-email"></td></tr>
+      <tr><th>Address</th><td id="r-address"></td></tr>
+      <tr><th>City</th><td id="r-city"></td></tr>
+    </table>
+    <div class="btn-row">
+      <button class="btn-back" onclick="goTo(2)">← Back</button>
+      <button class="btn-next" onclick="complete()">Complete Registration</button>
+    </div>
+  </div>
+
+  <div id="complete-msg" role="status">
+    Registration complete! Thank you for signing up.
+  </div>
+
+  <script>
+    function goTo(step) {
+      document.querySelectorAll('.step').forEach(function (el) {
+        el.classList.remove('active');
+      });
+      var target = document.getElementById('step-' + step);
+      if (target) target.classList.add('active');
+
+      if (step === 3) {
+        document.getElementById('r-name').textContent = document.getElementById('s1-name').value;
+        document.getElementById('r-email').textContent = document.getElementById('s1-email').value;
+        document.getElementById('r-address').textContent = document.getElementById('s2-address').value;
+        document.getElementById('r-city').textContent = document.getElementById('s2-city').value;
+      }
+    }
+
+    function complete() {
+      document.querySelectorAll('.step').forEach(function (el) {
+        el.classList.remove('active');
+      });
+      document.getElementById('complete-msg').style.display = 'block';
+    }
+  </script>
+</body>
+</html>

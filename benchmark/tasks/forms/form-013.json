@@ -1,0 +1,22 @@
+{
+  "id": "form-013",
+  "category": "forms",
+  "difficulty": "hard",
+  "intent": "Complete the multi-step fixture form: on step 1 fill in a name and email then click Next; on step 2 fill in an address and city then click Next; on step 3 verify the review summary is shown and contains the word \"complete\"",
+  "start_url": "http://localhost:9876/forms/multi-step.html",
+  "requires": {
+    "tools": ["safari_navigate", "safari_fill", "safari_click", "safari_wait_for", "safari_get_text"],
+    "engines": [],
+    "auth_domains": [],
+    "features": [],
+    "competitive": false
+  },
+  "eval": {
+    "type": "contains",
+    "must_include": ["review", "complete"],
+    "case_insensitive": true
+  },
+  "timeout_ms": 60000,
+  "max_budget_usd": 0.35,
+  "tags": ["forms", "multi-step", "wizard", "fixture", "complex"]
+}

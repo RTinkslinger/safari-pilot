@@ -1,0 +1,28 @@
+{
+  "id": "ext-010",
+  "category": "extraction",
+  "difficulty": "medium",
+  "intent": "On the GitHub Trending page, extract the name of the first repository and its star count",
+  "start_url": "https://github.com/trending",
+  "requires": {
+    "tools": ["safari_navigate", "safari_smart_scrape"],
+    "engines": [],
+    "auth_domains": [],
+    "features": [],
+    "competitive": false
+  },
+  "eval": {
+    "type": "structured_output",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "stars": { "type": "string" }
+      },
+      "required": ["name", "stars"]
+    }
+  },
+  "timeout_ms": 45000,
+  "max_budget_usd": 0.25,
+  "tags": ["extraction", "github", "trending", "live", "structured"]
+}

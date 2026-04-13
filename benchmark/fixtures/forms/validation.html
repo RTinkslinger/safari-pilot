@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Safari Pilot Fixture — Validation Form</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 400px; margin: 4rem auto; padding: 0 1rem; }
+    h1 { margin-bottom: 1.5rem; }
+    label { display: block; margin-top: 1rem; font-weight: 600; }
+    input { display: block; width: 100%; margin-top: 0.25rem; padding: 0.5rem; font-size: 1rem; box-sizing: border-box; border: 1px solid #ccc; border-radius: 4px; }
+    input.invalid { border-color: #c0392b; }
+    .error { color: #c0392b; font-size: 0.875rem; margin-top: 0.25rem; display: none; }
+    .error.visible { display: block; }
+    button { display: block; margin-top: 1.5rem; padding: 0.6rem 1.5rem; font-size: 1rem; background: #0070f3; color: #fff; border: none; border-radius: 4px; cursor: pointer; }
+    button:hover { background: #005ec2; }
+    #success-msg { margin-top: 1.5rem; padding: 0.75rem 1rem; border-radius: 4px; display: none; background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+  </style>
+</head>
+<body>
+  <h1>Registration</h1>
+  <form id="reg-form" novalidate>
+    <label for="email">Email Address</label>
+    <input type="email" id="email" name="email" placeholder="you@example.com" aria-describedby="email-error">
+    <div id="email-error" class="error" role="alert">Please enter a valid email address (must include @).</div>
+
+    <label for="age">Age</label>
+    <input type="number" id="age" name="age" placeholder="Your age" min="18" aria-describedby="age-error">
+    <div id="age-error" class="error" role="alert">You must be at least 18 years old to register.</div>
+
+    <button type="submit">Register</button>
+  </form>
+  <div id="success-msg" role="status">Registration successful! Welcome aboard.</div>
+
+  <script>
+    document.getElementById('reg-form').addEventListener('submit', function (e) {
+      e.preventDefault();
+      const email = document.getElementById('email').value;
+      const age = parseInt(document.getElementById('age').value, 10);
+      const emailError = document.getElementById('email-error');
+      const ageError = document.getElementById('age-error');
+      const emailInput = document.getElementById('email');
+      const ageInput = document.getElementById('age');
+      let valid = true;
+
+      const emailValid = email.includes('@') && email.length > 3;
+      if (!emailValid) {
+        emailError.classList.add('visible');
+        emailInput.classList.add('invalid');
+        valid = false;
+      } else {
+        emailError.classList.remove('visible');
+        emailInput.classList.remove('invalid');
+      }
+
+      const ageValid = !isNaN(age) && age >= 18;
+      if (!ageValid) {
+        ageError.classList.add('visible');
+        ageInput.classList.add('invalid');
+        valid = false;
+      } else {
+        ageError.classList.remove('visible');
+        ageInput.classList.remove('invalid');
+      }
+
+      if (valid) {
+        document.getElementById('reg-form').style.display = 'none';
+        document.getElementById('success-msg').style.display = 'block';
+      }
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,22 @@
+{
+  "id": "form-004",
+  "category": "forms",
+  "difficulty": "easy",
+  "intent": "Fill the email field on the fixture login form with \"test@example.com\"",
+  "start_url": "http://localhost:9876/forms/login.html",
+  "requires": {
+    "tools": ["safari_navigate", "safari_fill"],
+    "engines": [],
+    "auth_domains": [],
+    "features": [],
+    "competitive": false
+  },
+  "eval": {
+    "type": "contains",
+    "must_include": ["test@example.com"],
+    "case_insensitive": false
+  },
+  "timeout_ms": 20000,
+  "max_budget_usd": 0.10,
+  "tags": ["forms", "email", "fill", "fixture"]
+}

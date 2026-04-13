@@ -1,0 +1,30 @@
+{
+  "id": "ext-009",
+  "category": "extraction",
+  "difficulty": "medium",
+  "intent": "On the images fixture page, extract the alt text of every image and return them as a list",
+  "start_url": "http://localhost:9876/extraction/images.html",
+  "requires": {
+    "tools": ["safari_navigate", "safari_extract_images"],
+    "engines": [],
+    "auth_domains": [],
+    "features": [],
+    "competitive": false
+  },
+  "eval": {
+    "type": "structured_output",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "alts": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "required": ["alts"]
+    }
+  },
+  "timeout_ms": 25000,
+  "max_budget_usd": 0.10,
+  "tags": ["extraction", "images", "alt-text", "fixture", "accessibility"]
+}

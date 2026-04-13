@@ -1,0 +1,39 @@
+{
+  "id": "ext-013",
+  "category": "extraction",
+  "difficulty": "hard",
+  "intent": "On the Hacker News front page, extract the titles, scores, and comment counts of the top 10 stories as structured JSON",
+  "start_url": "https://news.ycombinator.com",
+  "requires": {
+    "tools": ["safari_navigate", "safari_smart_scrape", "safari_evaluate"],
+    "engines": [],
+    "auth_domains": [],
+    "features": [],
+    "competitive": false
+  },
+  "eval": {
+    "type": "structured_output",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "stories": {
+          "type": "array",
+          "minItems": 10,
+          "items": {
+            "type": "object",
+            "properties": {
+              "title": { "type": "string" },
+              "score": { "type": "string" },
+              "comments": { "type": "string" }
+            },
+            "required": ["title"]
+          }
+        }
+      },
+      "required": ["stories"]
+    }
+  },
+  "timeout_ms": 60000,
+  "max_budget_usd": 0.35,
+  "tags": ["extraction", "hn", "live", "structured", "list", "scores"]
+}

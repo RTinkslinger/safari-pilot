@@ -1,0 +1,28 @@
+{
+  "id": "wf-003",
+  "category": "workflows",
+  "difficulty": "medium",
+  "intent": "Navigate to example.com, take an accessibility snapshot and count elements; then navigate to wikipedia.org, take a snapshot and count elements; report both counts",
+  "start_url": "https://example.com",
+  "requires": {
+    "tools": ["safari_navigate", "safari_snapshot"],
+    "engines": [],
+    "auth_domains": [],
+    "features": [],
+    "competitive": false
+  },
+  "eval": {
+    "type": "structured_output",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "example_count": { "type": "number" },
+        "wiki_count": { "type": "number" }
+      },
+      "required": ["example_count", "wiki_count"]
+    }
+  },
+  "timeout_ms": 60000,
+  "max_budget_usd": 0.25,
+  "tags": ["workflows", "snapshot", "compare", "live", "multi-site"]
+}

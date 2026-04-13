@@ -1,0 +1,31 @@
+{
+  "id": "wf-001",
+  "category": "workflows",
+  "difficulty": "medium",
+  "intent": "Search Wikipedia for \"browser automation\", then extract the titles of the first 3 article results from the search results page",
+  "start_url": "https://en.wikipedia.org",
+  "requires": {
+    "tools": ["safari_navigate", "safari_fill", "safari_click", "safari_wait_for", "safari_smart_scrape"],
+    "engines": [],
+    "auth_domains": [],
+    "features": [],
+    "competitive": false
+  },
+  "eval": {
+    "type": "structured_output",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "results": {
+          "type": "array",
+          "minItems": 3,
+          "items": { "type": "string" }
+        }
+      },
+      "required": ["results"]
+    }
+  },
+  "timeout_ms": 60000,
+  "max_budget_usd": 0.25,
+  "tags": ["workflows", "search", "wikipedia", "live", "extraction", "multi-step"]
+}

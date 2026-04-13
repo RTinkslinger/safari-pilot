@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Safari Pilot Fixture — Search Results (Page 1)</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 600px; margin: 4rem auto; padding: 0 1rem; }
+    h1 { margin-bottom: 0.5rem; }
+    .meta { color: #666; margin-bottom: 1.5rem; font-size: 0.9rem; }
+    .result { border-bottom: 1px solid #eee; padding: 1rem 0; }
+    .result h2 { margin: 0 0 0.25rem; font-size: 1.1rem; }
+    .result p { margin: 0; color: #555; font-size: 0.9rem; }
+    .pagination { margin-top: 2rem; display: flex; gap: 0.5rem; align-items: center; }
+    .pagination a { padding: 0.4rem 0.75rem; border: 1px solid #ccc; border-radius: 4px; text-decoration: none; color: #0070f3; }
+    .pagination a:hover { background: #f0f7ff; }
+    .pagination .current { padding: 0.4rem 0.75rem; border: 1px solid #0070f3; border-radius: 4px; background: #0070f3; color: #fff; }
+  </style>
+</head>
+<body>
+  <h1>Search Results</h1>
+  <p class="meta">Page 1 of 3 — showing 5 results</p>
+
+  <div class="result" id="result-1">
+    <h2>Result 1: Browser Automation Overview</h2>
+    <p>An introduction to browser automation frameworks and their use in AI agents.</p>
+  </div>
+  <div class="result" id="result-2">
+    <h2>Result 2: Safari WebKit Architecture</h2>
+    <p>A deep dive into the WebKit rendering engine powering Safari.</p>
+  </div>
+  <div class="result" id="result-3">
+    <h2>Result 3: AppleScript for Web Testing</h2>
+    <p>Using AppleScript to drive Safari for automated web testing workflows.</p>
+  </div>
+  <div class="result" id="result-4">
+    <h2>Result 4: MCP Protocol Reference</h2>
+    <p>Complete reference for the Model Context Protocol used by Safari Pilot.</p>
+  </div>
+  <div class="result" id="result-5">
+    <h2>Result 5: macOS Accessibility APIs</h2>
+    <p>How macOS accessibility APIs expose browser content to automation tools.</p>
+  </div>
+
+  <nav class="pagination" aria-label="Result pages">
+    <span class="current">1</span>
+    <a href="search-results-page2.html">2</a>
+    <a href="search-results-page3.html">3</a>
+    <a href="search-results-page2.html">Next →</a>
+  </nav>
+</body>
+</html>

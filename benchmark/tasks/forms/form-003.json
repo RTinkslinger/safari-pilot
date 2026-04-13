@@ -1,0 +1,22 @@
+{
+  "id": "form-003",
+  "category": "forms",
+  "difficulty": "easy",
+  "intent": "On example.com, check if there is a form on the page — report yes or no",
+  "start_url": "https://example.com",
+  "requires": {
+    "tools": ["safari_navigate", "safari_snapshot"],
+    "engines": [],
+    "auth_domains": [],
+    "features": [],
+    "competitive": false
+  },
+  "eval": {
+    "type": "contains",
+    "must_include": ["no"],
+    "case_insensitive": true
+  },
+  "timeout_ms": 20000,
+  "max_budget_usd": 0.10,
+  "tags": ["forms", "detection", "live", "example.com"]
+}
