@@ -5,7 +5,7 @@
   "intent": "Create a new browser tab via safari_new_tab, navigate it to example.com, and verify that tab ownership is correctly assigned to the agent (owned=true)",
   "start_url": "https://example.com",
   "requires": {
-    "tools": ["safari_new_tab", "safari_navigate", "safari_list_tabs"],
+    "tools": [],
     "engines": [],
     "auth_domains": [],
     "features": [],
@@ -16,13 +16,26 @@
     "schema": {
       "type": "object",
       "properties": {
-        "tab_id": { "type": "number" },
-        "owned": { "type": "boolean" }
+        "tab_id": {
+          "type": "number"
+        },
+        "owned": {
+          "type": "boolean"
+        }
       },
-      "required": ["tab_id", "owned"]
+      "required": [
+        "tab_id",
+        "owned"
+      ]
     }
   },
   "timeout_ms": 45000,
   "max_budget_usd": 0.25,
-  "tags": ["safari-specific", "tab-ownership", "new-tab", "security", "live"]
+  "tags": [
+    "safari-specific",
+    "tab-ownership",
+    "new-tab",
+    "security",
+    "live"
+  ]
 }

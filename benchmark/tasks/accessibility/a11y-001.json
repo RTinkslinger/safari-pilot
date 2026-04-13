@@ -5,7 +5,7 @@
   "intent": "Take a snapshot of example.com and count how many elements have role=link in the accessibility tree",
   "start_url": "https://example.com",
   "requires": {
-    "tools": ["safari_navigate", "safari_snapshot"],
+    "tools": [],
     "engines": [],
     "auth_domains": [],
     "features": [],
@@ -16,12 +16,23 @@
     "schema": {
       "type": "object",
       "properties": {
-        "link_count": { "type": "number" }
+        "link_count": {
+          "type": "number"
+        }
       },
-      "required": ["link_count"]
+      "required": [
+        "link_count"
+      ]
     }
   },
   "timeout_ms": 30000,
   "max_budget_usd": 0.25,
-  "tags": ["accessibility", "snapshot", "role", "link", "live", "example.com"]
+  "tags": [
+    "accessibility",
+    "snapshot",
+    "role",
+    "link",
+    "live",
+    "example.com"
+  ]
 }

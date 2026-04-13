@@ -5,7 +5,7 @@
   "intent": "Fill the email field on the fixture login form with \"test@example.com\"",
   "start_url": "http://localhost:9876/forms/login.html",
   "requires": {
-    "tools": ["safari_navigate", "safari_fill"],
+    "tools": [],
     "engines": [],
     "auth_domains": [],
     "features": [],
@@ -13,10 +13,17 @@
   },
   "eval": {
     "type": "contains",
-    "must_include": ["test@example.com"],
+    "must_include": [
+      "test@example.com"
+    ],
     "case_insensitive": false
   },
   "timeout_ms": 20000,
-  "max_budget_usd": 0.10,
-  "tags": ["forms", "email", "fill", "fixture"]
+  "max_budget_usd": 0.1,
+  "tags": [
+    "forms",
+    "email",
+    "fill",
+    "fixture"
+  ]
 }

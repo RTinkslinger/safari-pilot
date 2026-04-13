@@ -5,7 +5,7 @@
   "intent": "On Hacker News, find the newest story by sorting by New, click into that story's comment thread, and extract the text of the first comment",
   "start_url": "https://news.ycombinator.com/newest",
   "requires": {
-    "tools": ["safari_navigate", "safari_snapshot", "safari_click", "safari_wait_for", "safari_get_text"],
+    "tools": [],
     "engines": [],
     "auth_domains": [],
     "features": [],
@@ -16,13 +16,27 @@
     "schema": {
       "type": "object",
       "properties": {
-        "title": { "type": "string" },
-        "comment": { "type": "string" }
+        "title": {
+          "type": "string"
+        },
+        "comment": {
+          "type": "string"
+        }
       },
-      "required": ["title", "comment"]
+      "required": [
+        "title",
+        "comment"
+      ]
     }
   },
   "timeout_ms": 60000,
-  "max_budget_usd": 0.30,
-  "tags": ["workflows", "hn", "live", "click", "navigation", "extraction"]
+  "max_budget_usd": 0.3,
+  "tags": [
+    "workflows",
+    "hn",
+    "live",
+    "click",
+    "navigation",
+    "extraction"
+  ]
 }

@@ -5,7 +5,7 @@
   "intent": "On Wikipedia, type \"Tokyo\" into the search input, submit, wait for results to load, and extract the title of the first article result",
   "start_url": "https://en.wikipedia.org",
   "requires": {
-    "tools": ["safari_navigate", "safari_fill", "safari_click", "safari_wait_for", "safari_get_text"],
+    "tools": [],
     "engines": [],
     "auth_domains": [],
     "features": [],
@@ -13,10 +13,19 @@
   },
   "eval": {
     "type": "contains",
-    "must_include": ["Tokyo"],
+    "must_include": [
+      "Tokyo"
+    ],
     "case_insensitive": false
   },
   "timeout_ms": 45000,
   "max_budget_usd": 0.25,
-  "tags": ["forms", "search", "wikipedia", "live", "wait", "extraction"]
+  "tags": [
+    "forms",
+    "search",
+    "wikipedia",
+    "live",
+    "wait",
+    "extraction"
+  ]
 }

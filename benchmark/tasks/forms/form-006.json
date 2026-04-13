@@ -2,10 +2,10 @@
   "id": "form-006",
   "category": "forms",
   "difficulty": "medium",
-  "intent": "Fill all fields on the complex form fixture — name, email, country dropdown, terms checkbox — then submit it",
+  "intent": "Fill all fields on the complex form fixture \u2014 name, email, country dropdown, terms checkbox \u2014 then submit it",
   "start_url": "http://localhost:9876/forms/complex-form.html",
   "requires": {
-    "tools": ["safari_navigate", "safari_fill", "safari_select_option", "safari_check", "safari_click"],
+    "tools": [],
     "engines": [],
     "auth_domains": [],
     "features": [],
@@ -13,10 +13,21 @@
   },
   "eval": {
     "type": "contains",
-    "must_include": ["submitted", "successfully"],
+    "must_include": [
+      "submitted",
+      "successfully"
+    ],
     "case_insensitive": true
   },
   "timeout_ms": 45000,
   "max_budget_usd": 0.25,
-  "tags": ["forms", "complex", "fill", "select", "checkbox", "submit", "fixture"]
+  "tags": [
+    "forms",
+    "complex",
+    "fill",
+    "select",
+    "checkbox",
+    "submit",
+    "fixture"
+  ]
 }

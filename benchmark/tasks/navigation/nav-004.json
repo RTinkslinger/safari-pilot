@@ -5,7 +5,7 @@
   "intent": "Navigate to Hacker News (https://news.ycombinator.com) and extract the page title",
   "start_url": "https://news.ycombinator.com",
   "requires": {
-    "tools": ["safari_navigate", "safari_extract_text"],
+    "tools": [],
     "engines": [],
     "auth_domains": [],
     "features": [],
@@ -13,10 +13,16 @@
   },
   "eval": {
     "type": "contains",
-    "must_include": ["Hacker News"],
+    "must_include": [
+      "Hacker News"
+    ],
     "case_insensitive": false
   },
   "timeout_ms": 20000,
   "max_budget_usd": 0.05,
-  "tags": ["navigation", "title", "hacker-news"]
+  "tags": [
+    "navigation",
+    "title",
+    "hacker-news"
+  ]
 }

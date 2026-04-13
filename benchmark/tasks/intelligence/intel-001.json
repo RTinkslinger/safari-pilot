@@ -5,7 +5,7 @@
   "intent": "On Hacker News, find the most discussed post today (highest comment count) and summarize its top 3 comments",
   "start_url": "https://news.ycombinator.com/",
   "requires": {
-    "tools": ["safari_navigate", "safari_smart_scrape", "safari_click", "safari_get_text", "safari_wait_for"],
+    "tools": [],
     "engines": [],
     "auth_domains": [],
     "features": [],
@@ -16,15 +16,25 @@
     "schema": {
       "type": "object",
       "properties": {
-        "post_title": { "type": "string" },
-        "comment_count": { "type": "number" },
+        "post_title": {
+          "type": "string"
+        },
+        "comment_count": {
+          "type": "number"
+        },
         "top_comments": {
           "type": "array",
           "minItems": 3,
-          "items": { "type": "string" }
+          "items": {
+            "type": "string"
+          }
         }
       },
-      "required": ["post_title", "comment_count", "top_comments"]
+      "required": [
+        "post_title",
+        "comment_count",
+        "top_comments"
+      ]
     }
   },
   "eval_fallback": {
@@ -32,6 +42,13 @@
     "criteria": "The output must identify a specific Hacker News post by title, report its comment count as a number, and provide at least 3 comment summaries that are coherent English sentences describing the discussion content."
   },
   "timeout_ms": 120000,
-  "max_budget_usd": 0.50,
-  "tags": ["intelligence", "hacker-news", "live", "summarization", "comments", "ranking"]
+  "max_budget_usd": 0.5,
+  "tags": [
+    "intelligence",
+    "hacker-news",
+    "live",
+    "summarization",
+    "comments",
+    "ranking"
+  ]
 }

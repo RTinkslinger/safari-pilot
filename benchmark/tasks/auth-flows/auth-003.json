@@ -5,9 +5,11 @@
   "intent": "On X (Twitter), navigate to your own profile page and extract your display name as shown on the profile",
   "start_url": "https://x.com",
   "requires": {
-    "tools": ["safari_navigate", "safari_click", "safari_snapshot", "safari_get_text"],
+    "tools": [],
     "engines": [],
-    "auth_domains": ["x.com"],
+    "auth_domains": [
+      "x.com"
+    ],
     "features": [],
     "competitive": false
   },
@@ -16,12 +18,23 @@
     "schema": {
       "type": "object",
       "properties": {
-        "display_name": { "type": "string" }
+        "display_name": {
+          "type": "string"
+        }
       },
-      "required": ["display_name"]
+      "required": [
+        "display_name"
+      ]
     }
   },
   "timeout_ms": 45000,
   "max_budget_usd": 0.25,
-  "tags": ["auth-flows", "x.com", "twitter", "profile", "display-name", "live"]
+  "tags": [
+    "auth-flows",
+    "x.com",
+    "twitter",
+    "profile",
+    "display-name",
+    "live"
+  ]
 }

@@ -5,7 +5,7 @@
   "intent": "On the Hacker News front page, extract the titles, scores, and comment counts of the top 10 stories as structured JSON",
   "start_url": "https://news.ycombinator.com",
   "requires": {
-    "tools": ["safari_navigate", "safari_smart_scrape", "safari_evaluate"],
+    "tools": [],
     "engines": [],
     "auth_domains": [],
     "features": [],
@@ -22,18 +22,35 @@
           "items": {
             "type": "object",
             "properties": {
-              "title": { "type": "string" },
-              "score": { "type": "string" },
-              "comments": { "type": "string" }
+              "title": {
+                "type": "string"
+              },
+              "score": {
+                "type": "string"
+              },
+              "comments": {
+                "type": "string"
+              }
             },
-            "required": ["title"]
+            "required": [
+              "title"
+            ]
           }
         }
       },
-      "required": ["stories"]
+      "required": [
+        "stories"
+      ]
     }
   },
   "timeout_ms": 60000,
   "max_budget_usd": 0.35,
-  "tags": ["extraction", "hn", "live", "structured", "list", "scores"]
+  "tags": [
+    "extraction",
+    "hn",
+    "live",
+    "structured",
+    "list",
+    "scores"
+  ]
 }

@@ -5,7 +5,7 @@
   "intent": "Extract content from a cross-origin simulated iframe on the fixture page",
   "start_url": "http://localhost:9876/dom-complexity/iframes.html",
   "requires": {
-    "tools": ["safari_navigate", "safari_get_text", "safari_snapshot"],
+    "tools": [],
     "engines": [],
     "auth_domains": [],
     "features": [],
@@ -13,10 +13,18 @@
   },
   "eval": {
     "type": "contains",
-    "must_include": ["iframe content"],
+    "must_include": [
+      "iframe content"
+    ],
     "case_insensitive": true
   },
   "timeout_ms": 45000,
   "max_budget_usd": 0.25,
-  "tags": ["dom-complexity", "iframe", "cross-origin", "extraction", "fixture"]
+  "tags": [
+    "dom-complexity",
+    "iframe",
+    "cross-origin",
+    "extraction",
+    "fixture"
+  ]
 }

@@ -2,10 +2,10 @@
   "id": "nav-008",
   "category": "navigation",
   "difficulty": "medium",
-  "intent": "Starting from the links page, click through the paginated navigation: links page → page 2 → page 3, then report the final URL",
+  "intent": "Starting from the links page, click through the paginated navigation: links page \u2192 page 2 \u2192 page 3, then report the final URL",
   "start_url": "http://localhost:9876/navigation/links.html",
   "requires": {
-    "tools": ["safari_navigate", "safari_click", "safari_get_url"],
+    "tools": [],
     "engines": [],
     "auth_domains": [],
     "features": [],
@@ -13,10 +13,17 @@
   },
   "eval": {
     "type": "contains",
-    "must_include": ["page3"],
+    "must_include": [
+      "page3"
+    ],
     "case_insensitive": false
   },
   "timeout_ms": 30000,
-  "max_budget_usd": 0.10,
-  "tags": ["navigation", "pagination", "fixture", "click-chain"]
+  "max_budget_usd": 0.1,
+  "tags": [
+    "navigation",
+    "pagination",
+    "fixture",
+    "click-chain"
+  ]
 }

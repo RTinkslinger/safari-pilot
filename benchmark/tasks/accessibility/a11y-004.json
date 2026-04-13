@@ -5,7 +5,7 @@
   "intent": "On the accessibility fixture page, find all buttons by their ARIA role, click the one with the accessible name \"Submit\", and verify the confirmation message",
   "start_url": "http://localhost:9876/accessibility/aria-app.html",
   "requires": {
-    "tools": ["safari_navigate", "safari_snapshot", "safari_click", "safari_get_text"],
+    "tools": [],
     "engines": [],
     "auth_domains": [],
     "features": [],
@@ -13,10 +13,19 @@
   },
   "eval": {
     "type": "contains",
-    "must_include": ["submitted"],
+    "must_include": [
+      "submitted"
+    ],
     "case_insensitive": true
   },
   "timeout_ms": 45000,
   "max_budget_usd": 0.25,
-  "tags": ["accessibility", "aria", "role", "button", "click", "fixture"]
+  "tags": [
+    "accessibility",
+    "aria",
+    "role",
+    "button",
+    "click",
+    "fixture"
+  ]
 }

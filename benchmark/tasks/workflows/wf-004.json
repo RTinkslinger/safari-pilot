@@ -2,9 +2,9 @@
   "id": "wf-004",
   "category": "workflows",
   "difficulty": "medium",
-  "intent": "Open two tabs — navigate the first to en.wikipedia.org and the second to news.ycombinator.com — then extract both page titles and list them",
+  "intent": "Open two tabs \u2014 navigate the first to en.wikipedia.org and the second to news.ycombinator.com \u2014 then extract both page titles and list them",
   "requires": {
-    "tools": ["safari_new_tab", "safari_navigate", "safari_list_tabs", "safari_get_text"],
+    "tools": [],
     "engines": [],
     "auth_domains": [],
     "features": [],
@@ -18,13 +18,23 @@
         "titles": {
           "type": "array",
           "minItems": 2,
-          "items": { "type": "string" }
+          "items": {
+            "type": "string"
+          }
         }
       },
-      "required": ["titles"]
+      "required": [
+        "titles"
+      ]
     }
   },
   "timeout_ms": 60000,
   "max_budget_usd": 0.25,
-  "tags": ["workflows", "multi-tab", "live", "extraction", "title"]
+  "tags": [
+    "workflows",
+    "multi-tab",
+    "live",
+    "extraction",
+    "title"
+  ]
 }

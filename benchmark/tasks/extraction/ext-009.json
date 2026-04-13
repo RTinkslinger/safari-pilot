@@ -5,7 +5,7 @@
   "intent": "On the images fixture page, extract the alt text of every image and return them as a list",
   "start_url": "http://localhost:9876/extraction/images.html",
   "requires": {
-    "tools": ["safari_navigate", "safari_extract_images"],
+    "tools": [],
     "engines": [],
     "auth_domains": [],
     "features": [],
@@ -18,13 +18,23 @@
       "properties": {
         "alts": {
           "type": "array",
-          "items": { "type": "string" }
+          "items": {
+            "type": "string"
+          }
         }
       },
-      "required": ["alts"]
+      "required": [
+        "alts"
+      ]
     }
   },
   "timeout_ms": 25000,
-  "max_budget_usd": 0.10,
-  "tags": ["extraction", "images", "alt-text", "fixture", "accessibility"]
+  "max_budget_usd": 0.1,
+  "tags": [
+    "extraction",
+    "images",
+    "alt-text",
+    "fixture",
+    "accessibility"
+  ]
 }

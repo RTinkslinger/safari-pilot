@@ -5,7 +5,7 @@
   "intent": "On Wikipedia, find the References section of the \"Safari (web browser)\" article and count the external links",
   "start_url": "https://en.wikipedia.org/wiki/Safari_(web_browser)",
   "requires": {
-    "tools": ["safari_navigate", "safari_smart_scrape", "safari_get_text"],
+    "tools": [],
     "engines": [],
     "auth_domains": [],
     "features": [],
@@ -16,10 +16,17 @@
     "schema": {
       "type": "object",
       "properties": {
-        "external_link_count": { "type": "number" },
-        "section_found": { "type": "boolean" }
+        "external_link_count": {
+          "type": "number"
+        },
+        "section_found": {
+          "type": "boolean"
+        }
       },
-      "required": ["external_link_count", "section_found"]
+      "required": [
+        "external_link_count",
+        "section_found"
+      ]
     }
   },
   "eval_fallback": {
@@ -27,6 +34,13 @@
     "criteria": "The output must confirm that a References section was found and provide a count of external links. The count should be a positive integer greater than 10 (Wikipedia articles typically have many references). The agent should demonstrate it navigated to the correct Wikipedia article about Apple's Safari browser."
   },
   "timeout_ms": 90000,
-  "max_budget_usd": 0.50,
-  "tags": ["intelligence", "wikipedia", "live", "counting", "references", "web-browser"]
+  "max_budget_usd": 0.5,
+  "tags": [
+    "intelligence",
+    "wikipedia",
+    "live",
+    "counting",
+    "references",
+    "web-browser"
+  ]
 }

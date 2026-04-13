@@ -5,9 +5,11 @@
   "intent": "On Reddit, navigate to your profile page and extract both your karma score and your account age",
   "start_url": "https://www.reddit.com",
   "requires": {
-    "tools": ["safari_navigate", "safari_click", "safari_snapshot", "safari_get_text"],
+    "tools": [],
     "engines": [],
-    "auth_domains": ["reddit.com"],
+    "auth_domains": [
+      "reddit.com"
+    ],
     "features": [],
     "competitive": false
   },
@@ -16,10 +18,17 @@
     "schema": {
       "type": "object",
       "properties": {
-        "karma": { "type": "string" },
-        "account_age": { "type": "string" }
+        "karma": {
+          "type": "string"
+        },
+        "account_age": {
+          "type": "string"
+        }
       },
-      "required": ["karma", "account_age"]
+      "required": [
+        "karma",
+        "account_age"
+      ]
     }
   },
   "eval_fallback": {
@@ -27,6 +36,14 @@
     "criteria": "The agent navigated to the Reddit profile page and extracted a karma score (number or formatted string) and the account creation date or age"
   },
   "timeout_ms": 90000,
-  "max_budget_usd": 0.50,
-  "tags": ["auth-flows", "reddit", "profile", "karma", "account-age", "live", "hard"]
+  "max_budget_usd": 0.5,
+  "tags": [
+    "auth-flows",
+    "reddit",
+    "profile",
+    "karma",
+    "account-age",
+    "live",
+    "hard"
+  ]
 }

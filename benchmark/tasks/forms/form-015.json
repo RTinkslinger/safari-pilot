@@ -5,7 +5,7 @@
   "intent": "On the validation fixture, attempt to submit the registration form, read each error message, fix every validation error one by one, and keep submitting until you see the success confirmation",
   "start_url": "http://localhost:9876/forms/validation.html",
   "requires": {
-    "tools": ["safari_navigate", "safari_fill", "safari_click", "safari_get_text", "safari_snapshot"],
+    "tools": [],
     "engines": [],
     "auth_domains": [],
     "features": [],
@@ -13,10 +13,18 @@
   },
   "eval": {
     "type": "contains",
-    "must_include": ["success"],
+    "must_include": [
+      "success"
+    ],
     "case_insensitive": true
   },
   "timeout_ms": 60000,
-  "max_budget_usd": 0.40,
-  "tags": ["forms", "validation", "error-recovery", "iterative", "fixture"]
+  "max_budget_usd": 0.4,
+  "tags": [
+    "forms",
+    "validation",
+    "error-recovery",
+    "iterative",
+    "fixture"
+  ]
 }

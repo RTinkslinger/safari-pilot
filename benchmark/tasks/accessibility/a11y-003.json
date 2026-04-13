@@ -5,7 +5,7 @@
   "intent": "On Wikipedia's main page, navigate using ARIA landmark roles to locate the main content region and confirm it exists",
   "start_url": "https://en.wikipedia.org",
   "requires": {
-    "tools": ["safari_navigate", "safari_snapshot", "safari_get_text"],
+    "tools": [],
     "engines": [],
     "auth_domains": [],
     "features": [],
@@ -16,12 +16,23 @@
     "schema": {
       "type": "object",
       "properties": {
-        "main_content_found": { "type": "boolean" }
+        "main_content_found": {
+          "type": "boolean"
+        }
       },
-      "required": ["main_content_found"]
+      "required": [
+        "main_content_found"
+      ]
     }
   },
   "timeout_ms": 45000,
   "max_budget_usd": 0.25,
-  "tags": ["accessibility", "aria", "landmarks", "main", "wikipedia", "live"]
+  "tags": [
+    "accessibility",
+    "aria",
+    "landmarks",
+    "main",
+    "wikipedia",
+    "live"
+  ]
 }

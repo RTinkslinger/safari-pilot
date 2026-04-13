@@ -2,10 +2,10 @@
   "id": "saf-006",
   "category": "safari-specific",
   "difficulty": "hard",
-  "intent": "Navigate to Wikipedia and perform a mix of operations (snapshot, extract text, click a link) — report which engine was auto-selected for each operation type",
+  "intent": "Navigate to Wikipedia and perform a mix of operations (snapshot, extract text, click a link) \u2014 report which engine was auto-selected for each operation type",
   "start_url": "https://en.wikipedia.org",
   "requires": {
-    "tools": ["safari_navigate", "safari_snapshot", "safari_get_text", "safari_click"],
+    "tools": [],
     "engines": [],
     "auth_domains": [],
     "features": [],
@@ -20,7 +20,9 @@
           "type": "object"
         }
       },
-      "required": ["engines_used"]
+      "required": [
+        "engines_used"
+      ]
     }
   },
   "eval_fallback": {
@@ -28,6 +30,13 @@
     "criteria": "The agent performed multiple different operation types on Wikipedia and reported which engine (applescript, daemon, or extension) was selected for each, demonstrating understanding of the engine selection logic"
   },
   "timeout_ms": 90000,
-  "max_budget_usd": 0.50,
-  "tags": ["safari-specific", "engine-selection", "auto-selection", "wikipedia", "live", "hard"]
+  "max_budget_usd": 0.5,
+  "tags": [
+    "safari-specific",
+    "engine-selection",
+    "auto-selection",
+    "wikipedia",
+    "live",
+    "hard"
+  ]
 }

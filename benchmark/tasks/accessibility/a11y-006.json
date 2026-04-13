@@ -5,7 +5,7 @@
   "intent": "On GitHub, navigate using role=navigation ARIA landmarks to find the search input element and confirm its presence",
   "start_url": "https://github.com",
   "requires": {
-    "tools": ["safari_navigate", "safari_snapshot", "safari_get_text"],
+    "tools": [],
     "engines": [],
     "auth_domains": [],
     "features": [],
@@ -16,12 +16,24 @@
     "schema": {
       "type": "object",
       "properties": {
-        "search_found": { "type": "boolean" }
+        "search_found": {
+          "type": "boolean"
+        }
       },
-      "required": ["search_found"]
+      "required": [
+        "search_found"
+      ]
     }
   },
   "timeout_ms": 30000,
   "max_budget_usd": 0.25,
-  "tags": ["accessibility", "aria", "landmarks", "navigation", "github", "search", "live"]
+  "tags": [
+    "accessibility",
+    "aria",
+    "landmarks",
+    "navigation",
+    "github",
+    "search",
+    "live"
+  ]
 }

@@ -5,7 +5,7 @@
   "intent": "On the accessible fixture app, complete the entire form using only accessibility-tree ref-based targeting (no CSS selectors), then submit and verify the result",
   "start_url": "http://localhost:9876/accessibility/aria-app.html",
   "requires": {
-    "tools": ["safari_navigate", "safari_snapshot", "safari_fill", "safari_click", "safari_get_text"],
+    "tools": [],
     "engines": [],
     "auth_domains": [],
     "features": [],
@@ -13,10 +13,20 @@
   },
   "eval": {
     "type": "contains",
-    "must_include": ["submitted"],
+    "must_include": [
+      "submitted"
+    ],
     "case_insensitive": true
   },
   "timeout_ms": 90000,
-  "max_budget_usd": 0.50,
-  "tags": ["accessibility", "aria", "ref-targeting", "form", "submit", "fixture", "hard"]
+  "max_budget_usd": 0.5,
+  "tags": [
+    "accessibility",
+    "aria",
+    "ref-targeting",
+    "form",
+    "submit",
+    "fixture",
+    "hard"
+  ]
 }

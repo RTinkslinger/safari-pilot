@@ -5,7 +5,7 @@
   "intent": "Find the search input on Wikipedia and type \"browser automation\"",
   "start_url": "https://en.wikipedia.org",
   "requires": {
-    "tools": ["safari_navigate", "safari_snapshot", "safari_fill"],
+    "tools": [],
     "engines": [],
     "auth_domains": [],
     "features": [],
@@ -13,10 +13,18 @@
   },
   "eval": {
     "type": "contains",
-    "must_include": ["browser automation"],
+    "must_include": [
+      "browser automation"
+    ],
     "case_insensitive": true
   },
   "timeout_ms": 30000,
   "max_budget_usd": 0.15,
-  "tags": ["forms", "search", "wikipedia", "live", "fill"]
+  "tags": [
+    "forms",
+    "search",
+    "wikipedia",
+    "live",
+    "fill"
+  ]
 }

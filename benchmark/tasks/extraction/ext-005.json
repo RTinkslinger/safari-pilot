@@ -5,7 +5,7 @@
   "intent": "On the Wikipedia article for \"Safari (web browser)\", extract all section headings from the table of contents or article body",
   "start_url": "https://en.wikipedia.org/wiki/Safari_(web_browser)",
   "requires": {
-    "tools": ["safari_navigate", "safari_smart_scrape"],
+    "tools": [],
     "engines": [],
     "auth_domains": [],
     "features": [],
@@ -19,13 +19,23 @@
         "headings": {
           "type": "array",
           "minItems": 5,
-          "items": { "type": "string" }
+          "items": {
+            "type": "string"
+          }
         }
       },
-      "required": ["headings"]
+      "required": [
+        "headings"
+      ]
     }
   },
   "timeout_ms": 45000,
   "max_budget_usd": 0.25,
-  "tags": ["extraction", "headings", "wikipedia", "live", "structured"]
+  "tags": [
+    "extraction",
+    "headings",
+    "wikipedia",
+    "live",
+    "structured"
+  ]
 }

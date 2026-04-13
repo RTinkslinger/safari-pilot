@@ -5,7 +5,7 @@
   "intent": "On the error form fixture: dismiss the initial overlay, fill the email field with a valid address, handle the inline validation error on first submit by correcting it, then resubmit and verify success",
   "start_url": "http://localhost:9876/error-recovery/error-form.html",
   "requires": {
-    "tools": ["safari_navigate", "safari_snapshot", "safari_click", "safari_fill", "safari_get_text"],
+    "tools": [],
     "engines": [],
     "auth_domains": [],
     "features": [],
@@ -13,10 +13,19 @@
   },
   "eval": {
     "type": "contains",
-    "must_include": ["success"],
+    "must_include": [
+      "success"
+    ],
     "case_insensitive": true
   },
   "timeout_ms": 120000,
-  "max_budget_usd": 0.50,
-  "tags": ["error-recovery", "overlay", "form-validation", "multi-step", "fixture", "hard"]
+  "max_budget_usd": 0.5,
+  "tags": [
+    "error-recovery",
+    "overlay",
+    "form-validation",
+    "multi-step",
+    "fixture",
+    "hard"
+  ]
 }

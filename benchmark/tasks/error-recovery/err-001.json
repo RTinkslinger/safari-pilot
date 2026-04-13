@@ -5,7 +5,7 @@
   "intent": "Attempt to click a non-existent element (#ghost-button) on example.com and report what error message was returned",
   "start_url": "https://example.com",
   "requires": {
-    "tools": ["safari_navigate", "safari_click"],
+    "tools": [],
     "engines": [],
     "auth_domains": [],
     "features": [],
@@ -13,10 +13,18 @@
   },
   "eval": {
     "type": "contains",
-    "must_include": ["not found", "error"],
+    "must_include": [
+      "not found",
+      "error"
+    ],
     "case_insensitive": true
   },
   "timeout_ms": 30000,
   "max_budget_usd": 0.25,
-  "tags": ["error-recovery", "missing-element", "error-message", "live"]
+  "tags": [
+    "error-recovery",
+    "missing-element",
+    "error-message",
+    "live"
+  ]
 }

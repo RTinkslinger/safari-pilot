@@ -5,7 +5,7 @@
   "intent": "On GitHub Trending, find the most-starred repository created this week and get its description",
   "start_url": "https://github.com/trending",
   "requires": {
-    "tools": ["safari_navigate", "safari_smart_scrape", "safari_get_text", "safari_click", "safari_wait_for"],
+    "tools": [],
     "engines": [],
     "auth_domains": [],
     "features": [],
@@ -16,11 +16,20 @@
     "schema": {
       "type": "object",
       "properties": {
-        "repo_name": { "type": "string" },
-        "stars_this_week": { "type": "string" },
-        "description": { "type": "string" }
+        "repo_name": {
+          "type": "string"
+        },
+        "stars_this_week": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        }
       },
-      "required": ["repo_name", "description"]
+      "required": [
+        "repo_name",
+        "description"
+      ]
     }
   },
   "eval_fallback": {
@@ -28,6 +37,13 @@
     "criteria": "The output must include a GitHub repository name in the format 'owner/repo' and a description that is a coherent sentence or phrase describing what the project does. The repo name should look like a real GitHub repository slug."
   },
   "timeout_ms": 90000,
-  "max_budget_usd": 0.50,
-  "tags": ["intelligence", "github", "live", "trending", "ranking", "discovery"]
+  "max_budget_usd": 0.5,
+  "tags": [
+    "intelligence",
+    "github",
+    "live",
+    "trending",
+    "ranking",
+    "discovery"
+  ]
 }

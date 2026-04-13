@@ -5,7 +5,7 @@
   "intent": "On example.com, extract all link URLs and their anchor text",
   "start_url": "https://example.com",
   "requires": {
-    "tools": ["safari_navigate", "safari_smart_scrape", "safari_get_text"],
+    "tools": [],
     "engines": [],
     "auth_domains": [],
     "features": [],
@@ -22,17 +22,33 @@
           "items": {
             "type": "object",
             "properties": {
-              "url": { "type": "string" },
-              "text": { "type": "string" }
+              "url": {
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              }
             },
-            "required": ["url", "text"]
+            "required": [
+              "url",
+              "text"
+            ]
           }
         }
       },
-      "required": ["links"]
+      "required": [
+        "links"
+      ]
     }
   },
   "timeout_ms": 30000,
   "max_budget_usd": 0.15,
-  "tags": ["competitive", "example.com", "live", "link-extraction", "neutral", "simple"]
+  "tags": [
+    "competitive",
+    "example.com",
+    "live",
+    "link-extraction",
+    "neutral",
+    "simple"
+  ]
 }

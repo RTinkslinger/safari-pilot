@@ -5,7 +5,7 @@
   "intent": "Extract the HTML table from the fixture page as structured JSON with rows of browser engine data",
   "start_url": "http://localhost:9876/extraction/table.html",
   "requires": {
-    "tools": ["safari_navigate", "safari_extract_tables"],
+    "tools": [],
     "engines": [],
     "auth_domains": [],
     "features": [],
@@ -19,13 +19,22 @@
         "rows": {
           "type": "array",
           "minItems": 3,
-          "items": { "type": "object" }
+          "items": {
+            "type": "object"
+          }
         }
       },
-      "required": ["rows"]
+      "required": [
+        "rows"
+      ]
     }
   },
   "timeout_ms": 30000,
   "max_budget_usd": 0.15,
-  "tags": ["extraction", "table", "structured", "fixture"]
+  "tags": [
+    "extraction",
+    "table",
+    "structured",
+    "fixture"
+  ]
 }

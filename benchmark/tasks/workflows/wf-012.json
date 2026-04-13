@@ -5,7 +5,7 @@
   "intent": "On the fixture search form, search for a term, extract the results from page 1, click to page 2 and extract those results, then click to page 3 and extract those results. Return all results combined.",
   "start_url": "http://localhost:9876/forms/search-form.html",
   "requires": {
-    "tools": ["safari_navigate", "safari_fill", "safari_click", "safari_wait_for", "safari_get_text", "safari_paginate_scrape"],
+    "tools": [],
     "engines": [],
     "auth_domains": [],
     "features": [],
@@ -19,13 +19,24 @@
         "all_results": {
           "type": "array",
           "minItems": 9,
-          "items": { "type": "string" }
+          "items": {
+            "type": "string"
+          }
         }
       },
-      "required": ["all_results"]
+      "required": [
+        "all_results"
+      ]
     }
   },
   "timeout_ms": 60000,
-  "max_budget_usd": 0.40,
-  "tags": ["workflows", "pagination", "fixture", "search", "multi-page", "aggregation"]
+  "max_budget_usd": 0.4,
+  "tags": [
+    "workflows",
+    "pagination",
+    "fixture",
+    "search",
+    "multi-page",
+    "aggregation"
+  ]
 }

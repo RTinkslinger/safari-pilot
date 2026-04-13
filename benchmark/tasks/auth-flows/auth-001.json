@@ -5,9 +5,11 @@
   "intent": "Navigate to X (Twitter) and verify you are logged in by checking for profile-related elements on the page",
   "start_url": "https://x.com",
   "requires": {
-    "tools": ["safari_navigate", "safari_snapshot", "safari_get_text"],
+    "tools": [],
     "engines": [],
-    "auth_domains": ["x.com"],
+    "auth_domains": [
+      "x.com"
+    ],
     "features": [],
     "competitive": false
   },
@@ -16,12 +18,22 @@
     "schema": {
       "type": "object",
       "properties": {
-        "logged_in": { "type": "boolean" }
+        "logged_in": {
+          "type": "boolean"
+        }
       },
-      "required": ["logged_in"]
+      "required": [
+        "logged_in"
+      ]
     }
   },
   "timeout_ms": 30000,
   "max_budget_usd": 0.25,
-  "tags": ["auth-flows", "x.com", "twitter", "login-check", "live"]
+  "tags": [
+    "auth-flows",
+    "x.com",
+    "twitter",
+    "login-check",
+    "live"
+  ]
 }

@@ -5,7 +5,7 @@
   "intent": "On Wikipedia, use the search box to find the article about the Safari web browser and extract the first heading of that article",
   "start_url": "https://en.wikipedia.org/",
   "requires": {
-    "tools": ["safari_navigate", "safari_click", "safari_type", "safari_extract_text"],
+    "tools": [],
     "engines": [],
     "auth_domains": [],
     "features": [],
@@ -13,10 +13,17 @@
   },
   "eval": {
     "type": "contains",
-    "must_include": ["Safari"],
+    "must_include": [
+      "Safari"
+    ],
     "case_insensitive": false
   },
   "timeout_ms": 45000,
   "max_budget_usd": 0.15,
-  "tags": ["navigation", "search", "wikipedia", "heading"]
+  "tags": [
+    "navigation",
+    "search",
+    "wikipedia",
+    "heading"
+  ]
 }

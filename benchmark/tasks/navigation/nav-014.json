@@ -5,7 +5,7 @@
   "intent": "Starting from the Wikipedia Main Page, click on an internal article link, then from that article click another internal link, then from that article click a third internal link. Report the title of each of the 3 articles visited (not counting the Main Page).",
   "start_url": "https://en.wikipedia.org/wiki/Main_Page",
   "requires": {
-    "tools": ["safari_navigate", "safari_click", "safari_extract_text"],
+    "tools": [],
     "engines": [],
     "auth_domains": [],
     "features": [],
@@ -19,13 +19,22 @@
         "titles": {
           "type": "array",
           "minItems": 3,
-          "items": { "type": "string" }
+          "items": {
+            "type": "string"
+          }
         }
       },
-      "required": ["titles"]
+      "required": [
+        "titles"
+      ]
     }
   },
   "timeout_ms": 90000,
   "max_budget_usd": 0.25,
-  "tags": ["navigation", "multi-hop", "wikipedia", "link-chain"]
+  "tags": [
+    "navigation",
+    "multi-hop",
+    "wikipedia",
+    "link-chain"
+  ]
 }

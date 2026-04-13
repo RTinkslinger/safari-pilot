@@ -5,7 +5,7 @@
   "intent": "On the checkboxes fixture, check all four checkboxes, then uncheck the second one, and report the checked/unchecked state of each checkbox",
   "start_url": "http://localhost:9876/forms/checkboxes.html",
   "requires": {
-    "tools": ["safari_navigate", "safari_check", "safari_snapshot"],
+    "tools": [],
     "engines": [],
     "auth_domains": [],
     "features": [],
@@ -19,13 +19,22 @@
         "checkboxes": {
           "type": "array",
           "minItems": 4,
-          "items": { "type": "object" }
+          "items": {
+            "type": "object"
+          }
         }
       },
-      "required": ["checkboxes"]
+      "required": [
+        "checkboxes"
+      ]
     }
   },
   "timeout_ms": 30000,
-  "max_budget_usd": 0.20,
-  "tags": ["forms", "checkboxes", "state", "fixture"]
+  "max_budget_usd": 0.2,
+  "tags": [
+    "forms",
+    "checkboxes",
+    "state",
+    "fixture"
+  ]
 }

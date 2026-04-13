@@ -5,7 +5,7 @@
   "intent": "On GitHub, search for \"browser automation\", and extract the first 3 repository names and their star counts",
   "start_url": "https://github.com/search?q=browser+automation&type=repositories",
   "requires": {
-    "tools": ["safari_navigate", "safari_smart_scrape", "safari_get_text", "safari_wait_for"],
+    "tools": [],
     "engines": [],
     "auth_domains": [],
     "features": [],
@@ -22,17 +22,33 @@
           "items": {
             "type": "object",
             "properties": {
-              "name": { "type": "string" },
-              "stars": { "type": "string" }
+              "name": {
+                "type": "string"
+              },
+              "stars": {
+                "type": "string"
+              }
             },
-            "required": ["name"]
+            "required": [
+              "name"
+            ]
           }
         }
       },
-      "required": ["repos"]
+      "required": [
+        "repos"
+      ]
     }
   },
   "timeout_ms": 45000,
   "max_budget_usd": 0.25,
-  "tags": ["competitive", "github", "live", "neutral", "search", "extraction", "stars"]
+  "tags": [
+    "competitive",
+    "github",
+    "live",
+    "neutral",
+    "search",
+    "extraction",
+    "stars"
+  ]
 }

@@ -5,7 +5,7 @@
   "intent": "On Hacker News, locate the login link using a text-based locator rather than a CSS selector, and confirm it was found",
   "start_url": "https://news.ycombinator.com",
   "requires": {
-    "tools": ["safari_navigate", "safari_snapshot", "safari_get_text"],
+    "tools": [],
     "engines": [],
     "auth_domains": [],
     "features": [],
@@ -16,12 +16,22 @@
     "schema": {
       "type": "object",
       "properties": {
-        "login_found": { "type": "boolean" }
+        "login_found": {
+          "type": "boolean"
+        }
       },
-      "required": ["login_found"]
+      "required": [
+        "login_found"
+      ]
     }
   },
   "timeout_ms": 30000,
   "max_budget_usd": 0.25,
-  "tags": ["accessibility", "text-locator", "hacker-news", "login", "live"]
+  "tags": [
+    "accessibility",
+    "text-locator",
+    "hacker-news",
+    "login",
+    "live"
+  ]
 }

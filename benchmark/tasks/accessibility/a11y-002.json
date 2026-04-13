@@ -5,7 +5,7 @@
   "intent": "On the accessibility fixture page, find the search input using only its ARIA role (role=searchbox) and fill it with the text \"test\"",
   "start_url": "http://localhost:9876/accessibility/aria-app.html",
   "requires": {
-    "tools": ["safari_navigate", "safari_snapshot", "safari_fill"],
+    "tools": [],
     "engines": [],
     "auth_domains": [],
     "features": [],
@@ -13,10 +13,19 @@
   },
   "eval": {
     "type": "contains",
-    "must_include": ["test"],
+    "must_include": [
+      "test"
+    ],
     "case_insensitive": false
   },
   "timeout_ms": 30000,
   "max_budget_usd": 0.25,
-  "tags": ["accessibility", "aria", "role", "searchbox", "fill", "fixture"]
+  "tags": [
+    "accessibility",
+    "aria",
+    "role",
+    "searchbox",
+    "fill",
+    "fixture"
+  ]
 }

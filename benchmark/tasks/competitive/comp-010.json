@@ -5,9 +5,11 @@
   "intent": "On Reddit, search for \"browser automation\" in r/programming and extract the first 3 result titles",
   "start_url": "https://www.reddit.com/r/programming/",
   "requires": {
-    "tools": ["safari_navigate", "safari_fill", "safari_click", "safari_wait_for", "safari_smart_scrape", "safari_get_text"],
+    "tools": [],
     "engines": [],
-    "auth_domains": ["reddit.com"],
+    "auth_domains": [
+      "reddit.com"
+    ],
     "features": [],
     "competitive": true
   },
@@ -22,14 +24,22 @@
           "items": {
             "type": "object",
             "properties": {
-              "title": { "type": "string" },
-              "url": { "type": "string" }
+              "title": {
+                "type": "string"
+              },
+              "url": {
+                "type": "string"
+              }
             },
-            "required": ["title"]
+            "required": [
+              "title"
+            ]
           }
         }
       },
-      "required": ["results"]
+      "required": [
+        "results"
+      ]
     }
   },
   "eval_fallback": {
@@ -37,6 +47,13 @@
     "criteria": "The output must include at least 1 Reddit post title from a search for 'browser automation' in r/programming. Titles should be plausible programming-related post titles. Auth advantage: Reddit's search results and subreddit access are more complete when logged in."
   },
   "timeout_ms": 60000,
-  "max_budget_usd": 0.30,
-  "tags": ["competitive", "reddit", "live", "auth-advantage", "search", "extraction"]
+  "max_budget_usd": 0.3,
+  "tags": [
+    "competitive",
+    "reddit",
+    "live",
+    "auth-advantage",
+    "search",
+    "extraction"
+  ]
 }

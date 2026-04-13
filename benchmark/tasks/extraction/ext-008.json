@@ -5,7 +5,7 @@
   "intent": "On the Wikipedia article for Tokyo, find and extract the city's population figure",
   "start_url": "https://en.wikipedia.org/wiki/Tokyo",
   "requires": {
-    "tools": ["safari_navigate", "safari_get_text", "safari_smart_scrape"],
+    "tools": [],
     "engines": [],
     "auth_domains": [],
     "features": [],
@@ -13,7 +13,10 @@
   },
   "eval": {
     "type": "contains",
-    "must_include": ["13", "million"],
+    "must_include": [
+      "13",
+      "million"
+    ],
     "case_insensitive": true
   },
   "eval_fallback": {
@@ -22,5 +25,11 @@
   },
   "timeout_ms": 45000,
   "max_budget_usd": 0.25,
-  "tags": ["extraction", "population", "wikipedia", "live", "infobox"]
+  "tags": [
+    "extraction",
+    "population",
+    "wikipedia",
+    "live",
+    "infobox"
+  ]
 }

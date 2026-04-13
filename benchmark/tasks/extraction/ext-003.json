@@ -5,7 +5,7 @@
   "intent": "Navigate to example.com and count the number of hyperlinks on the page",
   "start_url": "https://example.com",
   "requires": {
-    "tools": ["safari_navigate", "safari_extract_links"],
+    "tools": [],
     "engines": [],
     "auth_domains": [],
     "features": [],
@@ -16,12 +16,22 @@
     "schema": {
       "type": "object",
       "properties": {
-        "count": { "type": "number" }
+        "count": {
+          "type": "number"
+        }
       },
-      "required": ["count"]
+      "required": [
+        "count"
+      ]
     }
   },
   "timeout_ms": 20000,
   "max_budget_usd": 0.05,
-  "tags": ["extraction", "links", "count", "live", "example.com"]
+  "tags": [
+    "extraction",
+    "links",
+    "count",
+    "live",
+    "example.com"
+  ]
 }

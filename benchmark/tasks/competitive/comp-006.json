@@ -5,9 +5,11 @@
   "intent": "On LinkedIn, find the messaging icon in the navigation and report whether a notification badge is visible on it",
   "start_url": "https://www.linkedin.com/feed/",
   "requires": {
-    "tools": ["safari_navigate", "safari_snapshot", "safari_get_text", "safari_wait_for"],
+    "tools": [],
     "engines": [],
-    "auth_domains": ["linkedin.com"],
+    "auth_domains": [
+      "linkedin.com"
+    ],
     "features": [],
     "competitive": true
   },
@@ -16,11 +18,20 @@
     "schema": {
       "type": "object",
       "properties": {
-        "messaging_icon_found": { "type": "boolean" },
-        "notification_badge_visible": { "type": "boolean" },
-        "badge_count": { "type": "string" }
+        "messaging_icon_found": {
+          "type": "boolean"
+        },
+        "notification_badge_visible": {
+          "type": "boolean"
+        },
+        "badge_count": {
+          "type": "string"
+        }
       },
-      "required": ["messaging_icon_found", "notification_badge_visible"]
+      "required": [
+        "messaging_icon_found",
+        "notification_badge_visible"
+      ]
     }
   },
   "eval_fallback": {
@@ -28,6 +39,13 @@
     "criteria": "The output must indicate whether the LinkedIn messaging icon was found and whether a notification badge was visible. If not logged in, both should be false. Auth advantage: the messaging icon only appears in the authenticated navigation bar."
   },
   "timeout_ms": 60000,
-  "max_budget_usd": 0.30,
-  "tags": ["competitive", "linkedin", "live", "auth-advantage", "navigation", "ui-detection"]
+  "max_budget_usd": 0.3,
+  "tags": [
+    "competitive",
+    "linkedin",
+    "live",
+    "auth-advantage",
+    "navigation",
+    "ui-detection"
+  ]
 }

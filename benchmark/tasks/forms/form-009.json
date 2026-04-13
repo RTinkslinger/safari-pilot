@@ -5,7 +5,7 @@
   "intent": "Fill the validation fixture form with an invalid email and an age below 18, trigger the validation errors, and report the error texts shown on screen",
   "start_url": "http://localhost:9876/forms/validation.html",
   "requires": {
-    "tools": ["safari_navigate", "safari_fill", "safari_click", "safari_get_text"],
+    "tools": [],
     "engines": [],
     "auth_domains": [],
     "features": [],
@@ -13,10 +13,18 @@
   },
   "eval": {
     "type": "contains",
-    "must_include": ["valid email", "18"],
+    "must_include": [
+      "valid email",
+      "18"
+    ],
     "case_insensitive": true
   },
   "timeout_ms": 30000,
-  "max_budget_usd": 0.20,
-  "tags": ["forms", "validation", "error-messages", "fixture"]
+  "max_budget_usd": 0.2,
+  "tags": [
+    "forms",
+    "validation",
+    "error-messages",
+    "fixture"
+  ]
 }

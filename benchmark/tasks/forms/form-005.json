@@ -5,7 +5,7 @@
   "intent": "Select \"Japan\" from the country dropdown on the fixture complex form",
   "start_url": "http://localhost:9876/forms/complex-form.html",
   "requires": {
-    "tools": ["safari_navigate", "safari_select_option"],
+    "tools": [],
     "engines": [],
     "auth_domains": [],
     "features": [],
@@ -13,10 +13,17 @@
   },
   "eval": {
     "type": "contains",
-    "must_include": ["Japan"],
+    "must_include": [
+      "Japan"
+    ],
     "case_insensitive": false
   },
   "timeout_ms": 20000,
-  "max_budget_usd": 0.10,
-  "tags": ["forms", "dropdown", "select", "fixture"]
+  "max_budget_usd": 0.1,
+  "tags": [
+    "forms",
+    "dropdown",
+    "select",
+    "fixture"
+  ]
 }

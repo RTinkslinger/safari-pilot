@@ -5,9 +5,11 @@
   "intent": "On X, check if you are logged in and extract the profile display name visible in the navigation",
   "start_url": "https://x.com",
   "requires": {
-    "tools": ["safari_navigate", "safari_snapshot", "safari_get_text", "safari_wait_for"],
+    "tools": [],
     "engines": [],
-    "auth_domains": ["x.com"],
+    "auth_domains": [
+      "x.com"
+    ],
     "features": [],
     "competitive": true
   },
@@ -16,10 +18,16 @@
     "schema": {
       "type": "object",
       "properties": {
-        "logged_in": { "type": "boolean" },
-        "display_name": { "type": "string" }
+        "logged_in": {
+          "type": "boolean"
+        },
+        "display_name": {
+          "type": "string"
+        }
       },
-      "required": ["logged_in"]
+      "required": [
+        "logged_in"
+      ]
     }
   },
   "eval_fallback": {
@@ -28,5 +36,12 @@
   },
   "timeout_ms": 45000,
   "max_budget_usd": 0.25,
-  "tags": ["competitive", "x.com", "twitter", "live", "auth-advantage", "login-check"]
+  "tags": [
+    "competitive",
+    "x.com",
+    "twitter",
+    "live",
+    "auth-advantage",
+    "login-check"
+  ]
 }

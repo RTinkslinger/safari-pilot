@@ -5,7 +5,7 @@
   "intent": "Navigate to Wikipedia, search for \"browser engine\", and extract the titles of the first 3 article results",
   "start_url": "https://en.wikipedia.org",
   "requires": {
-    "tools": ["safari_navigate", "safari_fill", "safari_click", "safari_wait_for", "safari_smart_scrape"],
+    "tools": [],
     "engines": [],
     "auth_domains": [],
     "features": [],
@@ -19,13 +19,24 @@
         "results": {
           "type": "array",
           "minItems": 3,
-          "items": { "type": "string" }
+          "items": {
+            "type": "string"
+          }
         }
       },
-      "required": ["results"]
+      "required": [
+        "results"
+      ]
     }
   },
   "timeout_ms": 45000,
   "max_budget_usd": 0.25,
-  "tags": ["competitive", "wikipedia", "live", "search", "neutral", "extraction"]
+  "tags": [
+    "competitive",
+    "wikipedia",
+    "live",
+    "search",
+    "neutral",
+    "extraction"
+  ]
 }

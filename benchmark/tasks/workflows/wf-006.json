@@ -5,7 +5,7 @@
   "intent": "On the fixture search form, type a search query, submit it, and extract the list of results shown on the results page",
   "start_url": "http://localhost:9876/forms/search-form.html",
   "requires": {
-    "tools": ["safari_navigate", "safari_fill", "safari_click", "safari_wait_for", "safari_get_text"],
+    "tools": [],
     "engines": [],
     "auth_domains": [],
     "features": [],
@@ -18,13 +18,23 @@
       "properties": {
         "results": {
           "type": "array",
-          "items": { "type": "string" }
+          "items": {
+            "type": "string"
+          }
         }
       },
-      "required": ["results"]
+      "required": [
+        "results"
+      ]
     }
   },
   "timeout_ms": 45000,
-  "max_budget_usd": 0.20,
-  "tags": ["workflows", "search", "fixture", "form", "results"]
+  "max_budget_usd": 0.2,
+  "tags": [
+    "workflows",
+    "search",
+    "fixture",
+    "form",
+    "results"
+  ]
 }

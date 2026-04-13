@@ -5,9 +5,11 @@
   "intent": "On X, find what @AnthropicAI posted most recently and get the reply count",
   "start_url": "https://x.com/AnthropicAI",
   "requires": {
-    "tools": ["safari_navigate", "safari_snapshot", "safari_smart_scrape", "safari_get_text", "safari_wait_for"],
+    "tools": [],
     "engines": [],
-    "auth_domains": ["x.com"],
+    "auth_domains": [
+      "x.com"
+    ],
     "features": [],
     "competitive": false
   },
@@ -16,10 +18,17 @@
     "schema": {
       "type": "object",
       "properties": {
-        "post_text": { "type": "string" },
-        "reply_count": { "type": "string" }
+        "post_text": {
+          "type": "string"
+        },
+        "reply_count": {
+          "type": "string"
+        }
       },
-      "required": ["post_text", "reply_count"]
+      "required": [
+        "post_text",
+        "reply_count"
+      ]
     }
   },
   "eval_fallback": {
@@ -27,6 +36,13 @@
     "criteria": "The output must include the text or summary of @AnthropicAI's most recent post on X, and a reply count value (which may be a number or formatted string like '12' or '1.2K'). The post text should be a plausible tweet-length string."
   },
   "timeout_ms": 90000,
-  "max_budget_usd": 0.50,
-  "tags": ["intelligence", "x.com", "twitter", "live", "social-media", "auth-advantage"]
+  "max_budget_usd": 0.5,
+  "tags": [
+    "intelligence",
+    "x.com",
+    "twitter",
+    "live",
+    "social-media",
+    "auth-advantage"
+  ]
 }

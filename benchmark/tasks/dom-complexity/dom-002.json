@@ -5,7 +5,7 @@
   "intent": "Extract text from an iframe embedded on the fixture page and return the inner content",
   "start_url": "http://localhost:9876/dom-complexity/iframes.html",
   "requires": {
-    "tools": ["safari_navigate", "safari_get_text"],
+    "tools": [],
     "engines": [],
     "auth_domains": [],
     "features": [],
@@ -13,10 +13,17 @@
   },
   "eval": {
     "type": "contains",
-    "must_include": ["inside iframe"],
+    "must_include": [
+      "inside iframe"
+    ],
     "case_insensitive": true
   },
   "timeout_ms": 30000,
   "max_budget_usd": 0.25,
-  "tags": ["dom-complexity", "iframe", "extraction", "fixture"]
+  "tags": [
+    "dom-complexity",
+    "iframe",
+    "extraction",
+    "fixture"
+  ]
 }

@@ -5,7 +5,7 @@
   "intent": "On Hacker News, fill the login form with username \"testuser\" and password \"testpass\", submit it, and report the error message shown",
   "start_url": "https://news.ycombinator.com/login",
   "requires": {
-    "tools": ["safari_navigate", "safari_fill", "safari_click", "safari_get_text"],
+    "tools": [],
     "engines": [],
     "auth_domains": [],
     "features": [],
@@ -13,10 +13,18 @@
   },
   "eval": {
     "type": "contains",
-    "must_include": ["Bad login"],
+    "must_include": [
+      "Bad login"
+    ],
     "case_insensitive": false
   },
   "timeout_ms": 45000,
   "max_budget_usd": 0.25,
-  "tags": ["forms", "login", "error-message", "live", "hn"]
+  "tags": [
+    "forms",
+    "login",
+    "error-message",
+    "live",
+    "hn"
+  ]
 }

@@ -2,21 +2,32 @@
   "id": "dom-006",
   "category": "dom-complexity",
   "difficulty": "medium",
-  "intent": "Interact with a custom web component that uses shadow DOM with slots — find and extract the slot content",
+  "intent": "Interact with a custom web component that uses shadow DOM with slots \u2014 find and extract the slot content",
   "start_url": "http://localhost:9876/dom-complexity/shadow-dom.html",
   "requires": {
-    "tools": ["safari_navigate", "safari_get_text", "safari_snapshot"],
-    "engines": ["extension"],
+    "tools": [],
+    "engines": [
+      "extension"
+    ],
     "auth_domains": [],
     "features": [],
     "competitive": false
   },
   "eval": {
     "type": "contains",
-    "must_include": ["slot content"],
+    "must_include": [
+      "slot content"
+    ],
     "case_insensitive": true
   },
   "timeout_ms": 45000,
   "max_budget_usd": 0.25,
-  "tags": ["dom-complexity", "shadow-dom", "web-component", "slots", "fixture", "extension"]
+  "tags": [
+    "dom-complexity",
+    "shadow-dom",
+    "web-component",
+    "slots",
+    "fixture",
+    "extension"
+  ]
 }

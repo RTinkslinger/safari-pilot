@@ -5,7 +5,7 @@
   "intent": "On Wikipedia, search for \"WebKit\", navigate to the WebKit article, and extract the first 3 citations from the References section",
   "start_url": "https://en.wikipedia.org",
   "requires": {
-    "tools": ["safari_navigate", "safari_fill", "safari_click", "safari_wait_for", "safari_extract_links", "safari_get_text"],
+    "tools": [],
     "engines": [],
     "auth_domains": [],
     "features": [],
@@ -19,13 +19,24 @@
         "references": {
           "type": "array",
           "minItems": 3,
-          "items": { "type": "string" }
+          "items": {
+            "type": "string"
+          }
         }
       },
-      "required": ["references"]
+      "required": [
+        "references"
+      ]
     }
   },
   "timeout_ms": 60000,
-  "max_budget_usd": 0.40,
-  "tags": ["workflows", "wikipedia", "live", "references", "multi-step", "extraction"]
+  "max_budget_usd": 0.4,
+  "tags": [
+    "workflows",
+    "wikipedia",
+    "live",
+    "references",
+    "multi-step",
+    "extraction"
+  ]
 }

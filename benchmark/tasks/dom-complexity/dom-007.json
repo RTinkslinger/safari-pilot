@@ -5,7 +5,7 @@
   "intent": "Navigate 3 levels of nested iframes on the fixture page and extract text from the deepest level",
   "start_url": "http://localhost:9876/dom-complexity/nested-iframes.html",
   "requires": {
-    "tools": ["safari_navigate", "safari_get_text", "safari_snapshot"],
+    "tools": [],
     "engines": [],
     "auth_domains": [],
     "features": [],
@@ -13,10 +13,19 @@
   },
   "eval": {
     "type": "contains",
-    "must_include": ["deepest level"],
+    "must_include": [
+      "deepest level"
+    ],
     "case_insensitive": true
   },
   "timeout_ms": 60000,
   "max_budget_usd": 0.35,
-  "tags": ["dom-complexity", "iframe", "nested", "extraction", "fixture", "hard"]
+  "tags": [
+    "dom-complexity",
+    "iframe",
+    "nested",
+    "extraction",
+    "fixture",
+    "hard"
+  ]
 }

@@ -5,9 +5,11 @@
   "intent": "Navigate to Reddit and verify you are logged in by locating your username in the page header",
   "start_url": "https://www.reddit.com",
   "requires": {
-    "tools": ["safari_navigate", "safari_snapshot", "safari_get_text"],
+    "tools": [],
     "engines": [],
-    "auth_domains": ["reddit.com"],
+    "auth_domains": [
+      "reddit.com"
+    ],
     "features": [],
     "competitive": false
   },
@@ -16,13 +18,26 @@
     "schema": {
       "type": "object",
       "properties": {
-        "logged_in": { "type": "boolean" },
-        "username": { "type": "string" }
+        "logged_in": {
+          "type": "boolean"
+        },
+        "username": {
+          "type": "string"
+        }
       },
-      "required": ["logged_in", "username"]
+      "required": [
+        "logged_in",
+        "username"
+      ]
     }
   },
   "timeout_ms": 30000,
   "max_budget_usd": 0.25,
-  "tags": ["auth-flows", "reddit", "login-check", "username", "live"]
+  "tags": [
+    "auth-flows",
+    "reddit",
+    "login-check",
+    "username",
+    "live"
+  ]
 }

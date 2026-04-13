@@ -5,9 +5,11 @@
   "intent": "On X, navigate to the Explore page, find a trending topic, and extract its name",
   "start_url": "https://x.com/explore",
   "requires": {
-    "tools": ["safari_navigate", "safari_snapshot", "safari_smart_scrape", "safari_get_text", "safari_wait_for"],
+    "tools": [],
     "engines": [],
-    "auth_domains": ["x.com"],
+    "auth_domains": [
+      "x.com"
+    ],
     "features": [],
     "competitive": true
   },
@@ -16,10 +18,16 @@
     "schema": {
       "type": "object",
       "properties": {
-        "trending_topic": { "type": "string" },
-        "category": { "type": "string" }
+        "trending_topic": {
+          "type": "string"
+        },
+        "category": {
+          "type": "string"
+        }
       },
-      "required": ["trending_topic"]
+      "required": [
+        "trending_topic"
+      ]
     }
   },
   "eval_fallback": {
@@ -27,6 +35,14 @@
     "criteria": "The output must include a trending topic name from X's Explore page. Auth advantage: authenticated users see personalized trending topics and more content than unauthenticated visits which may show a login wall."
   },
   "timeout_ms": 60000,
-  "max_budget_usd": 0.30,
-  "tags": ["competitive", "x.com", "twitter", "live", "auth-advantage", "trending", "explore"]
+  "max_budget_usd": 0.3,
+  "tags": [
+    "competitive",
+    "x.com",
+    "twitter",
+    "live",
+    "auth-advantage",
+    "trending",
+    "explore"
+  ]
 }

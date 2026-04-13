@@ -5,7 +5,7 @@
   "intent": "On the slow-loading fixture page, wait for the deferred content to appear, then extract it and verify it contains the expected value",
   "start_url": "http://localhost:9876/error-recovery/slow-load.html",
   "requires": {
-    "tools": ["safari_navigate", "safari_wait_for", "safari_get_text"],
+    "tools": [],
     "engines": [],
     "auth_domains": [],
     "features": [],
@@ -13,10 +13,19 @@
   },
   "eval": {
     "type": "contains",
-    "must_include": ["42", "loaded"],
+    "must_include": [
+      "42",
+      "loaded"
+    ],
     "case_insensitive": true
   },
   "timeout_ms": 60000,
   "max_budget_usd": 0.25,
-  "tags": ["error-recovery", "slow-load", "wait-for", "timing", "fixture"]
+  "tags": [
+    "error-recovery",
+    "slow-load",
+    "wait-for",
+    "timing",
+    "fixture"
+  ]
 }

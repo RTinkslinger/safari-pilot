@@ -5,9 +5,11 @@
   "intent": "On X (Twitter), navigate to Settings and extract the account information section shown on the settings page",
   "start_url": "https://x.com/settings",
   "requires": {
-    "tools": ["safari_navigate", "safari_snapshot", "safari_get_text"],
+    "tools": [],
     "engines": [],
-    "auth_domains": ["x.com"],
+    "auth_domains": [
+      "x.com"
+    ],
     "features": [],
     "competitive": false
   },
@@ -16,9 +18,13 @@
     "schema": {
       "type": "object",
       "properties": {
-        "settings_found": { "type": "boolean" }
+        "settings_found": {
+          "type": "boolean"
+        }
       },
-      "required": ["settings_found"]
+      "required": [
+        "settings_found"
+      ]
     }
   },
   "eval_fallback": {
@@ -27,5 +33,11 @@
   },
   "timeout_ms": 60000,
   "max_budget_usd": 0.35,
-  "tags": ["auth-flows", "x.com", "twitter", "settings", "live"]
+  "tags": [
+    "auth-flows",
+    "x.com",
+    "twitter",
+    "settings",
+    "live"
+  ]
 }

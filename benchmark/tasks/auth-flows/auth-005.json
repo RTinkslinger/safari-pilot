@@ -5,9 +5,11 @@
   "intent": "On LinkedIn, verify you are logged in by finding the messaging icon or navigation element that only appears for authenticated users",
   "start_url": "https://www.linkedin.com",
   "requires": {
-    "tools": ["safari_navigate", "safari_snapshot", "safari_get_text"],
+    "tools": [],
     "engines": [],
-    "auth_domains": ["linkedin.com"],
+    "auth_domains": [
+      "linkedin.com"
+    ],
     "features": [],
     "competitive": false
   },
@@ -16,12 +18,22 @@
     "schema": {
       "type": "object",
       "properties": {
-        "logged_in": { "type": "boolean" }
+        "logged_in": {
+          "type": "boolean"
+        }
       },
-      "required": ["logged_in"]
+      "required": [
+        "logged_in"
+      ]
     }
   },
   "timeout_ms": 45000,
   "max_budget_usd": 0.25,
-  "tags": ["auth-flows", "linkedin", "login-check", "messaging", "live"]
+  "tags": [
+    "auth-flows",
+    "linkedin",
+    "login-check",
+    "messaging",
+    "live"
+  ]
 }

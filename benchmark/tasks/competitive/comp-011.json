@@ -5,7 +5,7 @@
   "intent": "Extract structured table data from the fixture data table page as JSON, returning all rows with their column values",
   "start_url": "http://localhost:9876/extraction/data-table.html",
   "requires": {
-    "tools": ["safari_navigate", "safari_smart_scrape", "safari_get_text"],
+    "tools": [],
     "engines": [],
     "auth_domains": [],
     "features": [],
@@ -19,18 +19,32 @@
         "headers": {
           "type": "array",
           "minItems": 1,
-          "items": { "type": "string" }
+          "items": {
+            "type": "string"
+          }
         },
         "rows": {
           "type": "array",
           "minItems": 1,
-          "items": { "type": "object" }
+          "items": {
+            "type": "object"
+          }
         }
       },
-      "required": ["headers", "rows"]
+      "required": [
+        "headers",
+        "rows"
+      ]
     }
   },
   "timeout_ms": 45000,
-  "max_budget_usd": 0.20,
-  "tags": ["competitive", "fixture", "table", "neutral", "structured-output", "extraction"]
+  "max_budget_usd": 0.2,
+  "tags": [
+    "competitive",
+    "fixture",
+    "table",
+    "neutral",
+    "structured-output",
+    "extraction"
+  ]
 }

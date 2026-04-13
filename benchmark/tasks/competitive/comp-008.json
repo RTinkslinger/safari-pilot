@@ -5,7 +5,7 @@
   "intent": "On Wikipedia, start at the Main Page, navigate through 3 internal article links, and return the title of each page visited",
   "start_url": "https://en.wikipedia.org/wiki/Main_Page",
   "requires": {
-    "tools": ["safari_navigate", "safari_click", "safari_wait_for", "safari_get_text", "safari_smart_scrape"],
+    "tools": [],
     "engines": [],
     "auth_domains": [],
     "features": [],
@@ -19,13 +19,25 @@
         "pages_visited": {
           "type": "array",
           "minItems": 3,
-          "items": { "type": "string" }
+          "items": {
+            "type": "string"
+          }
         }
       },
-      "required": ["pages_visited"]
+      "required": [
+        "pages_visited"
+      ]
     }
   },
   "timeout_ms": 60000,
-  "max_budget_usd": 0.30,
-  "tags": ["competitive", "wikipedia", "live", "neutral", "multi-hop", "navigation", "link-following"]
+  "max_budget_usd": 0.3,
+  "tags": [
+    "competitive",
+    "wikipedia",
+    "live",
+    "neutral",
+    "multi-hop",
+    "navigation",
+    "link-following"
+  ]
 }

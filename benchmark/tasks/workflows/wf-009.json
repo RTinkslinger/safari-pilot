@@ -2,10 +2,10 @@
   "id": "wf-009",
   "category": "workflows",
   "difficulty": "hard",
-  "intent": "Search Wikipedia for each of the three major browser engines — WebKit, Blink, and Gecko — and extract the initial release year for each from its article",
+  "intent": "Search Wikipedia for each of the three major browser engines \u2014 WebKit, Blink, and Gecko \u2014 and extract the initial release year for each from its article",
   "start_url": "https://en.wikipedia.org",
   "requires": {
-    "tools": ["safari_navigate", "safari_fill", "safari_click", "safari_wait_for", "safari_get_text", "safari_smart_scrape"],
+    "tools": [],
     "engines": [],
     "auth_domains": [],
     "features": [],
@@ -22,17 +22,33 @@
           "items": {
             "type": "object",
             "properties": {
-              "name": { "type": "string" },
-              "release_year": { "type": "string" }
+              "name": {
+                "type": "string"
+              },
+              "release_year": {
+                "type": "string"
+              }
             },
-            "required": ["name", "release_year"]
+            "required": [
+              "name",
+              "release_year"
+            ]
           }
         }
       },
-      "required": ["engines"]
+      "required": [
+        "engines"
+      ]
     }
   },
   "timeout_ms": 60000,
-  "max_budget_usd": 0.50,
-  "tags": ["workflows", "wikipedia", "live", "multi-search", "browsers", "structured"]
+  "max_budget_usd": 0.5,
+  "tags": [
+    "workflows",
+    "wikipedia",
+    "live",
+    "multi-search",
+    "browsers",
+    "structured"
+  ]
 }

@@ -4,7 +4,7 @@
   "difficulty": "easy",
   "intent": "Open a new tab, navigate to wikipedia.org, and confirm you are on Wikipedia",
   "requires": {
-    "tools": ["safari_new_tab", "safari_navigate", "safari_extract_text"],
+    "tools": [],
     "engines": [],
     "auth_domains": [],
     "features": [],
@@ -12,10 +12,16 @@
   },
   "eval": {
     "type": "contains",
-    "must_include": ["Wikipedia"],
+    "must_include": [
+      "Wikipedia"
+    ],
     "case_insensitive": false
   },
   "timeout_ms": 20000,
   "max_budget_usd": 0.05,
-  "tags": ["navigation", "new-tab", "wikipedia"]
+  "tags": [
+    "navigation",
+    "new-tab",
+    "wikipedia"
+  ]
 }

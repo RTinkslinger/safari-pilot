@@ -2,9 +2,9 @@
   "id": "nav-005",
   "category": "navigation",
   "difficulty": "easy",
-  "intent": "Open two tabs — navigate the first to example.com and the second to wikipedia.org — then list both URLs",
+  "intent": "Open two tabs \u2014 navigate the first to example.com and the second to wikipedia.org \u2014 then list both URLs",
   "requires": {
-    "tools": ["safari_new_tab", "safari_navigate", "safari_list_tabs"],
+    "tools": [],
     "engines": [],
     "auth_domains": [],
     "features": [],
@@ -12,10 +12,17 @@
   },
   "eval": {
     "type": "contains",
-    "must_include": ["example.com", "wikipedia.org"],
+    "must_include": [
+      "example.com",
+      "wikipedia.org"
+    ],
     "case_insensitive": false
   },
   "timeout_ms": 30000,
-  "max_budget_usd": 0.10,
-  "tags": ["navigation", "multi-tab", "tab-management"]
+  "max_budget_usd": 0.1,
+  "tags": [
+    "navigation",
+    "multi-tab",
+    "tab-management"
+  ]
 }

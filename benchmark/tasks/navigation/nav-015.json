@@ -2,10 +2,10 @@
   "id": "nav-015",
   "category": "navigation",
   "difficulty": "hard",
-  "intent": "Navigate the multi-page fixture app through a full loop: home → about → contact → home. After each navigation, extract the page title. Report all four titles (including the final return to home) in order.",
+  "intent": "Navigate the multi-page fixture app through a full loop: home \u2192 about \u2192 contact \u2192 home. After each navigation, extract the page title. Report all four titles (including the final return to home) in order.",
   "start_url": "http://localhost:9876/navigation/multi-page.html",
   "requires": {
-    "tools": ["safari_navigate", "safari_click", "safari_extract_text"],
+    "tools": [],
     "engines": [],
     "auth_domains": [],
     "features": [],
@@ -19,21 +19,31 @@
         "titles": {
           "type": "array",
           "minItems": 4,
-          "items": { "type": "string" }
+          "items": {
+            "type": "string"
+          }
         }
       },
-      "required": ["titles"]
+      "required": [
+        "titles"
+      ]
     }
   },
   "reference_answers": {
     "titles": [
-      "Safari Pilot Fixture — Home",
-      "Safari Pilot Fixture — About",
-      "Safari Pilot Fixture — Contact",
-      "Safari Pilot Fixture — Home"
+      "Safari Pilot Fixture \u2014 Home",
+      "Safari Pilot Fixture \u2014 About",
+      "Safari Pilot Fixture \u2014 Contact",
+      "Safari Pilot Fixture \u2014 Home"
     ]
   },
   "timeout_ms": 60000,
-  "max_budget_usd": 0.20,
-  "tags": ["navigation", "multi-hop", "fixture", "loop", "click-chain"]
+  "max_budget_usd": 0.2,
+  "tags": [
+    "navigation",
+    "multi-hop",
+    "fixture",
+    "loop",
+    "click-chain"
+  ]
 }

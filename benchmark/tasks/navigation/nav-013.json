@@ -5,7 +5,7 @@
   "intent": "On Hacker News, navigate to page 2 of stories by clicking the 'More' link at the bottom of the front page, then extract the title of the first story on page 2",
   "start_url": "https://news.ycombinator.com/",
   "requires": {
-    "tools": ["safari_navigate", "safari_click", "safari_extract_text"],
+    "tools": [],
     "engines": [],
     "auth_domains": [],
     "features": [],
@@ -16,12 +16,21 @@
     "schema": {
       "type": "object",
       "properties": {
-        "title": { "type": "string" }
+        "title": {
+          "type": "string"
+        }
       },
-      "required": ["title"]
+      "required": [
+        "title"
+      ]
     }
   },
   "timeout_ms": 60000,
-  "max_budget_usd": 0.20,
-  "tags": ["navigation", "pagination", "hacker-news", "scroll"]
+  "max_budget_usd": 0.2,
+  "tags": [
+    "navigation",
+    "pagination",
+    "hacker-news",
+    "scroll"
+  ]
 }
