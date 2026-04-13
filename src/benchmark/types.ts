@@ -164,6 +164,11 @@ export interface PreflightResult {
 export function validateTask(task: BenchmarkTask): string[] {
   const errors: string[] = [];
 
+  // Guard against null/undefined/non-object input from JSON parsing
+  if (!task || typeof task !== 'object') {
+    return ['task must be a non-null object'];
+  }
+
   if (!task.id || task.id.trim() === '') {
     errors.push('id is required');
   }
@@ -188,11 +193,11 @@ export function validateTask(task: BenchmarkTask): string[] {
     );
   }
 
-  if (task.timeout_ms <= 0) {
+  if (typeof task.timeout_ms !== 'number' || task.timeout_ms <= 0) {
     errors.push(`timeout_ms must be positive (got ${task.timeout_ms})`);
   }
 
-  if (task.max_budget_usd < 0) {
+  if (typeof task.max_budget_usd !== 'number' || task.max_budget_usd < 0) {
     errors.push(`max_budget_usd must be non-negative (got ${task.max_budget_usd})`);
   }
 

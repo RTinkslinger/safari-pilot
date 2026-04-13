@@ -88,4 +88,21 @@ describe('benchmark types', () => {
     expect(DIFFICULTIES).toContain('intelligence');
     expect(DIFFICULTIES).toHaveLength(4);
   });
+
+  it('rejects task with zero timeout', () => {
+    const bad = { ...validTask, timeout_ms: 0 };
+    const errors = validateTask(bad);
+    expect(errors[0]).toContain('timeout_ms');
+  });
+
+  it('rejects task with negative budget', () => {
+    const bad = { ...validTask, max_budget_usd: -0.01 };
+    const errors = validateTask(bad);
+    expect(errors[0]).toContain('max_budget_usd');
+  });
+
+  it('handles null input gracefully', () => {
+    const errors = validateTask(null as any);
+    expect(errors).toContain('task must be a non-null object');
+  });
 });
