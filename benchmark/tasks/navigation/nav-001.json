@@ -1,0 +1,22 @@
+{
+  "id": "nav-001",
+  "category": "navigation",
+  "difficulty": "easy",
+  "intent": "Navigate to https://example.com and extract the page title",
+  "start_url": "https://example.com",
+  "requires": {
+    "tools": ["safari_navigate", "safari_extract_text"],
+    "engines": [],
+    "auth_domains": [],
+    "features": [],
+    "competitive": false
+  },
+  "eval": {
+    "type": "exact_match",
+    "expected": "Example Domain",
+    "case_insensitive": false
+  },
+  "timeout_ms": 15000,
+  "max_budget_usd": 0.05,
+  "tags": ["navigation", "extraction", "title"]
+}

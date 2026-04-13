@@ -1,0 +1,39 @@
+{
+  "id": "nav-015",
+  "category": "navigation",
+  "difficulty": "hard",
+  "intent": "Navigate the multi-page fixture app through a full loop: home → about → contact → home. After each navigation, extract the page title. Report all four titles (including the final return to home) in order.",
+  "start_url": "http://localhost:9876/navigation/multi-page.html",
+  "requires": {
+    "tools": ["safari_navigate", "safari_click", "safari_extract_text"],
+    "engines": [],
+    "auth_domains": [],
+    "features": [],
+    "competitive": false
+  },
+  "eval": {
+    "type": "structured_output",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "titles": {
+          "type": "array",
+          "minItems": 4,
+          "items": { "type": "string" }
+        }
+      },
+      "required": ["titles"]
+    }
+  },
+  "reference_answers": {
+    "titles": [
+      "Safari Pilot Fixture — Home",
+      "Safari Pilot Fixture — About",
+      "Safari Pilot Fixture — Contact",
+      "Safari Pilot Fixture — Home"
+    ]
+  },
+  "timeout_ms": 60000,
+  "max_budget_usd": 0.20,
+  "tags": ["navigation", "multi-hop", "fixture", "loop", "click-chain"]
+}

@@ -1,0 +1,27 @@
+{
+  "id": "nav-012",
+  "category": "navigation",
+  "difficulty": "medium",
+  "intent": "Navigate to https://example.com, take an accessibility snapshot of the page, and count how many interactive elements (links, buttons, inputs) are present",
+  "start_url": "https://example.com",
+  "requires": {
+    "tools": ["safari_navigate", "safari_snapshot"],
+    "engines": [],
+    "auth_domains": [],
+    "features": [],
+    "competitive": false
+  },
+  "eval": {
+    "type": "structured_output",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "interactive_count": { "type": "number" }
+      },
+      "required": ["interactive_count"]
+    }
+  },
+  "timeout_ms": 20000,
+  "max_budget_usd": 0.10,
+  "tags": ["navigation", "snapshot", "accessibility", "counting"]
+}

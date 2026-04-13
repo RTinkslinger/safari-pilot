@@ -1,0 +1,22 @@
+{
+  "id": "nav-004",
+  "category": "navigation",
+  "difficulty": "easy",
+  "intent": "Navigate to Hacker News (https://news.ycombinator.com) and extract the page title",
+  "start_url": "https://news.ycombinator.com",
+  "requires": {
+    "tools": ["safari_navigate", "safari_extract_text"],
+    "engines": [],
+    "auth_domains": [],
+    "features": [],
+    "competitive": false
+  },
+  "eval": {
+    "type": "contains",
+    "must_include": ["Hacker News"],
+    "case_insensitive": false
+  },
+  "timeout_ms": 20000,
+  "max_budget_usd": 0.05,
+  "tags": ["navigation", "title", "hacker-news"]
+}

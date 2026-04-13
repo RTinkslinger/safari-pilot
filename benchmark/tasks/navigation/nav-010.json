@@ -1,0 +1,22 @@
+{
+  "id": "nav-010",
+  "category": "navigation",
+  "difficulty": "medium",
+  "intent": "Navigate to the GitHub Explore page, find a trending repository link, click on it, and confirm you land on a github.com repository page",
+  "start_url": "https://github.com/explore",
+  "requires": {
+    "tools": ["safari_navigate", "safari_snapshot", "safari_click", "safari_get_url"],
+    "engines": [],
+    "auth_domains": [],
+    "features": [],
+    "competitive": false
+  },
+  "eval": {
+    "type": "contains",
+    "must_include": ["github.com"],
+    "case_insensitive": false
+  },
+  "timeout_ms": 45000,
+  "max_budget_usd": 0.15,
+  "tags": ["navigation", "click", "github", "dynamic-content"]
+}

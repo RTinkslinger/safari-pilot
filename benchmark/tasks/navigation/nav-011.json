@@ -1,0 +1,28 @@
+{
+  "id": "nav-011",
+  "category": "navigation",
+  "difficulty": "medium",
+  "intent": "On the Wikipedia Main Page, find and click the 'Random article' link in the sidebar, then report the title and URL of the article you land on",
+  "start_url": "https://en.wikipedia.org/wiki/Main_Page",
+  "requires": {
+    "tools": ["safari_navigate", "safari_click", "safari_extract_text", "safari_get_url"],
+    "engines": [],
+    "auth_domains": [],
+    "features": [],
+    "competitive": false
+  },
+  "eval": {
+    "type": "structured_output",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "url": { "type": "string" }
+      },
+      "required": ["title", "url"]
+    }
+  },
+  "timeout_ms": 30000,
+  "max_budget_usd": 0.10,
+  "tags": ["navigation", "click", "wikipedia", "random"]
+}

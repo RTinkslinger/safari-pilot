@@ -1,0 +1,21 @@
+{
+  "id": "nav-002",
+  "category": "navigation",
+  "difficulty": "easy",
+  "intent": "Open a new tab, navigate to wikipedia.org, and confirm you are on Wikipedia",
+  "requires": {
+    "tools": ["safari_new_tab", "safari_navigate", "safari_extract_text"],
+    "engines": [],
+    "auth_domains": [],
+    "features": [],
+    "competitive": false
+  },
+  "eval": {
+    "type": "contains",
+    "must_include": ["Wikipedia"],
+    "case_insensitive": false
+  },
+  "timeout_ms": 20000,
+  "max_budget_usd": 0.05,
+  "tags": ["navigation", "new-tab", "wikipedia"]
+}

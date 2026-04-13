@@ -1,0 +1,21 @@
+{
+  "id": "nav-003",
+  "category": "navigation",
+  "difficulty": "easy",
+  "intent": "Open a new tab, navigate to https://example.com, then navigate back to the previous page, and report the final URL",
+  "requires": {
+    "tools": ["safari_new_tab", "safari_navigate", "safari_navigate_back", "safari_get_url"],
+    "engines": [],
+    "auth_domains": [],
+    "features": [],
+    "competitive": false
+  },
+  "eval": {
+    "type": "contains",
+    "must_include": ["about:blank"],
+    "case_insensitive": false
+  },
+  "timeout_ms": 20000,
+  "max_budget_usd": 0.05,
+  "tags": ["navigation", "back", "history"]
+}

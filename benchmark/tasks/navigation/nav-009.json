@@ -1,0 +1,29 @@
+{
+  "id": "nav-009",
+  "category": "navigation",
+  "difficulty": "medium",
+  "intent": "Open 3 tabs navigated to example.com, wikipedia.org, and news.ycombinator.com respectively, close the middle tab (wikipedia.org), then list the remaining tab URLs",
+  "requires": {
+    "tools": ["safari_new_tab", "safari_navigate", "safari_close_tab", "safari_list_tabs"],
+    "engines": [],
+    "auth_domains": [],
+    "features": [],
+    "competitive": false
+  },
+  "eval": {
+    "type": "structured_output",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "tabs": {
+          "type": "array",
+          "minItems": 2
+        }
+      },
+      "required": ["tabs"]
+    }
+  },
+  "timeout_ms": 45000,
+  "max_budget_usd": 0.15,
+  "tags": ["navigation", "multi-tab", "close-tab", "tab-management"]
+}
