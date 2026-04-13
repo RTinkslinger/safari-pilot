@@ -182,7 +182,7 @@ export async function executeTask(
       steps: 0,
       durationMs,
       toolsUsed: [],
-      enginesUsed: [],
+      enginesUsed: {},
       reasoningExcerpts: [],
       error: timedOut ? `Timeout after ${timeoutMs}ms` : String(err),
       rawOutput: stdout || undefined,

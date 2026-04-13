@@ -67,19 +67,25 @@ export interface BenchmarkTask {
   enabled_after?: string | null;
 }
 
+export interface PerTaskSummary {
+  passed: boolean;
+  steps: number;
+  durationMs: number;
+}
+
 export interface TaskResult {
   taskId: string;
   model: string;
   success: boolean;
   evalMethod: EvalType;
-  evalDetails: string;
+  evalDetails: Record<string, unknown> | string;
   fallbackUsed: boolean;
   skipped: boolean;
   skipReason?: string;
   steps: number;
   durationMs: number;
   toolsUsed: string[];
-  enginesUsed: string[];
+  enginesUsed: Record<string, number>;
   reasoningExcerpts: string[];
   error?: string;
   rawOutput?: string;
@@ -144,7 +150,7 @@ export interface RunReport {
   p50DurationMs: number;
   p95DurationMs: number;
   flakyCount: number;
-  perTask: TaskResult[];
+  perTask: Record<string, PerTaskSummary>;
 }
 
 export interface HistoryFile {
