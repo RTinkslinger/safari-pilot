@@ -1,0 +1,32 @@
+{
+  "id": "comp-004",
+  "category": "competitive",
+  "difficulty": "medium",
+  "intent": "On X, check if you are logged in and extract the profile display name visible in the navigation",
+  "start_url": "https://x.com",
+  "requires": {
+    "tools": ["safari_navigate", "safari_snapshot", "safari_get_text", "safari_wait_for"],
+    "engines": [],
+    "auth_domains": ["x.com"],
+    "features": [],
+    "competitive": true
+  },
+  "eval": {
+    "type": "structured_output",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "logged_in": { "type": "boolean" },
+        "display_name": { "type": "string" }
+      },
+      "required": ["logged_in"]
+    }
+  },
+  "eval_fallback": {
+    "type": "llm_judge",
+    "criteria": "The output must indicate whether the agent is logged in to X (Twitter). If logged in, a display name or username should be present. This tests whether Safari Pilot's persistent session provides auth advantage over Playwright."
+  },
+  "timeout_ms": 45000,
+  "max_budget_usd": 0.25,
+  "tags": ["competitive", "x.com", "twitter", "live", "auth-advantage", "login-check"]
+}

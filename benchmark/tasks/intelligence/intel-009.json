@@ -1,0 +1,32 @@
+{
+  "id": "intel-009",
+  "category": "intelligence",
+  "difficulty": "intelligence",
+  "intent": "On Reddit, find a post with an image in r/pics, extract the image URL and the post title",
+  "start_url": "https://www.reddit.com/r/pics/",
+  "requires": {
+    "tools": ["safari_navigate", "safari_smart_scrape", "safari_click", "safari_wait_for", "safari_get_text", "safari_snapshot"],
+    "engines": [],
+    "auth_domains": ["reddit.com"],
+    "features": [],
+    "competitive": false
+  },
+  "eval": {
+    "type": "structured_output",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "post_title": { "type": "string" },
+        "image_url": { "type": "string" }
+      },
+      "required": ["post_title", "image_url"]
+    }
+  },
+  "eval_fallback": {
+    "type": "llm_judge",
+    "criteria": "The output must include a post title that is a plausible Reddit post title and an image URL that is a valid URL starting with 'https://' and pointing to an image host (e.g., i.redd.it, preview.redd.it, i.imgur.com, external-preview.redd.it, or similar)."
+  },
+  "timeout_ms": 120000,
+  "max_budget_usd": 0.50,
+  "tags": ["intelligence", "reddit", "live", "image-extraction", "media", "auth-advantage"]
+}

@@ -1,0 +1,42 @@
+{
+  "id": "intel-010",
+  "category": "intelligence",
+  "difficulty": "intelligence",
+  "intent": "On LinkedIn Jobs, search for \"AI Engineer\" in \"San Francisco\", extract the first 5 job titles and companies",
+  "start_url": "https://www.linkedin.com/jobs/",
+  "requires": {
+    "tools": ["safari_navigate", "safari_fill", "safari_click", "safari_wait_for", "safari_smart_scrape", "safari_get_text"],
+    "engines": [],
+    "auth_domains": ["linkedin.com"],
+    "features": [],
+    "competitive": false
+  },
+  "eval": {
+    "type": "structured_output",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "jobs": {
+          "type": "array",
+          "minItems": 3,
+          "items": {
+            "type": "object",
+            "properties": {
+              "title": { "type": "string" },
+              "company": { "type": "string" }
+            },
+            "required": ["title", "company"]
+          }
+        }
+      },
+      "required": ["jobs"]
+    }
+  },
+  "eval_fallback": {
+    "type": "llm_judge",
+    "criteria": "The output must list at least 3 job postings, each with a title and company name. Titles should look like engineering or AI-related roles. Company names should be real-looking organization names. The results should plausibly come from a search for 'AI Engineer' jobs."
+  },
+  "timeout_ms": 120000,
+  "max_budget_usd": 0.50,
+  "tags": ["intelligence", "linkedin", "live", "jobs", "search", "auth-advantage", "multi-result"]
+}

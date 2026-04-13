@@ -1,0 +1,42 @@
+{
+  "id": "intel-003",
+  "category": "intelligence",
+  "difficulty": "intelligence",
+  "intent": "On LinkedIn, find 3 software engineers at Anthropic and list their current titles",
+  "start_url": "https://www.linkedin.com/feed/",
+  "requires": {
+    "tools": ["safari_navigate", "safari_fill", "safari_click", "safari_wait_for", "safari_smart_scrape", "safari_get_text"],
+    "engines": [],
+    "auth_domains": ["linkedin.com"],
+    "features": [],
+    "competitive": false
+  },
+  "eval": {
+    "type": "structured_output",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "engineers": {
+          "type": "array",
+          "minItems": 3,
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string" },
+              "title": { "type": "string" }
+            },
+            "required": ["name", "title"]
+          }
+        }
+      },
+      "required": ["engineers"]
+    }
+  },
+  "eval_fallback": {
+    "type": "llm_judge",
+    "criteria": "The output must list at least 3 people with names and job titles. Each title should plausibly be an engineering role (e.g., contains 'Engineer', 'SWE', 'Software', 'Developer', 'Research', or similar). Names should be real-looking full names."
+  },
+  "timeout_ms": 120000,
+  "max_budget_usd": 0.50,
+  "tags": ["intelligence", "linkedin", "live", "people-search", "auth-advantage", "multi-result"]
+}

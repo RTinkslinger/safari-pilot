@@ -1,0 +1,38 @@
+{
+  "id": "comp-002",
+  "category": "competitive",
+  "difficulty": "medium",
+  "intent": "On example.com, extract all link URLs and their anchor text",
+  "start_url": "https://example.com",
+  "requires": {
+    "tools": ["safari_navigate", "safari_smart_scrape", "safari_get_text"],
+    "engines": [],
+    "auth_domains": [],
+    "features": [],
+    "competitive": true
+  },
+  "eval": {
+    "type": "structured_output",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "links": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "properties": {
+              "url": { "type": "string" },
+              "text": { "type": "string" }
+            },
+            "required": ["url", "text"]
+          }
+        }
+      },
+      "required": ["links"]
+    }
+  },
+  "timeout_ms": 30000,
+  "max_budget_usd": 0.15,
+  "tags": ["competitive", "example.com", "live", "link-extraction", "neutral", "simple"]
+}

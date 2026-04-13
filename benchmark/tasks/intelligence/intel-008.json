@@ -1,0 +1,32 @@
+{
+  "id": "intel-008",
+  "category": "intelligence",
+  "difficulty": "intelligence",
+  "intent": "On X, open the Explore page and find a trending topic name",
+  "start_url": "https://x.com/explore",
+  "requires": {
+    "tools": ["safari_navigate", "safari_snapshot", "safari_smart_scrape", "safari_get_text", "safari_wait_for"],
+    "engines": [],
+    "auth_domains": ["x.com"],
+    "features": [],
+    "competitive": false
+  },
+  "eval": {
+    "type": "structured_output",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "trending_topic": { "type": "string" },
+        "tweet_count": { "type": "string" }
+      },
+      "required": ["trending_topic"]
+    }
+  },
+  "eval_fallback": {
+    "type": "llm_judge",
+    "criteria": "The output must include at least one trending topic name from X's Explore page. The topic should be a non-empty string that looks like a hashtag, keyword, or phrase that could realistically trend on social media."
+  },
+  "timeout_ms": 90000,
+  "max_budget_usd": 0.50,
+  "tags": ["intelligence", "x.com", "twitter", "live", "trending", "explore", "auth-advantage"]
+}

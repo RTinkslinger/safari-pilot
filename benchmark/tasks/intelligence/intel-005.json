@@ -1,0 +1,32 @@
+{
+  "id": "intel-005",
+  "category": "intelligence",
+  "difficulty": "intelligence",
+  "intent": "On Wikipedia, find the current population of Tokyo and the year of the most recent census cited",
+  "start_url": "https://en.wikipedia.org/wiki/Tokyo",
+  "requires": {
+    "tools": ["safari_navigate", "safari_smart_scrape", "safari_get_text"],
+    "engines": [],
+    "auth_domains": [],
+    "features": [],
+    "competitive": false
+  },
+  "eval": {
+    "type": "structured_output",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "population": { "type": "string" },
+        "census_year": { "type": "string" }
+      },
+      "required": ["population", "census_year"]
+    }
+  },
+  "eval_fallback": {
+    "type": "llm_judge",
+    "criteria": "The output must include a population figure for Tokyo (a large number, typically in the range of 10-14 million for the city proper, or 35-40 million for the greater metro area) and a census year that is a plausible recent year (2000 or later)."
+  },
+  "timeout_ms": 90000,
+  "max_budget_usd": 0.50,
+  "tags": ["intelligence", "wikipedia", "live", "data-extraction", "infobox", "population"]
+}

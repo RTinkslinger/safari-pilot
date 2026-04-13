@@ -1,0 +1,33 @@
+{
+  "id": "intel-004",
+  "category": "intelligence",
+  "difficulty": "intelligence",
+  "intent": "On Reddit, go to r/programming, find a post about Rust, and extract the top-voted comment",
+  "start_url": "https://www.reddit.com/r/programming/",
+  "requires": {
+    "tools": ["safari_navigate", "safari_smart_scrape", "safari_click", "safari_wait_for", "safari_get_text"],
+    "engines": [],
+    "auth_domains": ["reddit.com"],
+    "features": [],
+    "competitive": false
+  },
+  "eval": {
+    "type": "structured_output",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "post_title": { "type": "string" },
+        "top_comment": { "type": "string" },
+        "comment_score": { "type": "string" }
+      },
+      "required": ["post_title", "top_comment"]
+    }
+  },
+  "eval_fallback": {
+    "type": "llm_judge",
+    "criteria": "The output must identify a Reddit post from r/programming that is about the Rust programming language (title should reference Rust, Cargo, Ferris, memory safety, or similar Rust concepts), and provide a top-voted comment that is a coherent English sentence or paragraph."
+  },
+  "timeout_ms": 120000,
+  "max_budget_usd": 0.50,
+  "tags": ["intelligence", "reddit", "live", "rust", "comments", "auth-advantage", "topic-finding"]
+}

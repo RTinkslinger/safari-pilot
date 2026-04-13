@@ -1,0 +1,42 @@
+{
+  "id": "comp-005",
+  "category": "competitive",
+  "difficulty": "hard",
+  "intent": "On Reddit, navigate to r/technology, extract the top 5 post titles with their scores",
+  "start_url": "https://www.reddit.com/r/technology/",
+  "requires": {
+    "tools": ["safari_navigate", "safari_smart_scrape", "safari_get_text", "safari_wait_for"],
+    "engines": [],
+    "auth_domains": ["reddit.com"],
+    "features": [],
+    "competitive": true
+  },
+  "eval": {
+    "type": "structured_output",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "posts": {
+          "type": "array",
+          "minItems": 5,
+          "items": {
+            "type": "object",
+            "properties": {
+              "title": { "type": "string" },
+              "score": { "type": "string" }
+            },
+            "required": ["title"]
+          }
+        }
+      },
+      "required": ["posts"]
+    }
+  },
+  "eval_fallback": {
+    "type": "llm_judge",
+    "criteria": "The output must list at least 5 Reddit posts from r/technology with titles. Titles should be plausible technology news headlines. Scores may be numbers or formatted strings like '1.2k'. Auth advantage: Reddit shows more content to logged-in users."
+  },
+  "timeout_ms": 60000,
+  "max_budget_usd": 0.30,
+  "tags": ["competitive", "reddit", "live", "auth-advantage", "extraction", "ranking"]
+}

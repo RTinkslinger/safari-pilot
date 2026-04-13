@@ -1,0 +1,33 @@
+{
+  "id": "intel-012",
+  "category": "intelligence",
+  "difficulty": "intelligence",
+  "intent": "On HN, find a Show HN post from today, visit the linked project, and extract the project's one-line description",
+  "start_url": "https://news.ycombinator.com/",
+  "requires": {
+    "tools": ["safari_navigate", "safari_smart_scrape", "safari_click", "safari_wait_for", "safari_get_text", "safari_new_tab"],
+    "engines": [],
+    "auth_domains": [],
+    "features": [],
+    "competitive": false
+  },
+  "eval": {
+    "type": "structured_output",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "show_hn_title": { "type": "string" },
+        "project_url": { "type": "string" },
+        "project_description": { "type": "string" }
+      },
+      "required": ["show_hn_title", "project_url", "project_description"]
+    }
+  },
+  "eval_fallback": {
+    "type": "llm_judge",
+    "criteria": "The output must include a Show HN post title (starting with 'Show HN:'), a URL pointing to an external project site, and a one-line description extracted from that project's landing page. The description should be a coherent sentence or phrase that could serve as a tagline or headline."
+  },
+  "timeout_ms": 120000,
+  "max_budget_usd": 0.50,
+  "tags": ["intelligence", "hacker-news", "live", "show-hn", "multi-hop", "discovery", "summarization"]
+}

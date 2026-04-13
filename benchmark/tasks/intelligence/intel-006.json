@@ -1,0 +1,32 @@
+{
+  "id": "intel-006",
+  "category": "intelligence",
+  "difficulty": "intelligence",
+  "intent": "Fill out the HN login form with username \"benchtest\" and password \"wrong123\", submit it, detect and report the error message shown",
+  "start_url": "https://news.ycombinator.com/login",
+  "requires": {
+    "tools": ["safari_navigate", "safari_fill", "safari_click", "safari_wait_for", "safari_get_text", "safari_snapshot"],
+    "engines": [],
+    "auth_domains": [],
+    "features": [],
+    "competitive": false
+  },
+  "eval": {
+    "type": "structured_output",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "error_message": { "type": "string" },
+        "login_succeeded": { "type": "boolean" }
+      },
+      "required": ["error_message", "login_succeeded"]
+    }
+  },
+  "eval_fallback": {
+    "type": "llm_judge",
+    "criteria": "The output must confirm that login failed (login_succeeded should be false) and report an error message that indicates authentication failure. Acceptable error messages include 'Bad login' or 'Invalid password' or similar. The agent should NOT be logged in after this task."
+  },
+  "timeout_ms": 90000,
+  "max_budget_usd": 0.50,
+  "tags": ["intelligence", "hacker-news", "live", "error-detection", "form-submit", "auth-failure"]
+}

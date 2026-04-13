@@ -1,0 +1,22 @@
+{
+  "id": "comp-003",
+  "category": "competitive",
+  "difficulty": "medium",
+  "intent": "Fill the fixture form with name \"Jane Smith\", email \"jane@example.com\", and country \"Canada\" from the dropdown, then submit it",
+  "start_url": "http://localhost:9876/forms/contact.html",
+  "requires": {
+    "tools": ["safari_navigate", "safari_fill", "safari_select", "safari_click", "safari_wait_for", "safari_get_text"],
+    "engines": [],
+    "auth_domains": [],
+    "features": [],
+    "competitive": true
+  },
+  "eval": {
+    "type": "contains",
+    "must_include": ["submitted", "jane"],
+    "case_insensitive": true
+  },
+  "timeout_ms": 45000,
+  "max_budget_usd": 0.20,
+  "tags": ["competitive", "fixture", "forms", "dropdown", "neutral", "submission"]
+}

@@ -1,0 +1,38 @@
+{
+  "id": "comp-007",
+  "category": "competitive",
+  "difficulty": "hard",
+  "intent": "On Hacker News, extract the top 10 story titles with their scores as structured JSON",
+  "start_url": "https://news.ycombinator.com/",
+  "requires": {
+    "tools": ["safari_navigate", "safari_smart_scrape", "safari_get_text"],
+    "engines": [],
+    "auth_domains": [],
+    "features": [],
+    "competitive": true
+  },
+  "eval": {
+    "type": "structured_output",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "stories": {
+          "type": "array",
+          "minItems": 10,
+          "items": {
+            "type": "object",
+            "properties": {
+              "title": { "type": "string" },
+              "score": { "type": "number" }
+            },
+            "required": ["title", "score"]
+          }
+        }
+      },
+      "required": ["stories"]
+    }
+  },
+  "timeout_ms": 60000,
+  "max_budget_usd": 0.30,
+  "tags": ["competitive", "hacker-news", "live", "neutral", "extraction", "structured-output", "ranking"]
+}
