@@ -1,0 +1,12 @@
+{
+  "id": "download-basic-file",
+  "category": "downloads",
+  "intent": "Navigate to the download test page and download the text file. Report the filename of the downloaded file.",
+  "start_url": "http://localhost:{{PORT}}/download-page",
+  "timeout_ms": 45000,
+  "eval": {
+    "type": "contains",
+    "must_include": ["small-file.txt"]
+  },
+  "tags": ["downloads", "basic"]
+}

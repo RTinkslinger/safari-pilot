@@ -1,0 +1,12 @@
+{
+  "id": "download-verify-content",
+  "category": "downloads",
+  "intent": "Download the text file from the download test page and report its first line of content.",
+  "start_url": "http://localhost:{{PORT}}/download-page",
+  "timeout_ms": 45000,
+  "eval": {
+    "type": "contains",
+    "must_include": ["Safari Pilot download test file"]
+  },
+  "tags": ["downloads", "content"]
+}

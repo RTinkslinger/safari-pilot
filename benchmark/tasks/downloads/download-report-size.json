@@ -1,0 +1,12 @@
+{
+  "id": "download-report-size",
+  "category": "downloads",
+  "intent": "Navigate to the download test page and download the binary file. Report the exact file size in bytes.",
+  "start_url": "http://localhost:{{PORT}}/download-page",
+  "timeout_ms": 45000,
+  "eval": {
+    "type": "contains",
+    "must_include": ["102400"]
+  },
+  "tags": ["downloads", "metadata"]
+}

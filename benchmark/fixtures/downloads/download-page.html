@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html>
+<head><title>Download Test Page</title></head>
+<body>
+  <h1>Download Test Files</h1>
+  <ul>
+    <li><a id="txt-link" href="/download/small-file.txt">Download Text File</a></li>
+    <li><a id="bin-link" href="/download/medium-file.bin">Download Binary File</a></li>
+    <li><a id="named-link" href="/download/small-file.txt" download="custom-name.txt">Download with Custom Name</a></li>
+  </ul>
+  <button id="js-download-btn" onclick="triggerDownload()">JS Download</button>
+  <script>
+    function triggerDownload() {
+      var a = document.createElement('a');
+      a.href = '/download/small-file.txt';
+      a.download = 'js-triggered.txt';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    }
+  </script>
+</body>
+</html>

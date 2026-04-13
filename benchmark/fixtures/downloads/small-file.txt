@@ -1,0 +1,25 @@
+Safari Pilot download test file.
+This file is exactly 1024 bytes when padded.
+Used for verifying download detection and metadata extraction.
+Line 4 of the test file.
+Line 5 of the test file.
+Line 6 of the test file.
+Line 7 of the test file.
+Line 8 of the test file.
+Line 9 of the test file.
+Line 10 of the test file.
+Line 11 of the test file.
+Line 12 of the test file.
+Line 13 of the test file.
+Line 14 of the test file.
+Line 15 of the test file.
+Line 16 of the test file.
+Line 17 of the test file.
+Line 18 of the test file.
+Line 19 of the test file.
+Line 20 of the test file.
+Line 21 of the test file.
+Line 22 of the test file.
+Line 23 of the test file.
+Line 24 of the test file.
+Line 25 of the test file.

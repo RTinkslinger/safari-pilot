@@ -1,0 +1,12 @@
+{
+  "id": "download-specific-file",
+  "category": "downloads",
+  "intent": "The download test page has multiple download links. Download ONLY the text file (not the binary file). Report the filename.",
+  "start_url": "http://localhost:{{PORT}}/download-page",
+  "timeout_ms": 45000,
+  "eval": {
+    "type": "exact_match",
+    "expected": "small-file.txt"
+  },
+  "tags": ["downloads", "disambiguation"]
+}

@@ -1,0 +1,12 @@
+{
+  "id": "download-and-describe",
+  "category": "downloads",
+  "intent": "Download the binary file from the download test page. Describe its file type and size.",
+  "start_url": "http://localhost:{{PORT}}/download-page",
+  "timeout_ms": 45000,
+  "eval": {
+    "type": "llm_judge",
+    "criteria": "The response should mention the file is a binary file (or .bin file) and its size is approximately 100KB or 102400 bytes."
+  },
+  "tags": ["downloads", "description"]
+}

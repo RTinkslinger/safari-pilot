@@ -1,6 +1,7 @@
 import { createServer, type Server } from 'node:http';
 import { readFile } from 'node:fs/promises';
-import { join, extname, normalize, resolve } from 'node:path';
+import { readFileSync } from 'node:fs';
+import { extname, normalize, resolve } from 'node:path';
 
 const CONTENT_TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -24,6 +25,62 @@ export class FixtureServer {
   ) {
     this.server = createServer((req, res) => {
       const url = req.url ?? '/';
+
+      // Generate unique download file for testing (must come before generic /download/ handler)
+      if (url.startsWith('/download/generate')) {
+        const params = new URL(url, 'http://localhost').searchParams;
+        const size = parseInt(params.get('size') ?? '1024', 10);
+        const name = params.get('name') ?? `test-${Date.now()}.bin`;
+        const data = Buffer.alloc(Math.min(size, 10_000_000), 0x42);
+        res.writeHead(200, {
+          'Content-Type': 'application/octet-stream',
+          'Content-Disposition': `attachment; filename="${name}"`,
+          'Content-Length': data.length.toString(),
+        });
+        res.end(data);
+        return;
+      }
+
+      // Download endpoint: serve files with Content-Disposition: attachment
+      if (url.startsWith('/download/')) {
+        const filename = decodeURIComponent(url.slice('/download/'.length).split('?')[0]);
+        const downloadFixturesDir = resolve(this.fixturesDir, 'downloads');
+        const filePath = resolve(downloadFixturesDir, filename);
+
+        if (!filePath.startsWith(downloadFixturesDir)) {
+          res.writeHead(403);
+          res.end('Forbidden');
+          return;
+        }
+
+        try {
+          const data = readFileSync(filePath);
+          res.writeHead(200, {
+            'Content-Type': 'application/octet-stream',
+            'Content-Disposition': `attachment; filename="${filename}"`,
+            'Content-Length': data.length.toString(),
+          });
+          res.end(data);
+        } catch {
+          res.writeHead(404);
+          res.end('Not Found');
+        }
+        return;
+      }
+
+      // Download page
+      if (url === '/download-page') {
+        const pagePath = resolve(this.fixturesDir, 'downloads', 'download-page.html');
+        try {
+          const data = readFileSync(pagePath, 'utf-8');
+          res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+          res.end(data);
+        } catch {
+          res.writeHead(404);
+          res.end('Not Found');
+        }
+        return;
+      }
 
       // Resolve and verify path stays within fixtures dir
       const safePath = normalize(url.startsWith('/') ? url.slice(1) : url);

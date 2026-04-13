@@ -1,0 +1,19 @@
+{
+  "id": "download-from-button",
+  "category": "downloads",
+  "intent": "On the download test page, click the 'JS Download' button to trigger a JavaScript-initiated download. Report the filename and size of the downloaded file as JSON.",
+  "start_url": "http://localhost:{{PORT}}/download-page",
+  "timeout_ms": 45000,
+  "eval": {
+    "type": "structured_output",
+    "schema": {
+      "type": "object",
+      "required": ["filename", "size"],
+      "properties": {
+        "filename": { "type": "string" },
+        "size": { "type": "number" }
+      }
+    }
+  },
+  "tags": ["downloads", "javascript"]
+}
