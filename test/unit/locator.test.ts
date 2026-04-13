@@ -245,10 +245,10 @@ describe('generateLocatorJs - structure', () => {
     expect(typeof js).toBe('string');
   });
 
-  it('is a self-contained IIFE (starts with "(function()" and ends with ")()")', () => {
+  it('is a function body with return statements (wrapped by engine)', () => {
     const js = generateLocatorJs({ role: 'button' });
-    expect(js.trimStart()).toMatch(/^\(function\(\)/);
-    expect(js.trimEnd()).toMatch(/\)\(\)$/);
+    expect(js).toContain('return JSON.stringify');
+    expect(js).toContain('var locatorDesc');
   });
 
   it('does not use let or const (var only for Safari compat)', () => {
@@ -558,10 +558,10 @@ describe('generateLocatorJs - empty locator', () => {
     expect(js).toContain('No locator key provided');
   });
 
-  it('returns a valid IIFE even for empty descriptor', () => {
+  it('returns a valid function body for empty descriptor', () => {
     const js = generateLocatorJs({});
-    expect(js.trimStart()).toMatch(/^\(function\(\)/);
-    expect(js.trimEnd()).toMatch(/\)\(\)$/);
+    expect(js).toContain('return JSON.stringify');
+    expect(js).toContain('found: false');
   });
 });
 

@@ -356,7 +356,7 @@ export function generateLocatorJs(
     locatorType = 'text';
   } else {
     // No locator key — return immediate failure
-    return `(function() { return JSON.stringify({ found: false, locator: {}, candidateCount: 0, hint: 'No locator key provided (need role, text, label, testId, or placeholder)' }); })()`;
+    return `return JSON.stringify({ found: false, locator: {}, candidateCount: 0, hint: 'No locator key provided (need role, text, label, testId, or placeholder)' });`;
   }
 
   // Build the locator descriptor JSON for error messages
@@ -367,8 +367,7 @@ export function generateLocatorJs(
     ? `var root = document.querySelector('${escapeForJs(options.scopeSelector)}'); if (!root) { return JSON.stringify({ found: false, locator: locatorDesc, candidateCount: 0, hint: 'Scope selector ${escapeForJs(options.scopeSelector)} not found on page' }); }`
     : 'var root = document;';
 
-  return `(function() {
-  var locatorDesc = JSON.parse('${locatorJson}');
+  return `var locatorDesc = JSON.parse('${locatorJson}');
 
   // ── Scope ──
   ${scopeJs}
@@ -453,6 +452,5 @@ export function generateLocatorJs(
       textContent: normalizeWhitespace((target.textContent || '').substring(0, 200))
     },
     matchCount: matched.length
-  });
-})()`;
+  });`;
 }

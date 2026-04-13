@@ -69,7 +69,9 @@ export class AppleScriptEngine extends BaseEngine {
   set _result to ""
   repeat with _window in every window
     repeat with _tab in every tab of _window
-      if URL of _tab is "${escapedUrl}" then
+      set _tabUrl to URL of _tab
+      -- Match exact URL, or with/without trailing slash (Safari normalizes URLs)
+      if _tabUrl is "${escapedUrl}" or _tabUrl is ("${escapedUrl}" & "/") or ("${escapedUrl}" is (_tabUrl & "/")) then
         set _result to do JavaScript "${escapedJs}" in _tab
         return _result
       end if

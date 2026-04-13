@@ -135,6 +135,1186 @@
           "durationMs": 16731
         }
       }
+    },
+    {
+      "id": "bench-20260413-sonnet-mnxcgj7a",
+      "model": "sonnet",
+      "commit": "dc4cab2",
+      "branch": "main",
+      "timestamp": "2026-04-13T15:39:05.888Z",
+      "eligible": 90,
+      "skipped": 30,
+      "passed": 7,
+      "failed": 83,
+      "overallRate": 0.07777777777777778,
+      "byCategory": {
+        "accessibility": {
+          "passed": 2,
+          "failed": 6,
+          "skipped": 0,
+          "rate": 0.25
+        },
+        "error-recovery": {
+          "passed": 1,
+          "failed": 7,
+          "skipped": 0,
+          "rate": 0.125
+        },
+        "extraction": {
+          "passed": 1,
+          "failed": 14,
+          "skipped": 0,
+          "rate": 0.06666666666666667
+        },
+        "forms": {
+          "passed": 1,
+          "failed": 14,
+          "skipped": 0,
+          "rate": 0.06666666666666667
+        },
+        "navigation": {
+          "passed": 0,
+          "failed": 15,
+          "skipped": 0,
+          "rate": 0
+        },
+        "dom-complexity": {
+          "passed": 2,
+          "failed": 2,
+          "skipped": 4,
+          "rate": 0.5
+        },
+        "safari-specific": {
+          "passed": 0,
+          "failed": 7,
+          "skipped": 0,
+          "rate": 0
+        },
+        "intelligence": {
+          "passed": 0,
+          "failed": 6,
+          "skipped": 6,
+          "rate": 0
+        },
+        "workflows": {
+          "passed": 0,
+          "failed": 12,
+          "skipped": 0,
+          "rate": 0
+        },
+        "auth-flows": {
+          "passed": 0,
+          "failed": 0,
+          "skipped": 8,
+          "rate": 0
+        },
+        "competitive": {
+          "passed": 0,
+          "failed": 0,
+          "skipped": 12,
+          "rate": 0
+        }
+      },
+      "intelligenceRate": 0,
+      "competitiveWinRate": 0,
+      "competitive": [],
+      "meanSteps": 5.714285714285714,
+      "p50DurationMs": 13510,
+      "p95DurationMs": 90335,
+      "flakyCount": 0,
+      "perTask": {
+        "a11y-002": {
+          "passed": true,
+          "steps": 9,
+          "durationMs": 52231
+        },
+        "a11y-003": {
+          "passed": false,
+          "steps": 11,
+          "durationMs": 61098
+        },
+        "a11y-001": {
+          "passed": true,
+          "steps": 10,
+          "durationMs": 71748
+        },
+        "err-001": {
+          "passed": true,
+          "steps": 9,
+          "durationMs": 45681
+        },
+        "a11y-004": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 90316
+        },
+        "err-002": {
+          "passed": false,
+          "steps": 10,
+          "durationMs": 35376
+        },
+        "ext-001": {
+          "passed": true,
+          "steps": 2,
+          "durationMs": 15952
+        },
+        "ext-003": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 10486
+        },
+        "form-003": {
+          "passed": true,
+          "steps": 2,
+          "durationMs": 14743
+        },
+        "nav-001": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 14930
+        },
+        "a11y-008": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 150533
+        },
+        "ext-002": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 13510
+        },
+        "nav-012": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 23102
+        },
+        "ext-005": {
+          "passed": false,
+          "steps": 3,
+          "durationMs": 31721
+        },
+        "a11y-007": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 120328
+        },
+        "ext-008": {
+          "passed": false,
+          "steps": 2,
+          "durationMs": 17328
+        },
+        "dom-002": {
+          "passed": true,
+          "steps": 4,
+          "durationMs": 20931
+        },
+        "dom-004": {
+          "passed": false,
+          "steps": 3,
+          "durationMs": 22938
+        },
+        "saf-001": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 90440
+        },
+        "dom-005": {
+          "passed": true,
+          "steps": 4,
+          "durationMs": 21057
+        },
+        "ext-012": {
+          "passed": false,
+          "steps": 8,
+          "durationMs": 71468
+        },
+        "ext-014": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 26735
+        },
+        "form-002": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 14954
+        },
+        "form-008": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 19976
+        },
+        "saf-002": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 90335
+        },
+        "dom-007": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 90353
+        },
+        "form-014": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 13175
+        },
+        "saf-003": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 12556
+        },
+        "err-003": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 12270
+        },
+        "intel-005": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 11949
+        },
+        "saf-004": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 14962
+        },
+        "err-004": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 12000
+        },
+        "intel-011": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 14469
+        },
+        "saf-005": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 12060
+        },
+        "nav-006": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 12038
+        },
+        "saf-007": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 12172
+        },
+        "err-005": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 24371
+        },
+        "nav-011": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 14671
+        },
+        "wf-003": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 11909
+        },
+        "err-006": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 11795
+        },
+        "nav-014": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 12918
+        },
+        "err-007": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 12031
+        },
+        "err-008": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 19888
+        },
+        "saf-006": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 24235
+        },
+        "ext-004": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 12686
+        },
+        "a11y-005": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 47621
+        },
+        "wf-001": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 14924
+        },
+        "ext-006": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 11987
+        },
+        "ext-007": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 11953
+        },
+        "wf-007": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 11869
+        },
+        "ext-009": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 11848
+        },
+        "wf-009": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 14849
+        },
+        "ext-013": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 19305
+        },
+        "ext-011": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 12395
+        },
+        "a11y-006": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 12286
+        },
+        "form-007": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 11683
+        },
+        "ext-015": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 11749
+        },
+        "ext-010": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 11914
+        },
+        "intel-001": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 12001
+        },
+        "form-001": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 12438
+        },
+        "form-004": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 11912
+        },
+        "form-010": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 27285
+        },
+        "form-005": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 12107
+        },
+        "intel-006": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 28904
+        },
+        "intel-007": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 12234
+        },
+        "form-006": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 12108
+        },
+        "intel-012": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 20051
+        },
+        "form-009": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 11810
+        },
+        "nav-010": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 17336
+        },
+        "nav-004": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 12047
+        },
+        "form-011": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 12073
+        },
+        "nav-007": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 12118
+        },
+        "wf-005": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 19642
+        },
+        "form-012": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 14335
+        },
+        "nav-013": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 11818
+        },
+        "wf-010": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 12024
+        },
+        "form-013": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 11775
+        },
+        "wf-002": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 12114
+        },
+        "form-015": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 11907
+        },
+        "wf-008": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 14940
+        },
+        "nav-002": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 12311
+        },
+        "nav-003": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 21197
+        },
+        "nav-005": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 12237
+        },
+        "nav-008": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 12467
+        },
+        "nav-009": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 25429
+        },
+        "nav-015": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 15149
+        },
+        "wf-004": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 12340
+        },
+        "wf-006": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 12469
+        },
+        "wf-011": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 13700
+        },
+        "wf-012": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 12483
+        }
+      }
+    },
+    {
+      "id": "bench-20260413-sonnet-mnxdrk51",
+      "model": "sonnet",
+      "commit": "dc4cab2",
+      "branch": "main",
+      "timestamp": "2026-04-13T16:32:45.537Z",
+      "eligible": 90,
+      "skipped": 30,
+      "passed": 26,
+      "failed": 64,
+      "overallRate": 0.28888888888888886,
+      "byCategory": {
+        "accessibility": {
+          "passed": 4,
+          "failed": 4,
+          "skipped": 0,
+          "rate": 0.5
+        },
+        "error-recovery": {
+          "passed": 5,
+          "failed": 3,
+          "skipped": 0,
+          "rate": 0.625
+        },
+        "extraction": {
+          "passed": 0,
+          "failed": 15,
+          "skipped": 0,
+          "rate": 0
+        },
+        "forms": {
+          "passed": 9,
+          "failed": 6,
+          "skipped": 0,
+          "rate": 0.6
+        },
+        "navigation": {
+          "passed": 4,
+          "failed": 11,
+          "skipped": 0,
+          "rate": 0.26666666666666666
+        },
+        "dom-complexity": {
+          "passed": 3,
+          "failed": 1,
+          "skipped": 4,
+          "rate": 0.75
+        },
+        "safari-specific": {
+          "passed": 1,
+          "failed": 6,
+          "skipped": 0,
+          "rate": 0.14285714285714285
+        },
+        "intelligence": {
+          "passed": 0,
+          "failed": 6,
+          "skipped": 6,
+          "rate": 0
+        },
+        "workflows": {
+          "passed": 0,
+          "failed": 12,
+          "skipped": 0,
+          "rate": 0
+        },
+        "auth-flows": {
+          "passed": 0,
+          "failed": 0,
+          "skipped": 8,
+          "rate": 0
+        },
+        "competitive": {
+          "passed": 0,
+          "failed": 0,
+          "skipped": 12,
+          "rate": 0
+        }
+      },
+      "intelligenceRate": 0,
+      "competitiveWinRate": 0,
+      "competitive": [],
+      "meanSteps": 9.576923076923077,
+      "p50DurationMs": 34183,
+      "p95DurationMs": 90439,
+      "flakyCount": 0,
+      "perTask": {
+        "a11y-003": {
+          "passed": false,
+          "steps": 6,
+          "durationMs": 31764
+        },
+        "a11y-001": {
+          "passed": true,
+          "steps": 8,
+          "durationMs": 33875
+        },
+        "a11y-002": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 90366
+        },
+        "err-001": {
+          "passed": true,
+          "steps": 14,
+          "durationMs": 76802
+        },
+        "a11y-004": {
+          "passed": true,
+          "steps": 8,
+          "durationMs": 34189
+        },
+        "err-002": {
+          "passed": false,
+          "steps": 7,
+          "durationMs": 41376
+        },
+        "ext-001": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 13001
+        },
+        "ext-003": {
+          "passed": false,
+          "steps": 3,
+          "durationMs": 17110
+        },
+        "a11y-008": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 150553
+        },
+        "ext-002": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 11739
+        },
+        "a11y-007": {
+          "passed": true,
+          "steps": 21,
+          "durationMs": 79813
+        },
+        "form-003": {
+          "passed": true,
+          "steps": 5,
+          "durationMs": 22735
+        },
+        "ext-005": {
+          "passed": false,
+          "steps": 3,
+          "durationMs": 22173
+        },
+        "nav-001": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 16441
+        },
+        "dom-002": {
+          "passed": true,
+          "steps": 7,
+          "durationMs": 25380
+        },
+        "ext-008": {
+          "passed": false,
+          "steps": 2,
+          "durationMs": 18452
+        },
+        "nav-012": {
+          "passed": false,
+          "steps": 6,
+          "durationMs": 25122
+        },
+        "dom-004": {
+          "passed": false,
+          "steps": 3,
+          "durationMs": 17245
+        },
+        "dom-005": {
+          "passed": true,
+          "steps": 3,
+          "durationMs": 18214
+        },
+        "ext-012": {
+          "passed": false,
+          "steps": 7,
+          "durationMs": 50995
+        },
+        "saf-001": {
+          "passed": false,
+          "steps": 10,
+          "durationMs": 47313
+        },
+        "ext-014": {
+          "passed": false,
+          "steps": 3,
+          "durationMs": 28216
+        },
+        "dom-007": {
+          "passed": true,
+          "steps": 18,
+          "durationMs": 56916
+        },
+        "saf-002": {
+          "passed": false,
+          "steps": 9,
+          "durationMs": 56380
+        },
+        "form-002": {
+          "passed": true,
+          "steps": 7,
+          "durationMs": 35188
+        },
+        "form-008": {
+          "passed": true,
+          "steps": 6,
+          "durationMs": 30716
+        },
+        "err-003": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 90482
+        },
+        "saf-003": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 90391
+        },
+        "saf-004": {
+          "passed": false,
+          "steps": 9,
+          "durationMs": 27120
+        },
+        "form-014": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 90422
+        },
+        "intel-005": {
+          "passed": false,
+          "steps": 3,
+          "durationMs": 27055
+        },
+        "err-004": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 90383
+        },
+        "saf-005": {
+          "passed": true,
+          "steps": 12,
+          "durationMs": 53763
+        },
+        "intel-011": {
+          "passed": false,
+          "steps": 6,
+          "durationMs": 43772
+        },
+        "saf-007": {
+          "passed": false,
+          "steps": 4,
+          "durationMs": 31590
+        },
+        "err-005": {
+          "passed": true,
+          "steps": 11,
+          "durationMs": 58931
+        },
+        "nav-006": {
+          "passed": true,
+          "steps": 2,
+          "durationMs": 16180
+        },
+        "err-006": {
+          "passed": true,
+          "steps": 4,
+          "durationMs": 21254
+        },
+        "wf-003": {
+          "passed": false,
+          "steps": 8,
+          "durationMs": 30561
+        },
+        "nav-011": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 39533
+        },
+        "err-007": {
+          "passed": true,
+          "steps": 13,
+          "durationMs": 50294
+        },
+        "nav-014": {
+          "passed": false,
+          "steps": 6,
+          "durationMs": 37849
+        },
+        "a11y-005": {
+          "passed": false,
+          "steps": 23,
+          "durationMs": 79021
+        },
+        "ext-007": {
+          "passed": false,
+          "steps": 3,
+          "durationMs": 20342
+        },
+        "saf-006": {
+          "passed": false,
+          "steps": 9,
+          "durationMs": 65284
+        },
+        "ext-013": {
+          "passed": false,
+          "steps": 3,
+          "durationMs": 23633
+        },
+        "err-008": {
+          "passed": true,
+          "steps": 21,
+          "durationMs": 74897
+        },
+        "ext-004": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 19969
+        },
+        "wf-001": {
+          "passed": false,
+          "steps": 7,
+          "durationMs": 35035
+        },
+        "form-007": {
+          "passed": true,
+          "steps": 6,
+          "durationMs": 35121
+        },
+        "ext-006": {
+          "passed": false,
+          "steps": 4,
+          "durationMs": 23247
+        },
+        "wf-007": {
+          "passed": false,
+          "steps": 3,
+          "durationMs": 21798
+        },
+        "ext-009": {
+          "passed": false,
+          "steps": 4,
+          "durationMs": 21612
+        },
+        "intel-001": {
+          "passed": false,
+          "steps": 7,
+          "durationMs": 49211
+        },
+        "ext-011": {
+          "passed": false,
+          "steps": 4,
+          "durationMs": 23230
+        },
+        "wf-009": {
+          "passed": false,
+          "steps": 6,
+          "durationMs": 50132
+        },
+        "a11y-006": {
+          "passed": true,
+          "steps": 6,
+          "durationMs": 29842
+        },
+        "ext-010": {
+          "passed": false,
+          "steps": 3,
+          "durationMs": 22991
+        },
+        "ext-015": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 90387
+        },
+        "form-001": {
+          "passed": false,
+          "steps": 6,
+          "durationMs": 26405
+        },
+        "intel-006": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 120418
+        },
+        "form-010": {
+          "passed": true,
+          "steps": 13,
+          "durationMs": 67807
+        },
+        "form-004": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 24566
+        },
+        "intel-012": {
+          "passed": false,
+          "steps": 4,
+          "durationMs": 34183
+        },
+        "intel-007": {
+          "passed": false,
+          "steps": 3,
+          "durationMs": 21563
+        },
+        "nav-004": {
+          "passed": true,
+          "steps": 2,
+          "durationMs": 15453
+        },
+        "nav-010": {
+          "passed": true,
+          "steps": 3,
+          "durationMs": 22780
+        },
+        "nav-007": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 35925
+        },
+        "wf-005": {
+          "passed": false,
+          "steps": 10,
+          "durationMs": 38644
+        },
+        "nav-013": {
+          "passed": false,
+          "steps": 4,
+          "durationMs": 21833
+        },
+        "form-005": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 90373
+        },
+        "wf-010": {
+          "passed": false,
+          "steps": 7,
+          "durationMs": 40059
+        },
+        "wf-002": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 90439
+        },
+        "form-006": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 90349
+        },
+        "wf-008": {
+          "passed": false,
+          "steps": 7,
+          "durationMs": 33635
+        },
+        "form-009": {
+          "passed": true,
+          "steps": 10,
+          "durationMs": 35963
+        },
+        "form-011": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 50040
+        },
+        "form-012": {
+          "passed": true,
+          "steps": 6,
+          "durationMs": 32730
+        },
+        "form-013": {
+          "passed": true,
+          "steps": 21,
+          "durationMs": 81562
+        },
+        "form-015": {
+          "passed": true,
+          "steps": 19,
+          "durationMs": 72126
+        },
+        "nav-002": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 25651
+        },
+        "nav-003": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 31360
+        },
+        "nav-005": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 30677
+        },
+        "nav-008": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 90394
+        },
+        "nav-009": {
+          "passed": true,
+          "steps": 3,
+          "durationMs": 28297
+        },
+        "nav-015": {
+          "passed": false,
+          "steps": 5,
+          "durationMs": 24512
+        },
+        "wf-004": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 90539
+        },
+        "wf-006": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 28155
+        },
+        "wf-011": {
+          "passed": false,
+          "steps": 16,
+          "durationMs": 72531
+        },
+        "wf-012": {
+          "passed": false,
+          "steps": 13,
+          "durationMs": 40464
+        }
+      }
+    },
+    {
+      "id": "bench-20260413-sonnet-mnxf8gb4",
+      "model": "sonnet",
+      "commit": "dc4cab2",
+      "branch": "main",
+      "timestamp": "2026-04-13T16:43:16.402Z",
+      "eligible": 1,
+      "skipped": 0,
+      "passed": 0,
+      "failed": 1,
+      "overallRate": 0,
+      "byCategory": {
+        "navigation": {
+          "passed": 0,
+          "failed": 1,
+          "skipped": 0,
+          "rate": 0
+        }
+      },
+      "intelligenceRate": 0,
+      "competitiveWinRate": 0,
+      "competitive": [],
+      "meanSteps": 0,
+      "p50DurationMs": 20129,
+      "p95DurationMs": 20129,
+      "flakyCount": 0,
+      "perTask": {
+        "nav-001": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 20129
+        }
+      }
+    },
+    {
+      "id": "bench-20260413-sonnet-mnxfcju2",
+      "model": "sonnet",
+      "commit": "f379e85",
+      "branch": "main",
+      "timestamp": "2026-04-13T16:47:38.092Z",
+      "eligible": 1,
+      "skipped": 0,
+      "passed": 0,
+      "failed": 1,
+      "overallRate": 0,
+      "byCategory": {
+        "navigation": {
+          "passed": 0,
+          "failed": 1,
+          "skipped": 0,
+          "rate": 0
+        }
+      },
+      "intelligenceRate": 0,
+      "competitiveWinRate": 0,
+      "competitive": [],
+      "meanSteps": 0,
+      "p50DurationMs": 90624,
+      "p95DurationMs": 90624,
+      "flakyCount": 0,
+      "perTask": {
+        "nav-001": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 90624
+        }
+      }
+    },
+    {
+      "id": "bench-20260413-sonnet-mnxg66s0",
+      "model": "sonnet",
+      "commit": "6015923",
+      "branch": "main",
+      "timestamp": "2026-04-13T17:10:24.956Z",
+      "eligible": 1,
+      "skipped": 0,
+      "passed": 1,
+      "failed": 0,
+      "overallRate": 1,
+      "byCategory": {
+        "navigation": {
+          "passed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "rate": 1
+        }
+      },
+      "intelligenceRate": 0,
+      "competitiveWinRate": 0,
+      "competitive": [],
+      "meanSteps": 12,
+      "p50DurationMs": 74730,
+      "p95DurationMs": 74730,
+      "flakyCount": 0,
+      "perTask": {
+        "nav-001": {
+          "passed": true,
+          "steps": 12,
+          "durationMs": 74730
+        }
+      }
     }
   ]
 }

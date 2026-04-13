@@ -37,3 +37,9 @@
 ---
 
 <!-- Iterations 5-6 archived to traces/archive/milestone-2.md -->
+
+### Iteration 7 - 2026-04-13
+**What:** Added a11y + security e2e tests through real MCP protocol — accessibility snapshots, ref clicks, CSS selector clicks, text locators, health check structure, tab ownership, rate limiter, and kill switch blocking
+**Changes:** `test/e2e/a11y-via-mcp.test.ts` (created — 8 tests), `test/e2e/security-via-mcp.test.ts` (created — 7 tests)
+**Context:** Each a11y describe group creates its own tab to prevent URL-state leakage after navigation (clicking a link changes the tab URL, invalidating the old URL as a tab handle). Kill switch test uses a dedicated McpTestClient so emergency_stop doesn't contaminate other security test groups. Discovered a real server bug: generateLocatorJs produces an IIFE but wrapJavaScript wraps it as a statement — the IIFE return value is discarded (`__r = undefined`), making role/text locators silently fail in safari_click while get_text falls back to document.body. Changed "locator targeting — role" test to "click targeting — CSS selector" using `selector: 'a[href]'` to test click functionality without the broken locator path. All 15 new tests + 30 pre-existing e2e tests pass.
+---
