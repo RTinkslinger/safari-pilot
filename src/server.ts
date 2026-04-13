@@ -421,6 +421,10 @@ export class SafariPilotServer {
     return this._engine;
   }
 
+  getToolDefinition(name: string): ToolDefinition | undefined {
+    return this.tools.get(name);
+  }
+
   async start(): Promise<void> {
     await this.initialize();
     console.error('Safari Pilot MCP server started');
