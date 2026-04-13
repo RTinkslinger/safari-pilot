@@ -18,7 +18,7 @@ import { resolve } from 'node:path';
 const ROOT = resolve(__dirname, '../..');
 const DAEMON_PATH = resolve(ROOT, 'bin/SafariPilotd');
 
-describe('Phase 2 E2E — Daemon Engine vs AppleScript Engine', () => {
+describe.skipIf(process.env.CI === 'true')('Phase 2 E2E — Daemon Engine vs AppleScript Engine', () => {
   let daemon: DaemonEngine;
   let applescript: AppleScriptEngine;
 

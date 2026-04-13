@@ -15,7 +15,7 @@ import { ExtractionTools } from '../../src/tools/extraction.js';
 import { InteractionTools } from '../../src/tools/interaction.js';
 import { TabOwnership } from '../../src/security/tab-ownership.js';
 
-describe('Phase 1 E2E Smoke Test — Real Safari', () => {
+describe.skipIf(process.env.CI === 'true')('Phase 1 E2E Smoke Test — Real Safari', () => {
   const engine = new AppleScriptEngine();
   const nav = new NavigationTools(engine);
   const extract = new ExtractionTools(engine);

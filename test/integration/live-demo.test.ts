@@ -5,7 +5,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { SafariPilotServer } from '../../src/server.js';
 
-describe('Live Demo — Hacker News', () => {
+describe.skipIf(process.env.CI === 'true')('Live Demo — Hacker News', () => {
   let server: SafariPilotServer;
   let tabUrl: string;
 

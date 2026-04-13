@@ -63,7 +63,8 @@ export class AppleScriptEngine extends BaseEngine {
    * Build an AppleScript that targets a tab by URL and executes JS inside it.
    */
   public buildTabScript(url: string, jsCode: string): string {
-    const escapedUrl = url.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+    const safeUrl = url ?? '';
+    const escapedUrl = safeUrl.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
     const escapedJs = jsCode.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
     return `tell application "Safari"
   set _result to ""

@@ -13,7 +13,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { SafariPilotServer } from '../../src/server.js';
 import { AppleScriptEngine } from '../../src/engines/applescript.js';
 
-describe('Extension Server Round-Trip Tests', () => {
+describe.skipIf(process.env.CI === 'true')('Extension Server Round-Trip Tests', () => {
   let server: SafariPilotServer;
   const directEngine = new AppleScriptEngine();
   let testTabUrl: string;

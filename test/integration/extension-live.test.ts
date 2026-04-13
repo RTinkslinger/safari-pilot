@@ -25,7 +25,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { AppleScriptEngine } from '../../src/engines/applescript.js';
 
-describe('Extension Live Tests — REAL E2E (10 tests)', () => {
+describe.skipIf(process.env.CI === 'true')('Extension Live Tests — REAL E2E (10 tests)', () => {
   const engine = new AppleScriptEngine();
   let testTabUrl: string;
 

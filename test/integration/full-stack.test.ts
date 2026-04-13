@@ -21,7 +21,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { SafariPilotServer } from '../../src/server.js';
 
-describe('Full Stack Integration — MCP Server → Security → Engine → Safari', () => {
+describe.skipIf(process.env.CI === 'true')('Full Stack Integration — MCP Server → Security → Engine → Safari', () => {
   let server: SafariPilotServer;
 
   beforeAll(async () => {

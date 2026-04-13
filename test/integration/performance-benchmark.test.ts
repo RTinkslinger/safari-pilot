@@ -78,7 +78,7 @@ afterAll(async () => {
 
 // ── Benchmark 1: DaemonEngine ─────────────────────────────────────────────────
 
-describe('Performance Benchmark — DaemonEngine', () => {
+describe.skipIf(process.env.CI === 'true')('Performance Benchmark — DaemonEngine', () => {
   let daemonStats: ReturnType<typeof stats>;
   const daemonLatencies: number[] = [];
 
@@ -126,7 +126,7 @@ describe('Performance Benchmark — DaemonEngine', () => {
 
 // ── Benchmark 2: AppleScriptEngine ────────────────────────────────────────────
 
-describe('Performance Benchmark — AppleScriptEngine', () => {
+describe.skipIf(process.env.CI === 'true')('Performance Benchmark — AppleScriptEngine', () => {
   const asLatencies: number[] = [];
 
   it(`applescript is available before benchmarking`, async () => {
@@ -157,7 +157,7 @@ describe('Performance Benchmark — AppleScriptEngine', () => {
 
 // ── Cross-engine comparison ───────────────────────────────────────────────────
 
-describe('Performance Benchmark — Cross-Engine Comparison', () => {
+describe.skipIf(process.env.CI === 'true')('Performance Benchmark — Cross-Engine Comparison', () => {
   const daemonLatencies2: number[] = [];
   const asLatencies2: number[] = [];
 
