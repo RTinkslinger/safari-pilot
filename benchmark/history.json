@@ -1,1 +1,140 @@
-{"runs":[]}
+{
+  "runs": [
+    {
+      "id": "bench-20260413-sonnet-mnxb7o21",
+      "model": "sonnet",
+      "commit": "06c9f7f",
+      "branch": "feat/benchmark-suite",
+      "timestamp": "2026-04-13T14:50:27.330Z",
+      "eligible": 1,
+      "skipped": 0,
+      "passed": 0,
+      "failed": 1,
+      "overallRate": 0,
+      "byCategory": {
+        "navigation": {
+          "passed": 0,
+          "failed": 1,
+          "skipped": 0,
+          "rate": 0
+        }
+      },
+      "intelligenceRate": 0,
+      "competitiveWinRate": 0,
+      "competitive": [],
+      "meanSteps": 0,
+      "p50DurationMs": 6137,
+      "p95DurationMs": 6137,
+      "flakyCount": 0,
+      "perTask": {
+        "nav-001": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 6137
+        }
+      }
+    },
+    {
+      "id": "bench-20260413-sonnet-mnxb8sc1",
+      "model": "sonnet",
+      "commit": "311f7db",
+      "branch": "feat/benchmark-suite",
+      "timestamp": "2026-04-13T14:51:19.649Z",
+      "eligible": 1,
+      "skipped": 0,
+      "passed": 0,
+      "failed": 1,
+      "overallRate": 0,
+      "byCategory": {
+        "navigation": {
+          "passed": 0,
+          "failed": 1,
+          "skipped": 0,
+          "rate": 0
+        }
+      },
+      "intelligenceRate": 0,
+      "competitiveWinRate": 0,
+      "competitive": [],
+      "meanSteps": 0,
+      "p50DurationMs": 6256,
+      "p95DurationMs": 6256,
+      "flakyCount": 0,
+      "perTask": {
+        "nav-001": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 6256
+        }
+      }
+    },
+    {
+      "id": "bench-20260413-sonnet-mnxbactm",
+      "model": "sonnet",
+      "commit": "5cb3759",
+      "branch": "feat/benchmark-suite",
+      "timestamp": "2026-04-13T14:52:42.204Z",
+      "eligible": 1,
+      "skipped": 0,
+      "passed": 0,
+      "failed": 1,
+      "overallRate": 0,
+      "byCategory": {
+        "navigation": {
+          "passed": 0,
+          "failed": 1,
+          "skipped": 0,
+          "rate": 0
+        }
+      },
+      "intelligenceRate": 0,
+      "competitiveWinRate": 0,
+      "competitive": [],
+      "meanSteps": 0,
+      "p50DurationMs": 15602,
+      "p95DurationMs": 15602,
+      "flakyCount": 0,
+      "perTask": {
+        "nav-001": {
+          "passed": false,
+          "steps": 0,
+          "durationMs": 15602
+        }
+      }
+    },
+    {
+      "id": "bench-20260413-sonnet-mnxbc1lf",
+      "model": "sonnet",
+      "commit": "a5c87b0",
+      "branch": "feat/benchmark-suite",
+      "timestamp": "2026-04-13T14:54:02.099Z",
+      "eligible": 1,
+      "skipped": 0,
+      "passed": 1,
+      "failed": 0,
+      "overallRate": 1,
+      "byCategory": {
+        "navigation": {
+          "passed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "rate": 1
+        }
+      },
+      "intelligenceRate": 0,
+      "competitiveWinRate": 0,
+      "competitive": [],
+      "meanSteps": 3,
+      "p50DurationMs": 16731,
+      "p95DurationMs": 16731,
+      "flakyCount": 0,
+      "perTask": {
+        "nav-001": {
+          "passed": true,
+          "steps": 3,
+          "durationMs": 16731
+        }
+      }
+    }
+  ]
+}
