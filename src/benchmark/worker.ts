@@ -228,7 +228,7 @@ export async function executeTask(
     steps: parsed.steps,
     durationMs,
     toolsUsed: parsed.toolsUsed,
-    enginesUsed: [],
+    enginesUsed: {},
     reasoningExcerpts: parsed.reasoningExcerpts,
     rawOutput: stdout,
   };

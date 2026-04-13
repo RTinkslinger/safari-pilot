@@ -284,7 +284,7 @@ export function computeFlakiness(runs: RunReport[], taskId: string): boolean {
 
   if (dataPoints.length < 2) return false;
 
-  const passRatio = dataPoints.reduce((sum, v) => sum + v, 0) / dataPoints.length;
+  const passRatio = dataPoints.reduce((sum: number, v) => sum + v, 0) / dataPoints.length;
   return passRatio > 0.2 && passRatio < 0.8;
 }
 
