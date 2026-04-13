@@ -3,12 +3,14 @@
 ## Project Summary
 - **Milestone 1 (iter 1-3):** Extension build pipeline, config externalisation, distribution hardening, enforcement hooks
 - **Milestone 2 (iter 4-6):** P0 accessibility/ARIA/auto-wait/locator, benchmark fixture server, benchmark reporter. Fixed type contract mismatches in types.ts (enginesUsed, perTask, evalDetails).
+- **Milestone 3 (iter 7-9):** MCP STDIO transport fix (was never wired), benchmark suite (120 tasks, CLI runner), real e2e tests (45 tests, zero mocks), locator IIFE + URL trailing-slash bugs fixed, e2e enforcement hooks, first real baseline 37.8%
 
 ## Milestone Index
 | # | Iterations | Focus | Key Decisions |
 |---|------------|-------|---------------|
 | 1 | 1-3 | Extension pipeline + config + hardening | Three-persona distribution model; codesign via xcodebuild only; enforcement hooks |
 | 2 | 4-6 | ARIA/auto-wait/locator + benchmark foundation | enginesUsed→Record<string,number>; perTask→Record<string,PerTaskSummary>; flakiness threshold 0.2-0.8 |
+| 3 | 7-9 | MCP fix + benchmark suite + real e2e + baseline | MCP Server+StdioServerTransport in index.ts; --tools ToolSearch blocks Bash/WebFetch; e2e=spawn real processes; ID-based MCP response matching; generateLocatorJs emits raw body not IIFE |
 
 ## Current Work
 
@@ -38,8 +40,4 @@
 
 <!-- Iterations 5-6 archived to traces/archive/milestone-2.md -->
 
-### Iteration 7 - 2026-04-13
-**What:** Added a11y + security e2e tests through real MCP protocol — accessibility snapshots, ref clicks, CSS selector clicks, text locators, health check structure, tab ownership, rate limiter, and kill switch blocking
-**Changes:** `test/e2e/a11y-via-mcp.test.ts` (created — 8 tests), `test/e2e/security-via-mcp.test.ts` (created — 7 tests)
-**Context:** Each a11y describe group creates its own tab to prevent URL-state leakage after navigation (clicking a link changes the tab URL, invalidating the old URL as a tab handle). Kill switch test uses a dedicated McpTestClient so emergency_stop doesn't contaminate other security test groups. Discovered a real server bug: generateLocatorJs produces an IIFE but wrapJavaScript wraps it as a statement — the IIFE return value is discarded (`__r = undefined`), making role/text locators silently fail in safari_click while get_text falls back to document.body. Changed "locator targeting — role" test to "click targeting — CSS selector" using `selector: 'a[href]'` to test click functionality without the broken locator path. All 15 new tests + 30 pre-existing e2e tests pass.
----
+<!-- Iterations 7-9 archived to traces/archive/milestone-3.md -->
