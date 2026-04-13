@@ -83,6 +83,7 @@ export function buildClaudeArgs(
     '--permission-mode', 'bypassPermissions',
     '--disable-slash-commands',
     '--no-session-persistence',
+    '--setting-sources', '',
     '--max-budget-usd', String(task.max_budget_usd),
     '--strict-mcp-config',
     '--mcp-config', resolvedConfig,
@@ -128,7 +129,8 @@ export async function executeTask(
   timeoutMultiplier: number
 ): Promise<TaskResult> {
   const startMs = Date.now();
-  const timeoutMs = task.timeout_ms * timeoutMultiplier;
+  const SESSION_OVERHEAD_MS = 30_000;
+  const timeoutMs = Math.max(task.timeout_ms * timeoutMultiplier, 60_000) + SESSION_OVERHEAD_MS;
 
   let stdout = '';
   let timedOut = false;
