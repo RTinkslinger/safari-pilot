@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Accessible App Fixture</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: sans-serif; margin: 0; }
+    header { background: #1a1a2e; color: white; padding: 1rem 2rem; }
+    nav { background: #16213e; padding: 0.75rem 2rem; }
+    nav ul { list-style: none; margin: 0; padding: 0; display: flex; gap: 1.5rem; }
+    nav a { color: #eee; text-decoration: none; }
+    main { padding: 2rem; max-width: 700px; margin: 0 auto; }
+    form { display: flex; flex-direction: column; gap: 1rem; margin-top: 1rem; }
+    label { font-weight: bold; display: block; margin-bottom: 0.25rem; }
+    input, textarea, select { width: 100%; padding: 0.5rem; font-size: 1rem; border: 1px solid #ccc; border-radius: 4px; }
+    .field-group { display: flex; flex-direction: column; }
+    .search-group { position: relative; }
+    #submit-btn { padding: 0.6rem 1.5rem; background: #0070f3; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 1rem; width: fit-content; }
+    #result { margin-top: 1.5rem; font-weight: bold; color: green; font-size: 1.1rem; min-height: 1.5rem; }
+    footer { background: #f0f0f0; padding: 1rem 2rem; text-align: center; color: #666; margin-top: 2rem; }
+  </style>
+</head>
+<body>
+
+  <header role="banner">
+    <h1>Accessible Demo App</h1>
+  </header>
+
+  <nav role="navigation" aria-label="Main navigation">
+    <ul>
+      <li><a href="#main-form">Form</a></li>
+      <li><a href="#about">About</a></li>
+      <li><a href="#contact">Contact</a></li>
+    </ul>
+  </nav>
+
+  <main id="main-content" role="main">
+    <h2 id="form-heading">Submit a Query</h2>
+
+    <form id="main-form" aria-labelledby="form-heading" novalidate>
+
+      <!-- searchbox role via input[type=search] -->
+      <div class="field-group search-group">
+        <label for="search-input">Search</label>
+        <input
+          id="search-input"
+          name="search"
+          type="search"
+          role="searchbox"
+          aria-label="Search query"
+          placeholder="Enter search term"
+        >
+      </div>
+
+      <!-- Named text input -->
+      <div class="field-group">
+        <label for="full-name">Full Name</label>
+        <input
+          id="full-name"
+          name="fullName"
+          type="text"
+          aria-required="true"
+          placeholder="Your full name"
+        >
+      </div>
+
+      <!-- Textarea with aria-labelledby -->
+      <div class="field-group">
+        <label id="message-label" for="message">Message</label>
+        <textarea
+          id="message"
+          name="message"
+          aria-labelledby="message-label"
+          rows="4"
+          placeholder="Type your message here"
+        ></textarea>
+      </div>
+
+      <!-- Submit button — accessible name "Submit" -->
+      <button id="submit-btn" type="submit" aria-label="Submit">Submit</button>
+    </form>
+
+    <div id="result" role="status" aria-live="polite"></div>
+
+    <section id="about" aria-labelledby="about-heading">
+      <h2 id="about-heading">About</h2>
+      <p>This fixture demonstrates proper ARIA landmark usage and accessible form patterns.</p>
+    </section>
+  </main>
+
+  <footer role="contentinfo">
+    <p>Accessibility fixture — Safari Pilot benchmark</p>
+  </footer>
+
+  <script>
+    document.getElementById('main-form').addEventListener('submit', (e) => {
+      e.preventDefault();
+      const search = document.getElementById('search-input').value;
+      const name = document.getElementById('full-name').value;
+      const msg = document.getElementById('message').value;
+      document.getElementById('result').textContent =
+        `Form submitted via a11y! Search: "${search}", Name: "${name}", Message: "${msg}"`;
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,22 @@
+{
+  "id": "dom-003",
+  "category": "dom-complexity",
+  "difficulty": "medium",
+  "intent": "In the shadow DOM fixture, find text hidden in nested shadow roots and extract it",
+  "start_url": "http://localhost:9876/dom-complexity/shadow-dom.html",
+  "requires": {
+    "tools": ["safari_navigate", "safari_get_text", "safari_snapshot"],
+    "engines": ["extension"],
+    "auth_domains": [],
+    "features": [],
+    "competitive": false
+  },
+  "eval": {
+    "type": "contains",
+    "must_include": ["shadow"],
+    "case_insensitive": true
+  },
+  "timeout_ms": 45000,
+  "max_budget_usd": 0.25,
+  "tags": ["dom-complexity", "shadow-dom", "nested", "extraction", "fixture", "extension"]
+}

@@ -1,0 +1,22 @@
+{
+  "id": "err-002",
+  "category": "error-recovery",
+  "difficulty": "easy",
+  "intent": "Attempt to extract text from the CSS selector \"#nonexistent\" on example.com and report what happened",
+  "start_url": "https://example.com",
+  "requires": {
+    "tools": ["safari_navigate", "safari_get_text"],
+    "engines": [],
+    "auth_domains": [],
+    "features": [],
+    "competitive": false
+  },
+  "eval": {
+    "type": "contains",
+    "must_include": ["error", "not found"],
+    "case_insensitive": true
+  },
+  "timeout_ms": 30000,
+  "max_budget_usd": 0.25,
+  "tags": ["error-recovery", "missing-element", "selector", "error-message", "live"]
+}

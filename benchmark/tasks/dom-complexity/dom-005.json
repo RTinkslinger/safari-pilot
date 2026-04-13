@@ -1,0 +1,22 @@
+{
+  "id": "dom-005",
+  "category": "dom-complexity",
+  "difficulty": "medium",
+  "intent": "Find a lazy-loaded image on the fixture page by scrolling down to trigger it, then extract its alt text",
+  "start_url": "http://localhost:9876/dom-complexity/lazy-load.html",
+  "requires": {
+    "tools": ["safari_navigate", "safari_scroll", "safari_get_text", "safari_snapshot"],
+    "engines": [],
+    "auth_domains": [],
+    "features": [],
+    "competitive": false
+  },
+  "eval": {
+    "type": "contains",
+    "must_include": ["Lazy loaded"],
+    "case_insensitive": false
+  },
+  "timeout_ms": 45000,
+  "max_budget_usd": 0.25,
+  "tags": ["dom-complexity", "lazy-load", "scroll", "image", "fixture"]
+}

@@ -1,0 +1,22 @@
+{
+  "id": "err-003",
+  "category": "error-recovery",
+  "difficulty": "medium",
+  "intent": "On the cookie banner fixture page, dismiss the cookie consent overlay, then click the main action button and verify it was clicked",
+  "start_url": "http://localhost:9876/error-recovery/cookie-banner.html",
+  "requires": {
+    "tools": ["safari_navigate", "safari_snapshot", "safari_click", "safari_get_text"],
+    "engines": [],
+    "auth_domains": [],
+    "features": [],
+    "competitive": false
+  },
+  "eval": {
+    "type": "contains",
+    "must_include": ["clicked"],
+    "case_insensitive": true
+  },
+  "timeout_ms": 45000,
+  "max_budget_usd": 0.25,
+  "tags": ["error-recovery", "cookie-banner", "overlay", "dismiss", "fixture"]
+}

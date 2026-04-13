@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Cookie Banner Fixture</title>
+  <style>
+    body { font-family: sans-serif; padding: 2rem; }
+    #overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.7);
+      display: flex;
+      align-items: flex-end;
+      justify-content: center;
+      z-index: 1000;
+    }
+    #banner {
+      background: white;
+      padding: 1.5rem 2rem;
+      border-radius: 8px 8px 0 0;
+      max-width: 600px;
+      width: 100%;
+      text-align: center;
+    }
+    #accept-btn {
+      background: #0070f3;
+      color: white;
+      border: none;
+      padding: 0.6rem 1.5rem;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 1rem;
+      margin-top: 0.75rem;
+    }
+    #main-content { padding: 1rem; }
+    #main-btn {
+      padding: 0.6rem 1.5rem;
+      font-size: 1rem;
+      cursor: pointer;
+    }
+    #result { margin-top: 1rem; font-weight: bold; color: green; }
+  </style>
+</head>
+<body>
+  <div id="overlay">
+    <div id="banner" role="dialog" aria-label="Cookie consent">
+      <h2>We use cookies</h2>
+      <p>This site uses cookies to improve your experience. By clicking Accept, you agree to our cookie policy.</p>
+      <button id="accept-btn">Accept</button>
+    </div>
+  </div>
+
+  <div id="main-content">
+    <h1>Cookie Banner Fixture</h1>
+    <p>Dismiss the cookie overlay first, then click the button below.</p>
+    <button id="main-btn">Main action</button>
+    <div id="result"></div>
+  </div>
+
+  <script>
+    document.getElementById('accept-btn').addEventListener('click', () => {
+      document.getElementById('overlay').remove();
+    });
+
+    document.getElementById('main-btn').addEventListener('click', () => {
+      document.getElementById('result').textContent = 'Main action clicked!';
+    });
+  </script>
+</body>
+</html>

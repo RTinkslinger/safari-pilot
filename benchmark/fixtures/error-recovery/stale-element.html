@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Stale Element Fixture</title>
+  <style>
+    body { font-family: sans-serif; padding: 2rem; }
+    button { padding: 0.5rem 1rem; font-size: 1rem; cursor: pointer; margin-top: 1rem; }
+    #result { margin-top: 1rem; font-weight: bold; color: green; }
+  </style>
+</head>
+<body>
+  <h1>Stale Element Fixture</h1>
+  <p>The first button replaces itself on click. Click the replacement to succeed.</p>
+
+  <div id="btn-container">
+    <button id="original-btn">Click me (will be replaced)</button>
+  </div>
+  <div id="result"></div>
+
+  <script>
+    document.getElementById('original-btn').addEventListener('click', () => {
+      // Replace the button with a new element — simulates DOM mutation / stale element
+      const container = document.getElementById('btn-container');
+      container.innerHTML = `
+        <p id="replacement-note">Original button replaced. Click the replacement below.</p>
+        <button id="replacement-btn">Replacement button</button>
+      `;
+      document.getElementById('replacement-btn').addEventListener('click', () => {
+        document.getElementById('result').textContent = 'Replacement clicked! Stale element handled correctly.';
+      });
+    });
+  </script>
+</body>
+</html>

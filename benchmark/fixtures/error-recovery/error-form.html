@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Error Form Fixture</title>
+  <style>
+    body { font-family: sans-serif; padding: 2rem; }
+    #overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.6);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 100;
+    }
+    #modal {
+      background: white;
+      padding: 2rem;
+      border-radius: 8px;
+      max-width: 400px;
+      text-align: center;
+    }
+    #dismiss-btn {
+      margin-top: 1rem;
+      padding: 0.5rem 1.2rem;
+      cursor: pointer;
+      background: #333;
+      color: white;
+      border: none;
+      border-radius: 4px;
+    }
+    form { display: flex; flex-direction: column; gap: 0.75rem; max-width: 360px; margin-top: 1rem; }
+    input { padding: 0.4rem; font-size: 1rem; }
+    .error { color: red; font-size: 0.9rem; display: none; }
+    #submit-btn { padding: 0.5rem 1rem; cursor: pointer; }
+    #success { color: green; font-weight: bold; margin-top: 1rem; display: none; }
+  </style>
+</head>
+<body>
+  <!-- Step 1: Dismiss this overlay -->
+  <div id="overlay">
+    <div id="modal" role="dialog" aria-label="Welcome message">
+      <h2>Welcome!</h2>
+      <p>Please register to continue. Dismiss this message to access the form.</p>
+      <button id="dismiss-btn">Got it</button>
+    </div>
+  </div>
+
+  <h1>Registration Form</h1>
+  <p>Fill in a valid email and submit. The first attempt will trigger a validation error — correct it and resubmit.</p>
+
+  <form id="reg-form" novalidate>
+    <label for="email">Email address</label>
+    <input id="email" name="email" type="email" placeholder="you@example.com" required>
+    <span id="email-error" class="error" role="alert"></span>
+
+    <label for="username">Username</label>
+    <input id="username" name="username" type="text" placeholder="Choose a username" required>
+    <span id="username-error" class="error" role="alert"></span>
+
+    <button id="submit-btn" type="submit">Register</button>
+  </form>
+
+  <div id="success">Registration successful! Welcome aboard.</div>
+
+  <script>
+    let submitCount = 0;
+
+    document.getElementById('dismiss-btn').addEventListener('click', () => {
+      document.getElementById('overlay').remove();
+    });
+
+    document.getElementById('reg-form').addEventListener('submit', (e) => {
+      e.preventDefault();
+      submitCount++;
+
+      const email = document.getElementById('email').value.trim();
+      const username = document.getElementById('username').value.trim();
+      const emailErr = document.getElementById('email-error');
+      const usernameErr = document.getElementById('username-error');
+
+      emailErr.style.display = 'none';
+      usernameErr.style.display = 'none';
+
+      let hasError = false;
+
+      // First submission always triggers a validation error regardless of input
+      if (submitCount === 1) {
+        emailErr.textContent = 'Please confirm your email address is correct and try again.';
+        emailErr.style.display = 'block';
+        hasError = true;
+      } else {
+        // Subsequent submissions: real validation
+        if (!email || !email.includes('@')) {
+          emailErr.textContent = 'A valid email address is required.';
+          emailErr.style.display = 'block';
+          hasError = true;
+        }
+        if (!username || username.length < 3) {
+          usernameErr.textContent = 'Username must be at least 3 characters.';
+          usernameErr.style.display = 'block';
+          hasError = true;
+        }
+      }
+
+      if (!hasError) {
+        document.getElementById('reg-form').style.display = 'none';
+        document.getElementById('success').style.display = 'block';
+      }
+    });
+  </script>
+</body>
+</html>

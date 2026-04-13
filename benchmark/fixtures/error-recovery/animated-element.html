@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Animated Element Fixture</title>
+  <style>
+    body { font-family: sans-serif; padding: 2rem; min-height: 400px; }
+    #moving-btn {
+      position: absolute;
+      padding: 0.6rem 1.2rem;
+      font-size: 1rem;
+      cursor: pointer;
+      background: #e74c3c;
+      color: white;
+      border: none;
+      border-radius: 4px;
+    }
+    #result { position: fixed; bottom: 2rem; left: 2rem; font-weight: bold; color: green; font-size: 1.1rem; }
+  </style>
+</head>
+<body>
+  <h1>Animated / Moving Element Fixture</h1>
+  <p>The red button moves to a new position every 500ms. Click it to succeed.</p>
+
+  <button id="moving-btn">Moving button</button>
+  <div id="result"></div>
+
+  <script>
+    const btn = document.getElementById('moving-btn');
+    const positions = [
+      { top: 150, left: 100 },
+      { top: 200, left: 400 },
+      { top: 300, left: 200 },
+      { top: 180, left: 350 },
+      { top: 250, left: 150 },
+    ];
+    let idx = 0;
+
+    function moveBtn() {
+      const pos = positions[idx % positions.length];
+      btn.style.top = pos.top + 'px';
+      btn.style.left = pos.left + 'px';
+      idx++;
+    }
+
+    moveBtn();
+    const interval = setInterval(moveBtn, 500);
+
+    btn.addEventListener('click', () => {
+      clearInterval(interval);
+      document.getElementById('result').textContent = 'Moving button clicked! Success.';
+    });
+  </script>
+</body>
+</html>

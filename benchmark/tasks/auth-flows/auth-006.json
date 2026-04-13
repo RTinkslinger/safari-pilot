@@ -1,0 +1,31 @@
+{
+  "id": "auth-006",
+  "category": "auth-flows",
+  "difficulty": "medium",
+  "intent": "On X (Twitter), navigate to Settings and extract the account information section shown on the settings page",
+  "start_url": "https://x.com/settings",
+  "requires": {
+    "tools": ["safari_navigate", "safari_snapshot", "safari_get_text"],
+    "engines": [],
+    "auth_domains": ["x.com"],
+    "features": [],
+    "competitive": false
+  },
+  "eval": {
+    "type": "structured_output",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "settings_found": { "type": "boolean" }
+      },
+      "required": ["settings_found"]
+    }
+  },
+  "eval_fallback": {
+    "type": "llm_judge",
+    "criteria": "The agent successfully navigated to X Settings and extracted visible account information from the page"
+  },
+  "timeout_ms": 60000,
+  "max_budget_usd": 0.35,
+  "tags": ["auth-flows", "x.com", "twitter", "settings", "live"]
+}

@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Nested Iframes Fixture</title>
+  <style>
+    body { font-family: sans-serif; padding: 2rem; }
+    iframe { border: 2px solid #888; margin: 0.5rem; display: block; }
+  </style>
+</head>
+<body>
+  <h1>Nested Iframes — 3 Levels Deep</h1>
+  <p>Level 1 (this page) → Level 2 → Level 3 (deepest)</p>
+
+  <!--
+    Level 1 → Level 2: an iframe whose srcdoc embeds another iframe
+    Level 2 → Level 3: that inner iframe embeds the deepest content
+    All via srcdoc so it works with the local fixture server.
+  -->
+  <iframe
+    id="level1"
+    width="600"
+    height="300"
+    title="Level 1 iframe"
+    srcdoc="
+      <html><body style='font-family:sans-serif;padding:1rem'>
+        <p>Level 2 content</p>
+        <iframe
+          id='level2'
+          width='500'
+          height='150'
+          title='Level 2 iframe'
+          srcdoc='
+            &lt;html&gt;&lt;body style=&quot;font-family:sans-serif;padding:1rem&quot;&gt;
+              &lt;p id=&quot;deepest&quot;&gt;Deepest level content — level 3&lt;/p&gt;
+            &lt;/body&gt;&lt;/html&gt;
+          '
+        ></iframe>
+      </body></html>
+    "
+  ></iframe>
+</body>
+</html>

@@ -1,0 +1,32 @@
+{
+  "id": "a11y-008",
+  "category": "accessibility",
+  "difficulty": "hard",
+  "intent": "Starting from Wikipedia's Main Page, navigate to the \"WebKit\" article using only accessibility tree refs (no CSS selectors or direct URLs), then confirm you arrived and report the page title",
+  "start_url": "https://en.wikipedia.org",
+  "requires": {
+    "tools": ["safari_navigate", "safari_snapshot", "safari_fill", "safari_click", "safari_get_text"],
+    "engines": [],
+    "auth_domains": [],
+    "features": [],
+    "competitive": false
+  },
+  "eval": {
+    "type": "structured_output",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "arrived": { "type": "boolean" },
+        "title": { "type": "string" }
+      },
+      "required": ["arrived", "title"]
+    }
+  },
+  "eval_fallback": {
+    "type": "llm_judge",
+    "criteria": "The agent navigated to Wikipedia's WebKit article using only the accessibility tree without hardcoding CSS selectors or direct article URLs, and confirmed the page title contains 'WebKit'"
+  },
+  "timeout_ms": 120000,
+  "max_budget_usd": 0.50,
+  "tags": ["accessibility", "aria", "ref-targeting", "wikipedia", "navigation", "live", "hard"]
+}

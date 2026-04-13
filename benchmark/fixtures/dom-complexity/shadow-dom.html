@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Shadow DOM Fixture</title>
+  <style>
+    body { font-family: sans-serif; padding: 2rem; }
+    #status { margin-top: 1rem; font-weight: bold; color: green; }
+  </style>
+</head>
+<body>
+  <h1>Shadow DOM Test Fixture</h1>
+  <p>The interactive content lives inside shadow roots below.</p>
+
+  <!-- Host for basic shadow DOM -->
+  <div id="host"></div>
+
+  <!-- Host for web component with slots -->
+  <my-card>
+    <span slot="content">slot content from light DOM</span>
+  </my-card>
+
+  <div id="status"></div>
+
+  <script>
+    // ── Basic shadow root with button and nested shadow text ──────────────────
+    const host = document.getElementById('host');
+    const shadow = host.attachShadow({ mode: 'open' });
+
+    // Button inside shadow
+    const btn = document.createElement('button');
+    btn.id = 'shadow-btn';
+    btn.textContent = 'Click Me';
+    btn.addEventListener('click', () => {
+      document.getElementById('status').textContent = 'Button clicked! (from shadow DOM)';
+    });
+    shadow.appendChild(btn);
+
+    // Nested shadow root — text hidden deeper
+    const innerHost = document.createElement('div');
+    innerHost.id = 'inner-host';
+    shadow.appendChild(innerHost);
+
+    const innerShadow = innerHost.attachShadow({ mode: 'open' });
+    const hiddenP = document.createElement('p');
+    hiddenP.id = 'shadow-text';
+    hiddenP.textContent = 'Hidden text deep in shadow root';
+    innerShadow.appendChild(hiddenP);
+
+    // ── Web component with slots ──────────────────────────────────────────────
+    class MyCard extends HTMLElement {
+      constructor() {
+        super();
+        const sr = this.attachShadow({ mode: 'open' });
+        sr.innerHTML = `
+          <div class="card">
+            <strong>Web Component Card</strong>
+            <slot name="content">default slot content</slot>
+          </div>
+        `;
+      }
+    }
+    customElements.define('my-card', MyCard);
+  </script>
+</body>
+</html>

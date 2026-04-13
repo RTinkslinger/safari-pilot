@@ -1,0 +1,32 @@
+{
+  "id": "saf-007",
+  "category": "safari-specific",
+  "difficulty": "hard",
+  "intent": "Repeatedly attempt to navigate to an invalid/unreachable URL (http://localhost:19999/nonexistent) until the circuit breaker opens — report how many errors occurred and whether the circuit is open",
+  "start_url": "https://example.com",
+  "requires": {
+    "tools": ["safari_navigate"],
+    "engines": [],
+    "auth_domains": [],
+    "features": [],
+    "competitive": false
+  },
+  "eval": {
+    "type": "structured_output",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "errors": { "type": "number" },
+        "circuit_open": { "type": "boolean" }
+      },
+      "required": ["errors", "circuit_open"]
+    }
+  },
+  "eval_fallback": {
+    "type": "llm_judge",
+    "criteria": "The agent repeatedly attempted a failing navigation, tracked the error count, and correctly identified whether the circuit breaker opened (typically after 5 consecutive errors on the same domain)"
+  },
+  "timeout_ms": 120000,
+  "max_budget_usd": 0.50,
+  "tags": ["safari-specific", "circuit-breaker", "error-handling", "security", "hard"]
+}

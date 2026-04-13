@@ -1,0 +1,22 @@
+{
+  "id": "err-007",
+  "category": "error-recovery",
+  "difficulty": "hard",
+  "intent": "On the stale element fixture, click the button that replaces itself with a different element on first click, then click the replacement and verify it was clicked",
+  "start_url": "http://localhost:9876/error-recovery/stale-element.html",
+  "requires": {
+    "tools": ["safari_navigate", "safari_snapshot", "safari_click", "safari_get_text"],
+    "engines": [],
+    "auth_domains": [],
+    "features": [],
+    "competitive": false
+  },
+  "eval": {
+    "type": "contains",
+    "must_include": ["clicked"],
+    "case_insensitive": true
+  },
+  "timeout_ms": 90000,
+  "max_budget_usd": 0.50,
+  "tags": ["error-recovery", "stale-element", "dom-mutation", "retry", "fixture", "hard"]
+}

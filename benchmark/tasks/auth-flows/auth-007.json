@@ -1,0 +1,32 @@
+{
+  "id": "auth-007",
+  "category": "auth-flows",
+  "difficulty": "hard",
+  "intent": "On LinkedIn, navigate to your own profile page and extract both your professional headline and your connection count",
+  "start_url": "https://www.linkedin.com",
+  "requires": {
+    "tools": ["safari_navigate", "safari_click", "safari_snapshot", "safari_get_text"],
+    "engines": [],
+    "auth_domains": ["linkedin.com"],
+    "features": [],
+    "competitive": false
+  },
+  "eval": {
+    "type": "structured_output",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "headline": { "type": "string" },
+        "connections": { "type": "string" }
+      },
+      "required": ["headline", "connections"]
+    }
+  },
+  "eval_fallback": {
+    "type": "llm_judge",
+    "criteria": "The agent navigated to the LinkedIn profile page and extracted a professional headline and a connection count (e.g. '500+', '342')"
+  },
+  "timeout_ms": 90000,
+  "max_budget_usd": 0.50,
+  "tags": ["auth-flows", "linkedin", "profile", "headline", "connections", "live", "hard"]
+}

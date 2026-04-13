@@ -1,0 +1,27 @@
+{
+  "id": "saf-002",
+  "category": "safari-specific",
+  "difficulty": "easy",
+  "intent": "Navigate to example.com and report which engine (applescript, daemon, or extension) was selected and used for the navigation",
+  "start_url": "https://example.com",
+  "requires": {
+    "tools": ["safari_navigate"],
+    "engines": [],
+    "auth_domains": [],
+    "features": [],
+    "competitive": false
+  },
+  "eval": {
+    "type": "structured_output",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "engine": { "type": "string" }
+      },
+      "required": ["engine"]
+    }
+  },
+  "timeout_ms": 30000,
+  "max_budget_usd": 0.25,
+  "tags": ["safari-specific", "engine-selection", "navigation", "introspection", "live"]
+}

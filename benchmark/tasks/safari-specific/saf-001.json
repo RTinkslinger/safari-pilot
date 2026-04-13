@@ -1,0 +1,30 @@
+{
+  "id": "saf-001",
+  "category": "safari-specific",
+  "difficulty": "easy",
+  "intent": "Run a Safari Pilot health check and report which engines (applescript, daemon, extension) are currently available",
+  "start_url": "https://example.com",
+  "requires": {
+    "tools": ["safari_health_check"],
+    "engines": [],
+    "auth_domains": [],
+    "features": [],
+    "competitive": false
+  },
+  "eval": {
+    "type": "structured_output",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "engines": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "required": ["engines"]
+    }
+  },
+  "timeout_ms": 30000,
+  "max_budget_usd": 0.25,
+  "tags": ["safari-specific", "health-check", "engines", "introspection"]
+}

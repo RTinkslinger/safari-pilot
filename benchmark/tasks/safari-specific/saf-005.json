@@ -1,0 +1,28 @@
+{
+  "id": "saf-005",
+  "category": "safari-specific",
+  "difficulty": "medium",
+  "intent": "Rapidly request 5 consecutive snapshots of example.com and report how many completed successfully and how many were throttled by the rate limiter",
+  "start_url": "https://example.com",
+  "requires": {
+    "tools": ["safari_navigate", "safari_snapshot"],
+    "engines": [],
+    "auth_domains": [],
+    "features": [],
+    "competitive": false
+  },
+  "eval": {
+    "type": "structured_output",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "total": { "type": "number" },
+        "throttled": { "type": "number" }
+      },
+      "required": ["total", "throttled"]
+    }
+  },
+  "timeout_ms": 60000,
+  "max_budget_usd": 0.35,
+  "tags": ["safari-specific", "rate-limiting", "throttle", "introspection", "live"]
+}

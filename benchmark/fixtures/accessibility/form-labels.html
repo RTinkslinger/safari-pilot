@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Form Label Patterns Fixture</title>
+  <style>
+    body { font-family: sans-serif; padding: 2rem; }
+    .field { margin-bottom: 1.5rem; }
+    label { display: block; font-weight: bold; margin-bottom: 0.25rem; }
+    input, select, textarea { padding: 0.4rem; font-size: 1rem; border: 1px solid #ccc; border-radius: 4px; width: 300px; }
+    .pattern-heading { font-size: 0.85rem; color: #666; margin-bottom: 0.25rem; font-style: italic; }
+    #result { margin-top: 1.5rem; font-weight: bold; color: green; }
+    button { padding: 0.5rem 1rem; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <h1>Accessible Form Label Patterns</h1>
+  <p>Demonstrates the four main accessible label techniques.</p>
+
+  <form id="label-form" novalidate>
+
+    <!-- Pattern 1: explicit label + for/id -->
+    <div class="field">
+      <p class="pattern-heading">Pattern 1: Explicit &lt;label for=&gt;</p>
+      <label for="first-name">First Name</label>
+      <input id="first-name" name="firstName" type="text" placeholder="Jane">
+    </div>
+
+    <!-- Pattern 2: aria-label -->
+    <div class="field">
+      <p class="pattern-heading">Pattern 2: aria-label attribute</p>
+      <input
+        id="last-name"
+        name="lastName"
+        type="text"
+        aria-label="Last Name"
+        placeholder="Doe"
+      >
+    </div>
+
+    <!-- Pattern 3: aria-labelledby pointing to visible text -->
+    <div class="field">
+      <p class="pattern-heading">Pattern 3: aria-labelledby</p>
+      <span id="email-label" style="font-weight:bold">Email Address</span>
+      <input
+        id="email-addr"
+        name="email"
+        type="email"
+        aria-labelledby="email-label"
+        placeholder="jane@example.com"
+      >
+    </div>
+
+    <!-- Pattern 4: placeholder only (accessibility anti-pattern, included for coverage) -->
+    <div class="field">
+      <p class="pattern-heading">Pattern 4: placeholder only (anti-pattern — avoid in production)</p>
+      <input
+        id="city"
+        name="city"
+        type="text"
+        placeholder="City"
+      >
+    </div>
+
+    <!-- Select with label -->
+    <div class="field">
+      <label for="country">Country</label>
+      <select id="country" name="country" aria-label="Select your country">
+        <option value="">-- Select --</option>
+        <option value="us">United States</option>
+        <option value="gb">United Kingdom</option>
+        <option value="ca">Canada</option>
+      </select>
+    </div>
+
+    <button type="submit">Submit form</button>
+  </form>
+
+  <div id="result" role="status" aria-live="polite"></div>
+
+  <script>
+    document.getElementById('label-form').addEventListener('submit', (e) => {
+      e.preventDefault();
+      document.getElementById('result').textContent = 'Label patterns form submitted successfully.';
+    });
+  </script>
+</body>
+</html>

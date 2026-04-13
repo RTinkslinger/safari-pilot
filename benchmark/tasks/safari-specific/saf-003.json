@@ -1,0 +1,28 @@
+{
+  "id": "saf-003",
+  "category": "safari-specific",
+  "difficulty": "medium",
+  "intent": "Take a snapshot of example.com and report both the total element count and the total accessibility-tree ref count from the snapshot metadata",
+  "start_url": "https://example.com",
+  "requires": {
+    "tools": ["safari_navigate", "safari_snapshot"],
+    "engines": [],
+    "auth_domains": [],
+    "features": [],
+    "competitive": false
+  },
+  "eval": {
+    "type": "structured_output",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "elements": { "type": "number" },
+        "refs": { "type": "number" }
+      },
+      "required": ["elements", "refs"]
+    }
+  },
+  "timeout_ms": 30000,
+  "max_budget_usd": 0.25,
+  "tags": ["safari-specific", "snapshot", "elements", "refs", "introspection", "live"]
+}

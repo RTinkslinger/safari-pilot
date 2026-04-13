@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Slow Load Fixture</title>
+  <style>
+    body { font-family: sans-serif; padding: 2rem; }
+    #content { font-size: 1.25rem; margin-top: 1rem; }
+    #loading { color: #888; font-style: italic; }
+    #loaded { color: green; font-weight: bold; display: none; }
+  </style>
+</head>
+<body>
+  <h1>Slow Loading Content Fixture</h1>
+  <p>Content appears after a 3-second delay — use wait_for to detect it.</p>
+
+  <div id="content">
+    <p id="loading">Loading...</p>
+    <p id="loaded"></p>
+  </div>
+
+  <script>
+    setTimeout(() => {
+      document.getElementById('loading').style.display = 'none';
+      const loaded = document.getElementById('loaded');
+      loaded.style.display = 'block';
+      loaded.textContent = 'Content loaded: 42';
+    }, 3000);
+  </script>
+</body>
+</html>

@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Iframe Fixture</title>
+  <style>
+    body { font-family: sans-serif; padding: 2rem; }
+    iframe { border: 2px solid #ccc; margin-top: 1rem; }
+  </style>
+</head>
+<body>
+  <h1>Iframe Test Fixture</h1>
+  <p>This page embeds content inside iframes.</p>
+
+  <!-- Basic iframe with srcdoc -->
+  <h2>Embedded Iframe</h2>
+  <iframe
+    id="basic-iframe"
+    width="500"
+    height="150"
+    srcdoc="<html><body><p id='inner'>Content inside iframe</p><p>This is iframe content that can be extracted.</p></body></html>"
+    title="Basic embedded iframe"
+  ></iframe>
+
+  <!-- Simulated cross-origin iframe using srcdoc with distinct marker text -->
+  <h2>Cross-Origin Simulated Iframe</h2>
+  <iframe
+    id="cross-origin-iframe"
+    width="500"
+    height="150"
+    srcdoc="<html><body><div id='xo-content'><h3>Cross-origin iframe content</h3><p>Extracted from simulated cross-origin context.</p></div></body></html>"
+    title="Simulated cross-origin iframe"
+  ></iframe>
+</body>
+</html>

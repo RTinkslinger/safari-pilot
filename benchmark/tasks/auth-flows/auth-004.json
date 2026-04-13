@@ -1,0 +1,27 @@
+{
+  "id": "auth-004",
+  "category": "auth-flows",
+  "difficulty": "medium",
+  "intent": "On Reddit, navigate to the r/webdev subreddit and verify that the \"Create Post\" button is visible (indicates logged-in state)",
+  "start_url": "https://www.reddit.com/r/webdev",
+  "requires": {
+    "tools": ["safari_navigate", "safari_snapshot", "safari_get_text"],
+    "engines": [],
+    "auth_domains": ["reddit.com"],
+    "features": [],
+    "competitive": false
+  },
+  "eval": {
+    "type": "structured_output",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "create_post_visible": { "type": "boolean" }
+      },
+      "required": ["create_post_visible"]
+    }
+  },
+  "timeout_ms": 45000,
+  "max_budget_usd": 0.25,
+  "tags": ["auth-flows", "reddit", "subreddit", "create-post", "live"]
+}

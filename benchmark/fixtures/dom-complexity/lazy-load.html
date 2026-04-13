@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Lazy Load Fixture</title>
+  <style>
+    body { font-family: sans-serif; padding: 2rem; }
+    .spacer { height: 2000px; background: linear-gradient(to bottom, #f0f0f0, #e0e0e0); display: flex; align-items: center; justify-content: center; color: #999; }
+    #lazy-container { padding: 2rem; border: 2px dashed #aaa; min-height: 100px; }
+    #lazy-img { display: none; max-width: 400px; }
+    #lazy-placeholder { color: #888; font-style: italic; }
+  </style>
+</head>
+<body>
+  <h1>Lazy Load Test Fixture</h1>
+  <p>Scroll down past the spacer to trigger the lazy-loaded image.</p>
+
+  <div class="spacer">
+    <p>↓ Keep scrolling ↓</p>
+  </div>
+
+  <div id="lazy-container">
+    <p id="lazy-placeholder">Image not yet loaded — scroll up here to trigger it.</p>
+    <img
+      id="lazy-img"
+      src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='200'%3E%3Crect width='400' height='200' fill='%234a90d9'/%3E%3Ctext x='50%25' y='50%25' text-anchor='middle' dominant-baseline='middle' fill='white' font-size='24' font-family='sans-serif'%3ELazy loaded image%3C/text%3E%3C/svg%3E"
+      alt="Lazy loaded image"
+      width="400"
+      height="200"
+    >
+    <p id="load-status"></p>
+  </div>
+
+  <script>
+    const img = document.getElementById('lazy-img');
+    const placeholder = document.getElementById('lazy-placeholder');
+    const status = document.getElementById('load-status');
+
+    const observer = new IntersectionObserver((entries) => {
+      entries.forEach(entry => {
+        if (entry.isIntersecting) {
+          img.style.display = 'block';
+          placeholder.style.display = 'none';
+          status.textContent = 'Image loaded via IntersectionObserver. Alt: "' + img.alt + '"';
+          observer.unobserve(entry.target);
+        }
+      });
+    }, { threshold: 0.1 });
+
+    observer.observe(document.getElementById('lazy-container'));
+  </script>
+</body>
+</html>

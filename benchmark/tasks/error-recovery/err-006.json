@@ -1,0 +1,22 @@
+{
+  "id": "err-006",
+  "category": "error-recovery",
+  "difficulty": "medium",
+  "intent": "Navigate to the fixture 404 page, detect that the page is an error page, and report the error status",
+  "start_url": "http://localhost:9876/error-recovery/not-found.html",
+  "requires": {
+    "tools": ["safari_navigate", "safari_get_text", "safari_snapshot"],
+    "engines": [],
+    "auth_domains": [],
+    "features": [],
+    "competitive": false
+  },
+  "eval": {
+    "type": "contains",
+    "must_include": ["404", "not found"],
+    "case_insensitive": true
+  },
+  "timeout_ms": 30000,
+  "max_budget_usd": 0.25,
+  "tags": ["error-recovery", "404", "error-detection", "fixture"]
+}
