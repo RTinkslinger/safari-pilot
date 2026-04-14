@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-Safari Pilot is a native Safari browser automation framework for AI agents on macOS. It exposes 74 tools via MCP (stdio), letting Claude Code control Safari directly through AppleScript, a persistent Swift daemon, or a Safari Web Extension — no Chrome needed.
+Safari Pilot is a native Safari browser automation framework for AI agents on macOS. It exposes 76 tools via MCP (stdio), letting Claude Code control Safari directly through AppleScript, a persistent Swift daemon, or a Safari Web Extension — no Chrome needed.
 
 ## Commands
 
@@ -40,6 +40,8 @@ AppleScript (80ms p50) →  Always available fallback, basic navigation/forms
 ```
 
 `engine-selector.ts` picks the best available engine by matching `ToolRequirements` against `ENGINE_CAPS`. If a tool needs `requiresShadowDom`, only Extension qualifies — if unavailable, `EngineUnavailableError` is thrown (not a silent fallback).
+
+**Extension IPC:** The Safari extension handler (`SafariWebExtensionHandler.swift`) is a TCP proxy. `background.js` calls `sendNativeMessage` → handler connects to daemon at `localhost:19474` via NWConnection → forwards message → returns daemon response. The daemon's `ExtensionSocketServer` accepts TCP connections and dispatches through `CommandDispatcher`. Commands queued via `ExtensionBridge` (in-memory) are polled by `background.js` and executed via `browser.scripting.executeScript` in the MAIN world. The custom handler source lives at `extension/native/SafariWebExtensionHandler.swift` and is copied into the Xcode project by `build-extension.sh` (the project generator creates a stub that gets replaced).
 
 ### Security Pipeline
 
@@ -94,8 +96,8 @@ src/
 ├── engines/              # IEngine interface + 3 implementations
 │   ├── engine.ts         # IEngine interface, BaseEngine abstract class
 │   ├── applescript.ts    # exec osascript via child_process
-│   ├── daemon.ts         # Swift daemon with JSON IPC at ~/.safari-pilot/bridge/
-│   └── extension.ts      # Safari Web Extension native messaging bridge
+│   ├── daemon.ts         # Swift daemon with NDJSON IPC over stdin + TCP:19474
+│   └── extension.ts      # Safari Web Extension via daemon's ExtensionBridge
 ├── security/             # 9 security layer implementations
 └── tools/                # 14 tool modules (navigation, interaction, extraction, etc.)
 daemon/                   # Swift source for SafariPilotd
@@ -226,7 +228,7 @@ Ask: "Does a real e2e test exercise the path a user would take?" If not, the fea
 - **macOS only** — package.json enforces `"os": ["darwin"]`. Node 20+.
 - **Single production dependency** — `@modelcontextprotocol/sdk`. Everything else is stdlib.
 - **AppleScript escaping** — double-escape both backslashes and quotes to survive the shell → AppleScript → JavaScript round-trip. See `buildTabScript()` in `applescript.ts`.
-- **Daemon IPC is file-based** — request/response JSON through `~/.safari-pilot/bridge/`, not stdout, to avoid buffering issues.
+- **Daemon IPC is dual** — stdin/stdout NDJSON for MCP commands, TCP localhost:19474 for extension handler connections. The extension handler (sandboxed appex) cannot access filesystem paths, so TCP replaced the original file-based bridge at `~/.safari-pilot/bridge/`.
 - **Safari prerequisite** — "Allow JavaScript from Apple Events" must be enabled in Safari > Develop menu for any JS execution to work. Health check detects this (error code `-1743`).
 - **No credential access** — never touches macOS Keychain. Auth happens via real browser interaction only.
 - **SKIP_OWNERSHIP_TOOLS** — `safari_list_tabs`, `safari_new_tab`, `safari_health_check` bypass tab ownership checks.
