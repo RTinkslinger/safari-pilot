@@ -5,11 +5,11 @@
  * before safari-pilot ships is verified here:
  *
  *  1.  TypeScript compiles clean (tsc --noEmit)
- *  2.  All 74 tools registered on the server
+ *  2.  All 76 tools registered on the server
  *  3.  All tool names are under the 64-char MCP limit (mcp__safari__<name>)
  *  4.  Plugin manifest (.claude-plugin/plugin.json) is valid
  *  5.  .mcp.json is valid
- *  6.  SKILL.md exists and allowed-tools contains all 74 tools
+ *  6.  SKILL.md exists and allowed-tools contains all 76 tools
  *  7.  README.md exists
  *  8.  LICENSE exists and is MIT
  *  9.  Session hooks are executable
@@ -85,13 +85,13 @@ describe('Final Gate 1 — TypeScript compiles clean', () => {
   });
 });
 
-// ── Gate 2: All 74 tools registered ──────────────────────────────────────────
+// ── Gate 2: All 76 tools registered ──────────────────────────────────────────
 
-const EXPECTED_TOOL_COUNT = 74;
+const EXPECTED_TOOL_COUNT = 76;
 
 let server: import('../../src/server.js').SafariPilotServer;
 
-describe('Final Gate 2 — 74 tools registered', () => {
+describe('Final Gate 2 — 76 tools registered', () => {
   beforeAll(async () => {
     const { SafariPilotServer } = await import('../../src/server.js');
     server = new SafariPilotServer();
@@ -210,7 +210,7 @@ describe('Final Gate 5 — .mcp.json', () => {
   });
 });
 
-// ── Gate 6: SKILL.md has all 74 tools ────────────────────────────────────────
+// ── Gate 6: SKILL.md has all 76 tools ────────────────────────────────────────
 
 describe('Final Gate 6 — SKILL.md', () => {
   const skillPath = rootPath('skills/safari-pilot/SKILL.md');

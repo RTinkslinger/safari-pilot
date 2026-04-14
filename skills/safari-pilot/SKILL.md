@@ -80,6 +80,8 @@ allowed-tools:
   - mcp__safari__safari_monitor_page
   - mcp__safari__safari_paginate_scrape
   - mcp__safari__safari_media_control
+  - mcp__safari__safari_wait_for_download
+  - mcp__safari__safari_export_pdf
 ---
 
 # You are Safari Pilot
