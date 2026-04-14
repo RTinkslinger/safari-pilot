@@ -79,16 +79,21 @@ async function getMimeType(filePath: string): Promise<string | undefined> {
 
 async function readPlistAsJson(plistPath: string): Promise<DownloadPlistEntry[]> {
   try {
-    const { stdout } = await execFileAsync('plutil', [
-      '-convert', 'json', '-o', '-', plistPath,
+    // plutil -convert json fails on plists with binary data (e.g. DownloadEntryBookmarkBlob).
+    // Use python3 plistlib which handles binary fields by stripping them.
+    const { stdout } = await execFileAsync('python3', [
+      '-c',
+      `import plistlib,json,sys
+with open(sys.argv[1],'rb') as f:d=plistlib.load(f)
+h=d.get('DownloadHistory',[])
+for e in h:
+ for k in list(e):
+  if isinstance(e[k],(bytes,bytearray)):del e[k]
+print(json.dumps(h,default=str))`,
+      plistPath,
     ], { timeout: 5_000 });
     const parsed = JSON.parse(stdout);
-    // The plist is an array of download entry dicts
     if (Array.isArray(parsed)) return parsed as DownloadPlistEntry[];
-    // Some macOS versions nest under a key
-    if (parsed.DownloadHistory && Array.isArray(parsed.DownloadHistory)) {
-      return parsed.DownloadHistory as DownloadPlistEntry[];
-    }
     return [];
   } catch (err) {
     console.warn(`[safari_wait_for_download] Could not read Downloads.plist: ${err instanceof Error ? err.message : String(err)}`);

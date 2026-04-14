@@ -10,11 +10,20 @@ const HOME = process.env['HOME'] ?? '';
 describe.skipIf(process.env.CI === 'true')('Downloads.plist integration', () => {
   const plistPath = join(HOME, 'Library/Safari/Downloads.plist');
 
-  it('reads Downloads.plist via plutil', async () => {
-    const { stdout } = await execFileAsync('plutil', ['-convert', 'json', '-o', '-', plistPath]);
+  it('reads Downloads.plist via python3 plistlib', async () => {
+    const { stdout } = await execFileAsync('python3', [
+      '-c',
+      `import plistlib,json,sys
+with open(sys.argv[1],'rb') as f:d=plistlib.load(f)
+h=d.get('DownloadHistory',[])
+for e in h:
+ for k in list(e):
+  if isinstance(e[k],(bytes,bytearray)):del e[k]
+print(json.dumps(h,default=str))`,
+      plistPath,
+    ]);
     const data = JSON.parse(stdout);
-    expect(data).toHaveProperty('DownloadHistory');
-    expect(Array.isArray(data.DownloadHistory)).toBe(true);
+    expect(Array.isArray(data)).toBe(true);
   });
 
   it('reads plist file mtime for change detection', async () => {
