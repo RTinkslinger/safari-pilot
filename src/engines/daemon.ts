@@ -26,7 +26,7 @@ interface PendingRequest {
 interface DaemonResponse {
   id?: string;
   ok: boolean;
-  value?: string;
+  value?: string | Record<string, unknown>;
   error?: { code?: string; message?: string };
 }
 
@@ -77,7 +77,9 @@ export class DaemonEngine extends BaseEngine {
       if (response.ok) {
         return {
           ok: true,
-          value: response.value?.trimEnd(),
+          value: typeof response.value === 'string'
+            ? response.value.trimEnd()
+            : JSON.stringify(response.value),
           elapsed_ms: Date.now() - start,
         };
       }
@@ -122,7 +124,10 @@ export class DaemonEngine extends BaseEngine {
       const response = await this.sendCommand('execute', { script }, timeout);
       if (response.ok) {
         // Normalize: trim trailing whitespace (daemon may include trailing newline)
-        const value = response.value?.trimEnd();
+        // execute always returns a string value, but guard for type safety
+        const value = typeof response.value === 'string'
+          ? response.value.trimEnd()
+          : undefined;
         return {
           ok: true,
           value,
