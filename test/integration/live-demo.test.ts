@@ -15,13 +15,26 @@ describe.skipIf(process.env.CI === 'true')('Live Demo — Hacker News', () => {
   }, 30000);
 
   afterAll(async () => {
-    if (tabUrl) {
-      try {
+    // Close tabs by listing current URLs (tab may have navigated away from original)
+    try {
+      const listResult = await server.executeToolWithSecurity('safari_list_tabs', {});
+      const listData = JSON.parse(listResult.content[0].text!);
+      const allTabs = listData.tabs as Array<{ url: string }> | undefined;
+      if (allTabs) {
+        for (const tab of allTabs) {
+          if (tab.url.includes('news.ycombinator.com')) {
+            try { await server.executeToolWithSecurity('safari_close_tab', { tabUrl: tab.url }); } catch {}
+          }
+        }
+      }
+    } catch {
+      // Fallback to original URL
+      if (tabUrl) {
         const urls = [tabUrl, tabUrl.endsWith('/') ? tabUrl.slice(0, -1) : tabUrl + '/'];
         for (const u of urls) {
           try { await server.executeToolWithSecurity('safari_close_tab', { tabUrl: u }); break; } catch {}
         }
-      } catch {}
+      }
     }
     await server.shutdown();
   });
