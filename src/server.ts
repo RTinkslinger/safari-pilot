@@ -20,6 +20,7 @@ import { StructuredExtractionTools } from './tools/structured-extraction.js';
 import { WaitTools } from './tools/wait.js';
 import { CompoundTools } from './tools/compound.js';
 import { DownloadTools } from './tools/downloads.js';
+import { PdfTools } from './tools/pdf.js';
 import { KillSwitch } from './security/kill-switch.js';
 import { TabOwnership } from './security/tab-ownership.js';
 import { AuditLog } from './security/audit-log.js';
@@ -202,6 +203,7 @@ export class SafariPilotServer {
     const waitTools = new WaitTools(engine);
     const compoundTools = new CompoundTools(engine);
     const downloadTools = new DownloadTools(this);
+    const pdfTools = new PdfTools(this);
 
     // Register all tools from all modules.
     // Each module may have getHandler returning Handler (NavigationTools) or Handler | undefined.
@@ -231,6 +233,7 @@ export class SafariPilotServer {
       waitTools as unknown as ToolModule,
       compoundTools as unknown as ToolModule,
       downloadTools,
+      pdfTools,
     ];
 
     for (const module of modules) {
