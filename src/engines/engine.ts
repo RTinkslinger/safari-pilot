@@ -4,6 +4,7 @@ export interface IEngine {
   readonly name: Engine;
   isAvailable(): Promise<boolean>;
   execute(script: string, timeout?: number): Promise<EngineResult>;
+  executeJsInTab(tabUrl: string, jsCode: string, timeout?: number): Promise<EngineResult>;
   shutdown(): Promise<void>;
 }
 
@@ -11,6 +12,7 @@ export abstract class BaseEngine implements IEngine {
   abstract readonly name: Engine;
   abstract isAvailable(): Promise<boolean>;
   abstract execute(script: string, timeout?: number): Promise<EngineResult>;
+  abstract executeJsInTab(tabUrl: string, jsCode: string, timeout?: number): Promise<EngineResult>;
 
   async shutdown(): Promise<void> {}
 

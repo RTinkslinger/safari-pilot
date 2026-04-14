@@ -50,6 +50,25 @@ export class ExtensionEngine extends BaseEngine {
    * which injects it into the active tab's MAIN world via chrome.scripting.executeScript.
    * The result is returned as a string (JSON-serialised if the script returns an object).
    */
+  async executeJsInTab(tabUrl: string, jsCode: string, timeout?: number): Promise<EngineResult> {
+    const start = Date.now();
+    try {
+      const payload = JSON.stringify({ script: jsCode, tabUrl });
+      const result = await this.daemon.execute(
+        `${INTERNAL_PREFIX} extension_execute ${payload}`,
+        timeout,
+      );
+      return { ...result, elapsed_ms: Date.now() - start };
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      return {
+        ok: false,
+        error: { code: 'EXTENSION_ERROR', message, retryable: true },
+        elapsed_ms: Date.now() - start,
+      };
+    }
+  }
+
   async execute(script: string, timeout?: number): Promise<EngineResult> {
     const start = Date.now();
     try {
