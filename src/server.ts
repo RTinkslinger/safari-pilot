@@ -386,31 +386,57 @@ export class SafariPilotServer {
       throw new CircuitBreakerOpenError(domain, 120);
     }
 
-    // 7. Execute the tool, record circuit breaker outcome, and audit
+    // 7. Engine selection — pick the best available engine for this tool
+    const toolDef = this.tools.get(name);
+    let selectedEngineName: Engine = 'applescript';
+    if (toolDef) {
+      try {
+        selectedEngineName = selectEngine(toolDef.requirements, this.engineAvailability);
+      } catch (err) {
+        if (err instanceof EngineUnavailableError) {
+          return {
+            content: [{ type: 'text', text: `Error: ${err.message}` }],
+            metadata: {
+              engine: 'applescript' as Engine,
+              latencyMs: Date.now() - start,
+              degraded: true,
+              degradedReason: err.message,
+            },
+          };
+        }
+        throw err;
+      }
+    }
+
+    // 8. Execute the tool, record circuit breaker outcome, and audit
     try {
       const result = await this.callTool(name, params);
       this.circuitBreaker.recordSuccess(domain);
 
-      // 8. Audit log — success path
+      // 9. Audit log — success path
       this.auditLog.record({
         tool: name,
         tabUrl: url,
-        engine: 'applescript',
+        engine: selectedEngineName,
         params,
         result: 'ok',
         elapsed_ms: Date.now() - start,
         session: this.sessionId,
       });
 
+      if (result.metadata) {
+        result.metadata.engine = selectedEngineName;
+      }
+
       return result;
     } catch (error) {
       this.circuitBreaker.recordFailure(domain);
 
-      // 8. Audit log — error path
+      // 9. Audit log — error path
       this.auditLog.record({
         tool: name,
         tabUrl: url,
-        engine: 'applescript',
+        engine: selectedEngineName,
         params,
         result: 'error',
         elapsed_ms: Date.now() - start,
