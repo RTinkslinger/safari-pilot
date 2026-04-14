@@ -138,6 +138,10 @@ registerSleepWakeMemoryRecoveryTests()
 
 registerExtensionBridgeTests()
 
+// MARK: - ExtensionSocketServer Tests
+
+registerExtensionSocketServerTests()
+
 // MARK: - Results
 
 print("-----------------")

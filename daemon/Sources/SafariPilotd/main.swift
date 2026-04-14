@@ -144,10 +144,15 @@ let recoveryExecutor = RecoveryExecutor(inner: executor, recovery: recovery, wat
 //    NDJSON responses to stdout.
 let dispatcher = CommandDispatcher(executor: recoveryExecutor)
 
+// 7. Extension socket server — listens on TCP localhost for connections from the
+//    Safari extension handler (which proxies native messages from background.js).
+let socketServer = ExtensionSocketServer(port: 19474, dispatcher: dispatcher)
+socketServer.start()
+
 // Install SIGTERM handler before entering the run loop.
 installSIGTERMHandler()
 
-Logger.info("SafariPilotd: entering run loop — listening on stdin")
+Logger.info("SafariPilotd: entering run loop — listening on stdin + TCP:19474")
 
 // Start the dispatcher on a background Task so it doesn't block the main thread.
 // The main thread runs RunLoop.main.run() which is required for:
