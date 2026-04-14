@@ -29,7 +29,9 @@ import { DomainPolicy } from './security/domain-policy.js';
 import { RateLimiter } from './security/rate-limiter.js';
 import { CircuitBreaker } from './security/circuit-breaker.js';
 import { IdpiScanner } from './security/idpi-scanner.js';
-import { RateLimitedError, CircuitBreakerOpenError } from './errors.js';
+import { HumanApproval } from './security/human-approval.js';
+import { ScreenshotRedaction } from './security/screenshot-redaction.js';
+import { RateLimitedError, CircuitBreakerOpenError, HumanApprovalRequiredError } from './errors.js';
 import { loadConfig, DEFAULT_CONFIG, type SafariPilotConfig } from './config.js';
 
 const execFileAsync = promisify(execFile);
@@ -121,6 +123,8 @@ export class SafariPilotServer {
   readonly rateLimiter: RateLimiter;
   readonly circuitBreaker: CircuitBreaker;
   readonly idpiScanner: IdpiScanner;
+  readonly humanApproval: HumanApproval;
+  readonly screenshotRedaction: ScreenshotRedaction;
 
   private clickContexts: Map<string, ClickContext> = new Map();
   private clickContextTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
@@ -154,6 +158,8 @@ export class SafariPilotServer {
       cooldownMs: this.config.circuitBreaker.cooldownMs,
     });
     this.idpiScanner = new IdpiScanner();
+    this.humanApproval = new HumanApproval();
+    this.screenshotRedaction = new ScreenshotRedaction();
   }
 
   async initialize(): Promise<void> {
@@ -374,6 +380,41 @@ export class SafariPilotServer {
     // 4. Domain policy evaluation
     const policy = this.domainPolicy.evaluate(url);
 
+    // 4b. Human approval check — sensitive actions on untrusted domains
+    try {
+      this.humanApproval.assertApproved(name, url, params);
+    } catch (err) {
+      if (err instanceof HumanApprovalRequiredError) {
+        this.auditLog.record({
+          tool: name,
+          tabUrl: url,
+          engine: 'applescript' as Engine,
+          params,
+          result: 'error',
+          elapsed_ms: Date.now() - start,
+          session: this.sessionId,
+        });
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              error: err.code,
+              message: err.message,
+              hints: err.hints,
+              approvalRequired: true,
+            }),
+          }],
+          metadata: {
+            engine: 'applescript' as Engine,
+            degraded: true,
+            degradedReason: err.message,
+            latencyMs: Date.now() - start,
+          },
+        };
+      }
+      throw err;
+    }
+
     // 5. Rate limit check — check before recording so we don't consume quota on blocked calls
     const limitCheck = this.rateLimiter.checkLimit(domain);
     if (!limitCheck.allowed) {
@@ -412,6 +453,40 @@ export class SafariPilotServer {
     try {
       const result = await this.callTool(name, params);
       this.circuitBreaker.recordSuccess(domain);
+
+      // 8a. IDPI scan — check extraction tool results for prompt injection attempts
+      const EXTRACTION_TOOLS = new Set([
+        'safari_get_text', 'safari_get_html', 'safari_snapshot',
+        'safari_evaluate', 'safari_get_console_messages',
+        'safari_smart_scrape', 'safari_extract_tables',
+        'safari_extract_links', 'safari_extract_images',
+        'safari_extract_metadata',
+      ]);
+      if (EXTRACTION_TOOLS.has(name) && result.content) {
+        const textContent = result.content
+          .filter((c): c is { type: 'text'; text: string } => c.type === 'text')
+          .map((c) => c.text)
+          .join('\n');
+        if (textContent.length > 0) {
+          const scanResult = this.idpiScanner.scan(textContent);
+          if (!scanResult.safe) {
+            if (!result.metadata) {
+              result.metadata = { engine: selectedEngineName, degraded: false, latencyMs: 0 };
+            }
+            (result.metadata as Record<string, unknown>).idpiThreats = scanResult.threats;
+            (result.metadata as Record<string, unknown>).idpiSafe = false;
+          }
+        }
+      }
+
+      // 8b. Screenshot redaction — attach redaction metadata for screenshot tools
+      if (name === 'safari_take_screenshot') {
+        if (!result.metadata) {
+          result.metadata = { engine: selectedEngineName, degraded: false, latencyMs: 0 };
+        }
+        (result.metadata as Record<string, unknown>).redactionScript = this.screenshotRedaction.getRedactionScript();
+        (result.metadata as Record<string, unknown>).redactionApplied = true;
+      }
 
       // 9. Audit log — success path
       this.auditLog.record({
