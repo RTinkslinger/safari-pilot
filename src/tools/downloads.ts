@@ -298,8 +298,14 @@ export class DownloadTools {
       }
     }
 
-    // Daemon returned error — fall through to plist polling
+    // Daemon returned error — for timeouts, try a quick directory/plist check
+    // before giving up. The daemon's FSEvents may have missed the file if it
+    // appeared during daemon probe/startup overhead.
     if (result.error?.code === 'TIMEOUT' || result.error?.code === 'DOWNLOAD_TIMEOUT') {
+      // Quick last-chance check: did the file appear while daemon was starting?
+      const lastChance = await this.quickDirectoryCheck(clickCtx, filenamePattern);
+      if (lastChance) return lastChance;
+
       // Check if Safari was showing a permission prompt during the timeout
       const hasSheet = await detectSafariDownloadSheet();
       if (hasSheet) {
@@ -460,6 +466,10 @@ export class DownloadTools {
       await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
     }
 
+    // Last-chance check before declaring timeout
+    const lastChance = await this.quickDirectoryCheck(clickCtx, filenamePattern);
+    if (lastChance) return lastChance;
+
     // Timeout — restore click context so the agent can retry
     if (clickCtx) this.server.setClickContext(clickCtx);
 
@@ -480,6 +490,74 @@ export class DownloadTools {
       'applescript',
       startTime,
     );
+  }
+
+  // ── Last-chance directory check ─────────────────────────────────────────────
+
+  private async quickDirectoryCheck(
+    clickCtx: ClickContext | null,
+    filenamePattern: string | undefined,
+  ): Promise<ToolResponse | null> {
+    try {
+      const downloadDir = await resolveDownloadDir();
+      const plistPath = join(homedir(), 'Library', 'Safari', 'Downloads.plist');
+      const filenameRe = filenamePattern ? new RegExp(filenamePattern) : null;
+
+      // Check plist for recently completed downloads
+      const entries = await readPlistAsJson(plistPath);
+      for (const entry of entries) {
+        if (!entry.DownloadEntryPath) continue;
+        const total = entry.DownloadEntryProgressTotalToLoad ?? 0;
+        const soFar = entry.DownloadEntryProgressBytesSoFar ?? 0;
+        if (total > 0 && soFar >= total) {
+          const entryFilename = basename(entry.DownloadEntryPath);
+          if (filenameRe && !filenameRe.test(entryFilename)) continue;
+          if (clickCtx?.href && entry.DownloadEntryURL &&
+              !entry.DownloadEntryURL.includes(clickCtx.href) &&
+              !clickCtx.href.includes(entry.DownloadEntryURL)) continue;
+
+          const filePath = entry.DownloadEntryPath.startsWith('~')
+            ? join(homedir(), entry.DownloadEntryPath.slice(1))
+            : entry.DownloadEntryPath;
+
+          try {
+            const st = await stat(filePath);
+            const mimeType = await getMimeType(filePath);
+            const metadata: DownloadMetadata = {
+              filename: entryFilename,
+              path: filePath,
+              url: entry.DownloadEntryURL,
+              size: st.size,
+              mimeType,
+              source: 'plist_poll',
+            };
+            return this.makeSuccessResponse(metadata, 'daemon', Date.now());
+          } catch {
+            // File not accessible
+          }
+        }
+      }
+
+      // Also check directory for new files matching the pattern
+      const files = await snapshotDir(downloadDir);
+      for (const f of files) {
+        if (f.endsWith('.download') || f.startsWith('.')) continue;
+        if (filenameRe && !filenameRe.test(f)) continue;
+        const filePath = join(downloadDir, f);
+        try {
+          const st = await stat(filePath);
+          const mimeType = await getMimeType(filePath);
+          return this.makeSuccessResponse({
+            filename: f, path: filePath, url: clickCtx?.href, size: st.size, mimeType, source: 'plist_poll',
+          }, 'daemon', Date.now());
+        } catch {
+          // Skip
+        }
+      }
+    } catch {
+      // Best-effort
+    }
+    return null;
   }
 
   // ── Response builders ──────────────────────────────────────────────────────

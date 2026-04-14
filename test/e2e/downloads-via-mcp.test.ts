@@ -222,7 +222,7 @@ describe('Downloads via MCP — real Safari, real files, no mocks', () => {
           method: 'tools/call',
           params: {
             name: 'safari_wait_for_download',
-            arguments: { timeout: 3000 },
+            arguments: { timeout: 3000, filenamePattern: 'IMPOSSIBLE_E2E_TIMEOUT_TEST_99999' },
           },
         },
         20000, // MCP-level timeout: generous to cover daemon probe overhead
@@ -267,38 +267,35 @@ describe('Downloads via MCP — real Safari, real files, no mocks', () => {
       filesToCleanup.push(expectedFile);
 
       try {
-        // 1. Create a new tab and navigate to the download PAGE (not the download URL directly)
-        //    Same-origin flow: page has an <a download> link pointing to /download/generate
-        const pageUrl = `http://localhost:${fixturePort}/download-page?name=${encodeURIComponent(uniqueName)}&size=512`;
+        // 1. Create a new tab
         const tabData = await callTool(
-          client, 'safari_new_tab',
-          { url: pageUrl },
-          idRef.value++,
-          15000,
+          client, 'safari_new_tab', {},
+          idRef.value++, 15000,
         );
         expect(typeof tabData['tabUrl']).toBe('string');
         ownedTabUrl = tabData['tabUrl'] as string;
 
-        // Wait for page to load
-        await waitMs(2000);
-
-        // Resolve the canonical tab URL Safari assigned
-        const listData = await callTool(client, 'safari_list_tabs', {}, idRef.value++);
-        const tabs = listData['tabs'] as Array<Record<string, unknown>>;
-        const pageTab = tabs.find(
-          (t) => typeof t['url'] === 'string' &&
-            (t['url'] as string).includes('download-page'),
+        // 2. Navigate to the download page (same-origin flow)
+        const pageUrl = `http://localhost:${fixturePort}/download-page?name=${encodeURIComponent(uniqueName)}&size=512`;
+        const navData = await callTool(
+          client, 'safari_navigate',
+          { url: pageUrl, tabUrl: ownedTabUrl },
+          idRef.value++, 15000,
         );
-        if (pageTab) {
-          ownedTabUrl = pageTab['url'] as string;
+
+        // Update tabUrl to the resolved URL from navigation
+        if (typeof navData['url'] === 'string') {
+          ownedTabUrl = navData['url'] as string;
         }
 
-        // 2. Click the download link on the page (same-origin — this triggers a real download)
+        // Wait for page to fully render
+        await waitMs(1500);
+
+        // 3. Click the download link on the page (same-origin — triggers real download)
         await callTool(
           client, 'safari_click',
           { tabUrl: ownedTabUrl, selector: '#dl' },
-          idRef.value++,
-          10000,
+          idRef.value++, 10000,
         );
 
         // Give Safari a moment to start the download
