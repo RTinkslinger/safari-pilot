@@ -396,7 +396,7 @@ export class InteractionTools {
         },
         downloadContext: linkEl ? {
           href: linkEl.href || undefined,
-          downloadAttr: linkEl.getAttribute('download') || undefined,
+          downloadAttr: linkEl.getAttribute('download') ?? undefined,
           isDownloadLink: linkEl.hasAttribute('download'),
         } : undefined
       };
@@ -404,8 +404,9 @@ export class InteractionTools {
 
     const response = await this.waitAndExecute(tabUrl, selector, 'click', actionJs, { timeout, force });
 
+    let resultText: string | undefined;
     try {
-      const resultText = response.content[0]?.text;
+      resultText = response.content[0]?.text;
       if (resultText) {
         const parsed = JSON.parse(resultText);
         if (parsed.downloadContext) {
@@ -418,8 +419,12 @@ export class InteractionTools {
           });
         }
       }
-    } catch {
-      // Click context extraction is best-effort — never block the click response
+    } catch (err) {
+      if (err instanceof SyntaxError) {
+        console.warn(`[safari_click] Could not parse click response for download context: ${resultText?.slice(0, 100)}`);
+      } else {
+        console.warn(`[safari_click] Download context extraction failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
     }
 
     return response;
