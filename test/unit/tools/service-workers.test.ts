@@ -1,30 +1,21 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ServiceWorkerTools } from '../../../src/tools/service-workers.js';
-import type { AppleScriptEngine } from '../../../src/engines/applescript.js';
+import type { IEngine } from '../../../src/engines/engine.js';
 import type { EngineResult } from '../../../src/types.js';
 
 // ── Mock factory ─────────────────────────────────────────────────────────────
 
 function makeEngine(overrides: Partial<{
-  execute: (script: string, timeout?: number) => Promise<EngineResult>;
-  buildTabScript: (url: string, jsCode: string) => string;
-}>): AppleScriptEngine {
+  executeJsInTab: (tabUrl: string, jsCode: string, timeout?: number) => Promise<EngineResult>;
+}>): IEngine {
   return {
     name: 'applescript',
     execute: vi.fn().mockResolvedValue({ ok: true, value: '', elapsed_ms: 1 }),
-    buildTabScript: vi.fn().mockReturnValue('tab-script'),
-    buildNavigateScript: vi.fn(),
-    buildNewTabScript: vi.fn(),
-    buildCloseTabScript: vi.fn(),
-    buildListTabsScript: vi.fn(),
+    executeJsInTab: vi.fn().mockResolvedValue({ ok: true, value: '', elapsed_ms: 1 }),
     isAvailable: vi.fn().mockResolvedValue(true),
     shutdown: vi.fn().mockResolvedValue(undefined),
-    executeRaw: vi.fn(),
-    wrapJavaScript: vi.fn(),
-    parseJsResult: vi.fn(),
-    parseAppleScriptError: vi.fn(),
     ...overrides,
-  } as unknown as AppleScriptEngine;
+  } as unknown as IEngine;
 }
 
 function okResult(value: string): EngineResult {
@@ -90,13 +81,13 @@ describe('safari_sw_list', () => {
     ];
     const payload = JSON.stringify({ registrations, supported: true });
     const engine = makeEngine({
-      execute: vi.fn().mockResolvedValue(okResult(payload)),
+      executeJsInTab: vi.fn().mockResolvedValue(okResult(payload)),
     });
     const tools = new ServiceWorkerTools(engine);
     const handler = tools.getHandler('safari_sw_list');
     const response = await handler({ tabUrl: 'https://example.com' });
 
-    expect(engine.buildTabScript).toHaveBeenCalledWith('https://example.com', expect.any(String));
+    expect(engine.executeJsInTab).toHaveBeenCalledWith('https://example.com', expect.any(String));
     const data = JSON.parse(response.content[0].text ?? '{}');
     expect(data.registrations).toHaveLength(1);
     expect(data.registrations[0].scope).toBe('https://example.com/');
@@ -108,7 +99,7 @@ describe('safari_sw_list', () => {
   it('returns empty registrations array when no service workers registered', async () => {
     const payload = JSON.stringify({ registrations: [], supported: true });
     const engine = makeEngine({
-      execute: vi.fn().mockResolvedValue(okResult(payload)),
+      executeJsInTab: vi.fn().mockResolvedValue(okResult(payload)),
     });
     const tools = new ServiceWorkerTools(engine);
     const handler = tools.getHandler('safari_sw_list');
@@ -121,7 +112,7 @@ describe('safari_sw_list', () => {
   it('returns supported: false when service workers not available', async () => {
     const payload = JSON.stringify({ registrations: [], supported: false });
     const engine = makeEngine({
-      execute: vi.fn().mockResolvedValue(okResult(payload)),
+      executeJsInTab: vi.fn().mockResolvedValue(okResult(payload)),
     });
     const tools = new ServiceWorkerTools(engine);
     const handler = tools.getHandler('safari_sw_list');
@@ -133,7 +124,7 @@ describe('safari_sw_list', () => {
 
   it('returns degraded response on engine error', async () => {
     const engine = makeEngine({
-      execute: vi.fn().mockResolvedValue(errResult('PERMISSION_DENIED', 'Permission denied')),
+      executeJsInTab: vi.fn().mockResolvedValue(errResult('PERMISSION_DENIED', 'Permission denied')),
     });
     const tools = new ServiceWorkerTools(engine);
     const handler = tools.getHandler('safari_sw_list');
@@ -151,13 +142,13 @@ describe('safari_sw_unregister', () => {
   it('returns unregistered: true when service worker found and removed', async () => {
     const payload = JSON.stringify({ unregistered: true, scope: 'https://example.com/' });
     const engine = makeEngine({
-      execute: vi.fn().mockResolvedValue(okResult(payload)),
+      executeJsInTab: vi.fn().mockResolvedValue(okResult(payload)),
     });
     const tools = new ServiceWorkerTools(engine);
     const handler = tools.getHandler('safari_sw_unregister');
     const response = await handler({ tabUrl: 'https://example.com', scope: 'https://example.com/' });
 
-    expect(engine.buildTabScript).toHaveBeenCalledWith(
+    expect(engine.executeJsInTab).toHaveBeenCalledWith(
       'https://example.com',
       expect.stringContaining('https://example.com/'),
     );
@@ -170,7 +161,7 @@ describe('safari_sw_unregister', () => {
   it('returns unregistered: false when no matching scope found', async () => {
     const payload = JSON.stringify({ unregistered: false, error: 'No service worker found for scope: https://example.com/' });
     const engine = makeEngine({
-      execute: vi.fn().mockResolvedValue(okResult(payload)),
+      executeJsInTab: vi.fn().mockResolvedValue(okResult(payload)),
     });
     const tools = new ServiceWorkerTools(engine);
     const handler = tools.getHandler('safari_sw_unregister');
@@ -183,7 +174,7 @@ describe('safari_sw_unregister', () => {
 
   it('returns degraded response on engine error', async () => {
     const engine = makeEngine({
-      execute: vi.fn().mockResolvedValue(errResult('SAFARI_NOT_RUNNING', 'Safari not running')),
+      executeJsInTab: vi.fn().mockResolvedValue(errResult('SAFARI_NOT_RUNNING', 'Safari not running')),
     });
     const tools = new ServiceWorkerTools(engine);
     const handler = tools.getHandler('safari_sw_unregister');

@@ -1,5 +1,5 @@
 import type { ToolResponse, ToolRequirements } from '../types.js';
-import type { AppleScriptEngine } from '../engines/applescript.js';
+import type { IEngine } from '../engines/engine.js';
 import type { Engine } from '../types.js';
 import type { SafariPilotServer } from '../server.js';
 import { buildRefSelector } from '../aria.js';
@@ -16,11 +16,11 @@ export interface ToolDefinition {
 type Handler = (params: Record<string, unknown>) => Promise<ToolResponse>;
 
 export class InteractionTools {
-  private engine: AppleScriptEngine;
+  private engine: IEngine;
   private server: SafariPilotServer;
   private handlers: Map<string, Handler> = new Map();
 
-  constructor(engine: AppleScriptEngine, server: SafariPilotServer) {
+  constructor(engine: IEngine, server: SafariPilotServer) {
     this.engine = engine;
     this.server = server;
     this.registerHandlers();
@@ -387,8 +387,20 @@ export class InteractionTools {
       el.dispatchEvent(new MouseEvent('click', opts));
 
       var linkEl = el.tagName === 'A' ? el : el.closest('a');
-      return {
+      var navigatedTo = null;
+
+      // dispatchEvent fires JS handlers but does NOT trigger Safari's native
+      // link-following behavior. For anchor elements, explicitly navigate.
+      if (linkEl && linkEl.href && !linkEl.hasAttribute('download')) {
+        var target = linkEl.getAttribute('target');
+        if (!target || target === '_self') {
+          navigatedTo = linkEl.href;
+        }
+      }
+
+      var result = {
         clicked: true,
+        navigatedTo: navigatedTo,
         element: {
           tagName: el.tagName,
           id: el.id || undefined,
@@ -400,6 +412,12 @@ export class InteractionTools {
           isDownloadLink: linkEl.hasAttribute('download'),
         } : undefined
       };
+
+      if (navigatedTo) {
+        window.location.href = navigatedTo;
+      }
+
+      return result;
     `;
 
     const response = await this.waitAndExecute(tabUrl, selector, 'click', actionJs, { timeout, force });

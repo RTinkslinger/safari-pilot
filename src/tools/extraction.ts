@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { generateSnapshotJs, buildRefSelector } from '../aria.js';
 import { hasLocatorParams, extractLocatorFromParams, generateLocatorJs } from '../locator.js';
-import type { AppleScriptEngine } from '../engines/applescript.js';
+import type { IEngine } from '../engines/engine.js';
 import type { Engine, ToolResponse, ToolRequirements } from '../types.js';
 
 export interface ToolDefinition {
@@ -17,10 +17,10 @@ export interface ToolDefinition {
 type Handler = (params: Record<string, unknown>) => Promise<ToolResponse>;
 
 export class ExtractionTools {
-  private engine: AppleScriptEngine;
+  private engine: IEngine;
   private handlers: Map<string, Handler> = new Map();
 
-  constructor(engine: AppleScriptEngine) {
+  constructor(engine: IEngine) {
     this.engine = engine;
     this.registerHandlers();
   }

@@ -1,5 +1,5 @@
 import type { ToolResponse, ToolRequirements } from '../types.js';
-import type { AppleScriptEngine } from '../engines/applescript.js';
+import type { IEngine } from '../engines/engine.js';
 import type { ToolDefinition } from './navigation.js';
 
 type Handler = (params: Record<string, unknown>) => Promise<ToolResponse>;
@@ -36,7 +36,7 @@ function buildClipboardWriteJs(text: string): string {
 }
 
 export class ClipboardTools {
-  constructor(private readonly engine: AppleScriptEngine) {}
+  constructor(private readonly engine: IEngine) {}
 
   // ── Public API ──────────────────────────────────────────────────────────────
 
@@ -91,8 +91,7 @@ export class ClipboardTools {
     const start = Date.now();
     const tabUrl = params['tabUrl'] as string;
 
-    const script = this.engine.buildTabScript(tabUrl, CLIPBOARD_READ_JS);
-    const result = await this.engine.execute(script);
+    const result = await this.engine.executeJsInTab(tabUrl, CLIPBOARD_READ_JS);
 
     if (!result.ok) {
       return this.errorResponse(result.error?.message ?? 'Clipboard read failed', start);
@@ -111,8 +110,7 @@ export class ClipboardTools {
     const text = params['text'] as string;
 
     const js = buildClipboardWriteJs(text);
-    const script = this.engine.buildTabScript(tabUrl, js);
-    const result = await this.engine.execute(script);
+    const result = await this.engine.executeJsInTab(tabUrl, js);
 
     if (!result.ok) {
       return this.errorResponse(result.error?.message ?? 'Clipboard write failed', start);

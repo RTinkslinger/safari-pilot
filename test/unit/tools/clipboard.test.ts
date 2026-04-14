@@ -1,30 +1,21 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ClipboardTools } from '../../../src/tools/clipboard.js';
-import type { AppleScriptEngine } from '../../../src/engines/applescript.js';
+import type { IEngine } from '../../../src/engines/engine.js';
 import type { EngineResult } from '../../../src/types.js';
 
 // ── Mock factory ─────────────────────────────────────────────────────────────
 
 function makeEngine(overrides: Partial<{
-  execute: (script: string, timeout?: number) => Promise<EngineResult>;
-  buildTabScript: (url: string, jsCode: string) => string;
-}>): AppleScriptEngine {
+  executeJsInTab: (tabUrl: string, jsCode: string, timeout?: number) => Promise<EngineResult>;
+}>): IEngine {
   return {
     name: 'applescript',
     execute: vi.fn().mockResolvedValue({ ok: true, value: '', elapsed_ms: 1 }),
-    buildTabScript: vi.fn().mockReturnValue('tab-script'),
-    buildNavigateScript: vi.fn(),
-    buildNewTabScript: vi.fn(),
-    buildCloseTabScript: vi.fn(),
-    buildListTabsScript: vi.fn(),
+    executeJsInTab: vi.fn().mockResolvedValue({ ok: true, value: '', elapsed_ms: 1 }),
     isAvailable: vi.fn().mockResolvedValue(true),
     shutdown: vi.fn().mockResolvedValue(undefined),
-    executeRaw: vi.fn(),
-    wrapJavaScript: vi.fn(),
-    parseJsResult: vi.fn(),
-    parseAppleScriptError: vi.fn(),
     ...overrides,
-  } as unknown as AppleScriptEngine;
+  } as unknown as IEngine;
 }
 
 function okResult(value: string): EngineResult {
@@ -87,13 +78,13 @@ describe('safari_clipboard_read', () => {
   it('returns clipboard text when available', async () => {
     const payload = JSON.stringify({ text: 'hello world', clipboardAvailable: true });
     const engine = makeEngine({
-      execute: vi.fn().mockResolvedValue(okResult(payload)),
+      executeJsInTab: vi.fn().mockResolvedValue(okResult(payload)),
     });
     const tools = new ClipboardTools(engine);
     const handler = tools.getHandler('safari_clipboard_read');
     const response = await handler({ tabUrl: 'https://example.com' });
 
-    expect(engine.buildTabScript).toHaveBeenCalledWith('https://example.com', expect.any(String));
+    expect(engine.executeJsInTab).toHaveBeenCalledWith('https://example.com', expect.any(String));
     const data = JSON.parse(response.content[0].text ?? '{}');
     expect(data.text).toBe('hello world');
     expect(data.clipboardAvailable).toBe(true);
@@ -104,7 +95,7 @@ describe('safari_clipboard_read', () => {
   it('returns clipboardAvailable: false when gesture required', async () => {
     const payload = JSON.stringify({ text: null, clipboardAvailable: false, error: 'NotAllowedError' });
     const engine = makeEngine({
-      execute: vi.fn().mockResolvedValue(okResult(payload)),
+      executeJsInTab: vi.fn().mockResolvedValue(okResult(payload)),
     });
     const tools = new ClipboardTools(engine);
     const handler = tools.getHandler('safari_clipboard_read');
@@ -117,7 +108,7 @@ describe('safari_clipboard_read', () => {
 
   it('returns degraded response on engine error', async () => {
     const engine = makeEngine({
-      execute: vi.fn().mockResolvedValue(errResult('PERMISSION_DENIED', 'Permission denied')),
+      executeJsInTab: vi.fn().mockResolvedValue(errResult('PERMISSION_DENIED', 'Permission denied')),
     });
     const tools = new ClipboardTools(engine);
     const handler = tools.getHandler('safari_clipboard_read');
@@ -130,7 +121,7 @@ describe('safari_clipboard_read', () => {
 
   it('returns fallback when engine returns empty value', async () => {
     const engine = makeEngine({
-      execute: vi.fn().mockResolvedValue(okResult('')),
+      executeJsInTab: vi.fn().mockResolvedValue(okResult('')),
     });
     const tools = new ClipboardTools(engine);
     const handler = tools.getHandler('safari_clipboard_read');
@@ -147,13 +138,13 @@ describe('safari_clipboard_write', () => {
   it('returns written: true on success', async () => {
     const payload = JSON.stringify({ written: true, text: 'my text' });
     const engine = makeEngine({
-      execute: vi.fn().mockResolvedValue(okResult(payload)),
+      executeJsInTab: vi.fn().mockResolvedValue(okResult(payload)),
     });
     const tools = new ClipboardTools(engine);
     const handler = tools.getHandler('safari_clipboard_write');
     const response = await handler({ tabUrl: 'https://example.com', text: 'my text' });
 
-    expect(engine.buildTabScript).toHaveBeenCalledWith('https://example.com', expect.stringContaining('my text'));
+    expect(engine.executeJsInTab).toHaveBeenCalledWith('https://example.com', expect.stringContaining('my text'));
     const data = JSON.parse(response.content[0].text ?? '{}');
     expect(data.written).toBe(true);
     expect(response.metadata.degraded).toBe(false);
@@ -161,7 +152,7 @@ describe('safari_clipboard_write', () => {
 
   it('returns degraded response on engine error', async () => {
     const engine = makeEngine({
-      execute: vi.fn().mockResolvedValue(errResult('SAFARI_CRASHED', 'Safari crashed')),
+      executeJsInTab: vi.fn().mockResolvedValue(errResult('SAFARI_CRASHED', 'Safari crashed')),
     });
     const tools = new ClipboardTools(engine);
     const handler = tools.getHandler('safari_clipboard_write');

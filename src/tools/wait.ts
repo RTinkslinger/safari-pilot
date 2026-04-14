@@ -1,5 +1,5 @@
 import type { ToolResponse, ToolRequirements } from '../types.js';
-import type { AppleScriptEngine } from '../engines/applescript.js';
+import type { IEngine } from '../engines/engine.js';
 import type { ToolDefinition } from './navigation.js';
 
 type Handler = (params: Record<string, unknown>) => Promise<ToolResponse>;
@@ -40,8 +40,7 @@ function buildConditionJs(condition: WaitCondition, value: string): string {
     case 'networkidle': {
       // Track in-flight XHR/fetch count and resolve when quiet for NETWORK_IDLE_QUIET_MS.
       // The JS returns true once there has been no XHR/fetch activity for the threshold.
-      return `
-(function() {
+      return `return (function() {
   if (!window.__safariPilotNetworkIdleSetup) {
     window.__safariPilotNetworkIdleSetup = true;
     window.__safariPilotInflight = 0;
@@ -82,7 +81,7 @@ function buildConditionJs(condition: WaitCondition, value: string): string {
 }
 
 export class WaitTools {
-  constructor(private readonly engine: AppleScriptEngine) {}
+  constructor(private readonly engine: IEngine) {}
 
   // ── Public API ──────────────────────────────────────────────────────────────
 
@@ -165,7 +164,7 @@ export class WaitTools {
         break;
       }
 
-      const result = await this.executeJsInTab(tabUrl, conditionJs);
+      const result = await this.evalCondition(tabUrl, conditionJs);
       if (result === true) {
         met = true;
         break;
@@ -193,13 +192,12 @@ export class WaitTools {
    * Execute JS in a tab and return the raw boolean/truthy result.
    * Returns false on engine failure or unparseable output.
    */
-  private async executeJsInTab(tabUrl: string, jsCode: string): Promise<boolean> {
-    const script = this.engine.buildTabScript(tabUrl, jsCode);
-    const result = await this.engine.execute(script);
+  private async evalCondition(tabUrl: string, jsCode: string): Promise<boolean> {
+    const result = await this.engine.executeJsInTab(tabUrl, jsCode);
     if (!result.ok || !result.value) return false;
 
     const raw = result.value.trim();
-    // AppleScript returns 'true'/'false' as strings; also handle JSON booleans
+    // Engine returns 'true'/'false' as strings; also handle JSON booleans
     if (raw === 'true') return true;
     if (raw === 'false') return false;
     try {

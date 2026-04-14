@@ -1,30 +1,21 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { WaitTools } from '../../../src/tools/wait.js';
-import type { AppleScriptEngine } from '../../../src/engines/applescript.js';
+import type { IEngine } from '../../../src/engines/engine.js';
 import type { EngineResult } from '../../../src/types.js';
 
 // ── Mock factory ─────────────────────────────────────────────────────────────
 
 function makeEngine(overrides: Partial<{
-  execute: (script: string, timeout?: number) => Promise<EngineResult>;
-  buildTabScript: (url: string, jsCode: string) => string;
-}>): AppleScriptEngine {
+  executeJsInTab: (tabUrl: string, jsCode: string, timeout?: number) => Promise<EngineResult>;
+}>): IEngine {
   return {
     name: 'applescript',
     execute: vi.fn().mockResolvedValue({ ok: true, value: 'false', elapsed_ms: 1 }),
-    buildTabScript: vi.fn().mockReturnValue('tab-script'),
-    buildNavigateScript: vi.fn(),
-    buildNewTabScript: vi.fn(),
-    buildCloseTabScript: vi.fn(),
-    buildListTabsScript: vi.fn(),
+    executeJsInTab: vi.fn().mockResolvedValue({ ok: true, value: 'false', elapsed_ms: 1 }),
     isAvailable: vi.fn().mockResolvedValue(true),
     shutdown: vi.fn().mockResolvedValue(undefined),
-    executeRaw: vi.fn(),
-    wrapJavaScript: vi.fn(),
-    parseJsResult: vi.fn(),
-    parseAppleScriptError: vi.fn(),
     ...overrides,
-  } as unknown as AppleScriptEngine;
+  } as unknown as IEngine;
 }
 
 function okResult(value: string): EngineResult {
@@ -38,7 +29,7 @@ function errResult(code: string, message: string): EngineResult {
 /** Simulate N failing polls then a success on the (N+1)th call. */
 function afterNPolls(n: number): ReturnType<typeof vi.fn> {
   let callCount = 0;
-  return vi.fn().mockImplementation(() => {
+  return vi.fn().mockImplementation((_tabUrl: string, _jsCode: string) => {
     callCount++;
     return Promise.resolve(okResult(callCount > n ? 'true' : 'false'));
   });
@@ -84,7 +75,7 @@ describe('WaitTools - registration', () => {
 
 describe("safari_wait_for condition: 'selector'", () => {
   it('resolves met: true when element is found on first poll', async () => {
-    const engine = makeEngine({ execute: vi.fn().mockResolvedValue(okResult('true')) });
+    const engine = makeEngine({ executeJsInTab: vi.fn().mockResolvedValue(okResult('true')) });
     const tools = new WaitTools(engine);
     const handler = tools.getHandler('safari_wait_for');
 
@@ -103,7 +94,7 @@ describe("safari_wait_for condition: 'selector'", () => {
   });
 
   it('passes CSS selector into the JS snippet', async () => {
-    const engine = makeEngine({ execute: vi.fn().mockResolvedValue(okResult('true')) });
+    const engine = makeEngine({ executeJsInTab: vi.fn().mockResolvedValue(okResult('true')) });
     const tools = new WaitTools(engine);
     const handler = tools.getHandler('safari_wait_for');
 
@@ -114,13 +105,13 @@ describe("safari_wait_for condition: 'selector'", () => {
       timeout: 5000,
     });
 
-    const jsArg = (engine.buildTabScript as ReturnType<typeof vi.fn>).mock.calls[0]?.[1] as string;
+    const jsArg = (engine.executeJsInTab as ReturnType<typeof vi.fn>).mock.calls[0]?.[1] as string;
     expect(jsArg).toContain('.my-button');
     expect(jsArg).toContain('querySelector');
   });
 
   it('resolves met: true after a few failing polls', async () => {
-    const engine = makeEngine({ execute: afterNPolls(2) });
+    const engine = makeEngine({ executeJsInTab: afterNPolls(2) });
     const tools = new WaitTools(engine);
     const handler = tools.getHandler('safari_wait_for');
 
@@ -136,7 +127,7 @@ describe("safari_wait_for condition: 'selector'", () => {
     expect(data.met).toBe(true);
     expect(data.timedOut).toBe(false);
     // Should have been called 3 times (2 false + 1 true)
-    expect((engine.execute as ReturnType<typeof vi.fn>).mock.calls.length).toBe(3);
+    expect((engine.executeJsInTab as ReturnType<typeof vi.fn>).mock.calls.length).toBe(3);
   });
 });
 
@@ -145,7 +136,7 @@ describe("safari_wait_for condition: 'selector'", () => {
 describe("safari_wait_for condition: 'selectorHidden'", () => {
   it('resolves met: true when element disappears', async () => {
     // First poll: element still present (false), second poll: gone (true)
-    const engine = makeEngine({ execute: afterNPolls(1) });
+    const engine = makeEngine({ executeJsInTab: afterNPolls(1) });
     const tools = new WaitTools(engine);
     const handler = tools.getHandler('safari_wait_for');
 
@@ -163,7 +154,7 @@ describe("safari_wait_for condition: 'selectorHidden'", () => {
   });
 
   it('JS snippet checks for null (element absent)', async () => {
-    const engine = makeEngine({ execute: vi.fn().mockResolvedValue(okResult('true')) });
+    const engine = makeEngine({ executeJsInTab: vi.fn().mockResolvedValue(okResult('true')) });
     const tools = new WaitTools(engine);
     const handler = tools.getHandler('safari_wait_for');
 
@@ -174,7 +165,7 @@ describe("safari_wait_for condition: 'selectorHidden'", () => {
       timeout: 5000,
     });
 
-    const jsArg = (engine.buildTabScript as ReturnType<typeof vi.fn>).mock.calls[0]?.[1] as string;
+    const jsArg = (engine.executeJsInTab as ReturnType<typeof vi.fn>).mock.calls[0]?.[1] as string;
     expect(jsArg).toContain('=== null');
   });
 });
@@ -183,7 +174,7 @@ describe("safari_wait_for condition: 'selectorHidden'", () => {
 
 describe("safari_wait_for condition: 'text'", () => {
   it('resolves met: true when text appears in page', async () => {
-    const engine = makeEngine({ execute: vi.fn().mockResolvedValue(okResult('true')) });
+    const engine = makeEngine({ executeJsInTab: vi.fn().mockResolvedValue(okResult('true')) });
     const tools = new WaitTools(engine);
     const handler = tools.getHandler('safari_wait_for');
 
@@ -199,7 +190,7 @@ describe("safari_wait_for condition: 'text'", () => {
   });
 
   it('JS snippet uses textContent.includes', async () => {
-    const engine = makeEngine({ execute: vi.fn().mockResolvedValue(okResult('true')) });
+    const engine = makeEngine({ executeJsInTab: vi.fn().mockResolvedValue(okResult('true')) });
     const tools = new WaitTools(engine);
     const handler = tools.getHandler('safari_wait_for');
 
@@ -210,7 +201,7 @@ describe("safari_wait_for condition: 'text'", () => {
       timeout: 5000,
     });
 
-    const jsArg = (engine.buildTabScript as ReturnType<typeof vi.fn>).mock.calls[0]?.[1] as string;
+    const jsArg = (engine.executeJsInTab as ReturnType<typeof vi.fn>).mock.calls[0]?.[1] as string;
     expect(jsArg).toContain('textContent');
     expect(jsArg).toContain('includes');
     expect(jsArg).toContain('Success');
@@ -221,7 +212,7 @@ describe("safari_wait_for condition: 'text'", () => {
 
 describe("safari_wait_for condition: 'function'", () => {
   it('resolves met: true when custom function returns truthy', async () => {
-    const engine = makeEngine({ execute: vi.fn().mockResolvedValue(okResult('true')) });
+    const engine = makeEngine({ executeJsInTab: vi.fn().mockResolvedValue(okResult('true')) });
     const tools = new WaitTools(engine);
     const handler = tools.getHandler('safari_wait_for');
 
@@ -237,7 +228,7 @@ describe("safari_wait_for condition: 'function'", () => {
   });
 
   it('embeds the function body in the JS snippet', async () => {
-    const engine = makeEngine({ execute: vi.fn().mockResolvedValue(okResult('true')) });
+    const engine = makeEngine({ executeJsInTab: vi.fn().mockResolvedValue(okResult('true')) });
     const tools = new WaitTools(engine);
     const handler = tools.getHandler('safari_wait_for');
 
@@ -249,12 +240,12 @@ describe("safari_wait_for condition: 'function'", () => {
       timeout: 5000,
     });
 
-    const jsArg = (engine.buildTabScript as ReturnType<typeof vi.fn>).mock.calls[0]?.[1] as string;
+    const jsArg = (engine.executeJsInTab as ReturnType<typeof vi.fn>).mock.calls[0]?.[1] as string;
     expect(jsArg).toContain(funcBody);
   });
 
   it('resolves met: true after N failing polls', async () => {
-    const engine = makeEngine({ execute: afterNPolls(3) });
+    const engine = makeEngine({ executeJsInTab: afterNPolls(3) });
     const tools = new WaitTools(engine);
     const handler = tools.getHandler('safari_wait_for');
 
@@ -268,7 +259,7 @@ describe("safari_wait_for condition: 'function'", () => {
 
     const data = JSON.parse(response.content[0].text ?? '{}');
     expect(data.met).toBe(true);
-    expect((engine.execute as ReturnType<typeof vi.fn>).mock.calls.length).toBe(4);
+    expect((engine.executeJsInTab as ReturnType<typeof vi.fn>).mock.calls.length).toBe(4);
   });
 });
 
@@ -277,7 +268,7 @@ describe("safari_wait_for condition: 'function'", () => {
 describe('safari_wait_for — timeout', () => {
   it('returns timedOut: true and met: false when condition never met', async () => {
     // Engine always returns false
-    const engine = makeEngine({ execute: vi.fn().mockResolvedValue(okResult('false')) });
+    const engine = makeEngine({ executeJsInTab: vi.fn().mockResolvedValue(okResult('false')) });
     const tools = new WaitTools(engine);
     const handler = tools.getHandler('safari_wait_for');
 
@@ -299,7 +290,7 @@ describe('safari_wait_for — timeout', () => {
 
 describe('safari_wait_for — elapsed time', () => {
   it('returns elapsed time in the response', async () => {
-    const engine = makeEngine({ execute: vi.fn().mockResolvedValue(okResult('true')) });
+    const engine = makeEngine({ executeJsInTab: vi.fn().mockResolvedValue(okResult('true')) });
     const tools = new WaitTools(engine);
     const handler = tools.getHandler('safari_wait_for');
 
@@ -321,7 +312,7 @@ describe('safari_wait_for — elapsed time', () => {
 
 describe("safari_wait_for condition: 'urlMatch'", () => {
   it('resolves met: true when URL contains the pattern', async () => {
-    const engine = makeEngine({ execute: vi.fn().mockResolvedValue(okResult('true')) });
+    const engine = makeEngine({ executeJsInTab: vi.fn().mockResolvedValue(okResult('true')) });
     const tools = new WaitTools(engine);
     const handler = tools.getHandler('safari_wait_for');
 
@@ -337,7 +328,7 @@ describe("safari_wait_for condition: 'urlMatch'", () => {
   });
 
   it('JS snippet checks location.href.includes', async () => {
-    const engine = makeEngine({ execute: vi.fn().mockResolvedValue(okResult('true')) });
+    const engine = makeEngine({ executeJsInTab: vi.fn().mockResolvedValue(okResult('true')) });
     const tools = new WaitTools(engine);
     const handler = tools.getHandler('safari_wait_for');
 
@@ -348,7 +339,7 @@ describe("safari_wait_for condition: 'urlMatch'", () => {
       timeout: 5000,
     });
 
-    const jsArg = (engine.buildTabScript as ReturnType<typeof vi.fn>).mock.calls[0]?.[1] as string;
+    const jsArg = (engine.executeJsInTab as ReturnType<typeof vi.fn>).mock.calls[0]?.[1] as string;
     expect(jsArg).toContain('location.href');
     expect(jsArg).toContain('/success');
   });

@@ -1,30 +1,21 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { PerformanceTools } from '../../../src/tools/performance.js';
-import type { AppleScriptEngine } from '../../../src/engines/applescript.js';
+import type { IEngine } from '../../../src/engines/engine.js';
 import type { EngineResult } from '../../../src/types.js';
 
 // ── Mock factory ─────────────────────────────────────────────────────────────
 
 function makeEngine(overrides: Partial<{
-  execute: (script: string, timeout?: number) => Promise<EngineResult>;
-  buildTabScript: (url: string, jsCode: string) => string;
-}>): AppleScriptEngine {
+  executeJsInTab: (tabUrl: string, jsCode: string, timeout?: number) => Promise<EngineResult>;
+}>): IEngine {
   return {
     name: 'applescript',
     execute: vi.fn().mockResolvedValue({ ok: true, value: '', elapsed_ms: 1 }),
-    buildTabScript: vi.fn().mockReturnValue('tab-script'),
-    buildNavigateScript: vi.fn(),
-    buildNewTabScript: vi.fn(),
-    buildCloseTabScript: vi.fn(),
-    buildListTabsScript: vi.fn(),
+    executeJsInTab: vi.fn().mockResolvedValue({ ok: true, value: '', elapsed_ms: 1 }),
     isAvailable: vi.fn().mockResolvedValue(true),
     shutdown: vi.fn().mockResolvedValue(undefined),
-    executeRaw: vi.fn(),
-    wrapJavaScript: vi.fn(),
-    parseJsResult: vi.fn(),
-    parseAppleScriptError: vi.fn(),
     ...overrides,
-  } as unknown as AppleScriptEngine;
+  } as unknown as IEngine;
 }
 
 function okResult(value: string): EngineResult {
@@ -86,13 +77,13 @@ describe('safari_begin_trace', () => {
   it('returns tracing: true on success', async () => {
     const payload = JSON.stringify({ tracing: true, startTime: 1234.56 });
     const engine = makeEngine({
-      execute: vi.fn().mockResolvedValue(okResult(payload)),
+      executeJsInTab: vi.fn().mockResolvedValue(okResult(payload)),
     });
     const tools = new PerformanceTools(engine);
     const handler = tools.getHandler('safari_begin_trace');
     const response = await handler({ tabUrl: 'https://example.com' });
 
-    expect(engine.buildTabScript).toHaveBeenCalledWith('https://example.com', expect.any(String));
+    expect(engine.executeJsInTab).toHaveBeenCalledWith('https://example.com', expect.any(String));
     const data = JSON.parse(response.content[0].text ?? '{}');
     expect(data.tracing).toBe(true);
     expect(data.startTime).toBe(1234.56);
@@ -100,22 +91,22 @@ describe('safari_begin_trace', () => {
     expect(response.metadata.degraded).toBe(false);
   });
 
-  it('includes performance.mark call in the JS', () => {
+  it('includes performance.mark call in the JS', async () => {
     const engine = makeEngine({
-      execute: vi.fn().mockResolvedValue(okResult(JSON.stringify({ tracing: true, startTime: 0 }))),
+      executeJsInTab: vi.fn().mockResolvedValue(okResult(JSON.stringify({ tracing: true, startTime: 0 }))),
     });
     const tools = new PerformanceTools(engine);
     const handler = tools.getHandler('safari_begin_trace');
-    handler({ tabUrl: 'https://example.com' });
+    await handler({ tabUrl: 'https://example.com' });
 
-    const jsArg = (engine.buildTabScript as ReturnType<typeof vi.fn>).mock.calls[0]?.[1] as string;
+    const jsArg = (engine.executeJsInTab as ReturnType<typeof vi.fn>).mock.calls[0]?.[1] as string;
     expect(jsArg).toContain('safari_pilot_trace_start');
     expect(jsArg).toContain('PerformanceObserver');
   });
 
   it('returns degraded response on engine error', async () => {
     const engine = makeEngine({
-      execute: vi.fn().mockResolvedValue(errResult('SAFARI_NOT_RUNNING', 'Safari not running')),
+      executeJsInTab: vi.fn().mockResolvedValue(errResult('SAFARI_NOT_RUNNING', 'Safari not running')),
     });
     const tools = new PerformanceTools(engine);
     const handler = tools.getHandler('safari_begin_trace');
@@ -142,13 +133,13 @@ describe('safari_end_trace', () => {
       topResources: [],
     };
     const engine = makeEngine({
-      execute: vi.fn().mockResolvedValue(okResult(JSON.stringify(traceData))),
+      executeJsInTab: vi.fn().mockResolvedValue(okResult(JSON.stringify(traceData))),
     });
     const tools = new PerformanceTools(engine);
     const handler = tools.getHandler('safari_end_trace');
     const response = await handler({ tabUrl: 'https://example.com' });
 
-    expect(engine.buildTabScript).toHaveBeenCalledWith('https://example.com', expect.any(String));
+    expect(engine.executeJsInTab).toHaveBeenCalledWith('https://example.com', expect.any(String));
     const data = JSON.parse(response.content[0].text ?? '{}');
     expect(data.traceMs).toBe(2500);
     expect(data.marks).toHaveLength(1);
@@ -157,21 +148,21 @@ describe('safari_end_trace', () => {
     expect(response.metadata.degraded).toBe(false);
   });
 
-  it('includes safari_pilot_trace_end mark in the JS', () => {
+  it('includes safari_pilot_trace_end mark in the JS', async () => {
     const engine = makeEngine({
-      execute: vi.fn().mockResolvedValue(okResult(JSON.stringify({ traceMs: 0 }))),
+      executeJsInTab: vi.fn().mockResolvedValue(okResult(JSON.stringify({ traceMs: 0 }))),
     });
     const tools = new PerformanceTools(engine);
     const handler = tools.getHandler('safari_end_trace');
-    handler({ tabUrl: 'https://example.com' });
+    await handler({ tabUrl: 'https://example.com' });
 
-    const jsArg = (engine.buildTabScript as ReturnType<typeof vi.fn>).mock.calls[0]?.[1] as string;
+    const jsArg = (engine.executeJsInTab as ReturnType<typeof vi.fn>).mock.calls[0]?.[1] as string;
     expect(jsArg).toContain('safari_pilot_trace_end');
   });
 
   it('returns degraded response on engine error', async () => {
     const engine = makeEngine({
-      execute: vi.fn().mockResolvedValue(errResult('ELEMENT_NOT_FOUND', 'Tab not found')),
+      executeJsInTab: vi.fn().mockResolvedValue(errResult('ELEMENT_NOT_FOUND', 'Tab not found')),
     });
     const tools = new PerformanceTools(engine);
     const handler = tools.getHandler('safari_end_trace');
@@ -202,13 +193,13 @@ describe('safari_get_page_metrics', () => {
       encodedBodySizeBytes: 40000,
     };
     const engine = makeEngine({
-      execute: vi.fn().mockResolvedValue(okResult(JSON.stringify(metrics))),
+      executeJsInTab: vi.fn().mockResolvedValue(okResult(JSON.stringify(metrics))),
     });
     const tools = new PerformanceTools(engine);
     const handler = tools.getHandler('safari_get_page_metrics');
     const response = await handler({ tabUrl: 'https://example.com' });
 
-    expect(engine.buildTabScript).toHaveBeenCalledWith('https://example.com', expect.any(String));
+    expect(engine.executeJsInTab).toHaveBeenCalledWith('https://example.com', expect.any(String));
     const data = JSON.parse(response.content[0].text ?? '{}');
     expect(data.ttfbMs).toBe(120);
     expect(data.fcpMs).toBe(700);
@@ -218,15 +209,15 @@ describe('safari_get_page_metrics', () => {
     expect(response.metadata.degraded).toBe(false);
   });
 
-  it('reads navigation timing, paint timing, and CLS from the JS', () => {
+  it('reads navigation timing, paint timing, and CLS from the JS', async () => {
     const engine = makeEngine({
-      execute: vi.fn().mockResolvedValue(okResult(JSON.stringify({}))),
+      executeJsInTab: vi.fn().mockResolvedValue(okResult(JSON.stringify({}))),
     });
     const tools = new PerformanceTools(engine);
     const handler = tools.getHandler('safari_get_page_metrics');
-    handler({ tabUrl: 'https://example.com' });
+    await handler({ tabUrl: 'https://example.com' });
 
-    const jsArg = (engine.buildTabScript as ReturnType<typeof vi.fn>).mock.calls[0]?.[1] as string;
+    const jsArg = (engine.executeJsInTab as ReturnType<typeof vi.fn>).mock.calls[0]?.[1] as string;
     expect(jsArg).toContain('navigation');
     expect(jsArg).toContain('first-contentful-paint');
     expect(jsArg).toContain('layout-shift');
@@ -234,7 +225,7 @@ describe('safari_get_page_metrics', () => {
 
   it('returns empty object as fallback when engine returns empty value', async () => {
     const engine = makeEngine({
-      execute: vi.fn().mockResolvedValue(okResult('')),
+      executeJsInTab: vi.fn().mockResolvedValue(okResult('')),
     });
     const tools = new PerformanceTools(engine);
     const handler = tools.getHandler('safari_get_page_metrics');
@@ -247,7 +238,7 @@ describe('safari_get_page_metrics', () => {
 
   it('returns degraded response on engine error', async () => {
     const engine = makeEngine({
-      execute: vi.fn().mockResolvedValue(errResult('SAFARI_CRASHED', 'Safari crashed')),
+      executeJsInTab: vi.fn().mockResolvedValue(errResult('SAFARI_CRASHED', 'Safari crashed')),
     });
     const tools = new PerformanceTools(engine);
     const handler = tools.getHandler('safari_get_page_metrics');

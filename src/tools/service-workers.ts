@@ -1,5 +1,5 @@
 import type { ToolResponse, ToolRequirements } from '../types.js';
-import type { AppleScriptEngine } from '../engines/applescript.js';
+import type { IEngine } from '../engines/engine.js';
 import type { ToolDefinition } from './navigation.js';
 
 type Handler = (params: Record<string, unknown>) => Promise<ToolResponse>;
@@ -46,7 +46,7 @@ function buildSwUnregisterJs(scope: string): string {
 }
 
 export class ServiceWorkerTools {
-  constructor(private readonly engine: AppleScriptEngine) {}
+  constructor(private readonly engine: IEngine) {}
 
   // ── Public API ──────────────────────────────────────────────────────────────
 
@@ -99,8 +99,7 @@ export class ServiceWorkerTools {
     const start = Date.now();
     const tabUrl = params['tabUrl'] as string;
 
-    const script = this.engine.buildTabScript(tabUrl, SW_LIST_JS);
-    const result = await this.engine.execute(script);
+    const result = await this.engine.executeJsInTab(tabUrl, SW_LIST_JS);
 
     if (!result.ok) {
       return this.errorResponse(result.error?.message ?? 'Failed to list service workers', start);
@@ -119,8 +118,7 @@ export class ServiceWorkerTools {
     const scope = params['scope'] as string;
 
     const js = buildSwUnregisterJs(scope);
-    const script = this.engine.buildTabScript(tabUrl, js);
-    const result = await this.engine.execute(script);
+    const result = await this.engine.executeJsInTab(tabUrl, js);
 
     if (!result.ok) {
       return this.errorResponse(result.error?.message ?? 'Failed to unregister service worker', start);

@@ -1,5 +1,5 @@
 import type { ToolResponse, ToolRequirements } from '../types.js';
-import type { AppleScriptEngine } from '../engines/applescript.js';
+import type { IEngine } from '../engines/engine.js';
 
 export interface ToolDefinition {
   name: string;
@@ -11,7 +11,7 @@ export interface ToolDefinition {
 type Handler = (params: Record<string, unknown>) => Promise<ToolResponse>;
 
 export class StructuredExtractionTools {
-  constructor(private readonly engine: AppleScriptEngine) {}
+  constructor(private readonly engine: IEngine) {}
 
   // ── Public API ──────────────────────────────────────────────────────────────
 

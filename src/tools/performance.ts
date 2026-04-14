@@ -1,5 +1,5 @@
 import type { ToolResponse, ToolRequirements } from '../types.js';
-import type { AppleScriptEngine } from '../engines/applescript.js';
+import type { IEngine } from '../engines/engine.js';
 import type { ToolDefinition } from './navigation.js';
 
 type Handler = (params: Record<string, unknown>) => Promise<ToolResponse>;
@@ -120,7 +120,7 @@ const GET_PAGE_METRICS_JS = `
 `.trim();
 
 export class PerformanceTools {
-  constructor(private readonly engine: AppleScriptEngine) {}
+  constructor(private readonly engine: IEngine) {}
 
   // ── Public API ──────────────────────────────────────────────────────────────
 
@@ -194,8 +194,7 @@ export class PerformanceTools {
     const start = Date.now();
     const tabUrl = params['tabUrl'] as string;
 
-    const script = this.engine.buildTabScript(tabUrl, BEGIN_TRACE_JS);
-    const result = await this.engine.execute(script);
+    const result = await this.engine.executeJsInTab(tabUrl, BEGIN_TRACE_JS);
 
     if (!result.ok) {
       return this.errorResponse(result.error?.message ?? 'Failed to begin trace', start);
@@ -212,8 +211,7 @@ export class PerformanceTools {
     const start = Date.now();
     const tabUrl = params['tabUrl'] as string;
 
-    const script = this.engine.buildTabScript(tabUrl, END_TRACE_JS);
-    const result = await this.engine.execute(script);
+    const result = await this.engine.executeJsInTab(tabUrl, END_TRACE_JS);
 
     if (!result.ok) {
       return this.errorResponse(result.error?.message ?? 'Failed to end trace', start);
@@ -230,8 +228,7 @@ export class PerformanceTools {
     const start = Date.now();
     const tabUrl = params['tabUrl'] as string;
 
-    const script = this.engine.buildTabScript(tabUrl, GET_PAGE_METRICS_JS);
-    const result = await this.engine.execute(script);
+    const result = await this.engine.executeJsInTab(tabUrl, GET_PAGE_METRICS_JS);
 
     if (!result.ok) {
       return this.errorResponse(result.error?.message ?? 'Failed to get page metrics', start);

@@ -1,5 +1,5 @@
 import type { ToolResponse, ToolRequirements } from '../types.js';
-import type { AppleScriptEngine } from '../engines/applescript.js';
+import type { IEngine } from '../engines/engine.js';
 import type { Engine } from '../types.js';
 
 export interface ToolDefinition {
@@ -12,10 +12,10 @@ export interface ToolDefinition {
 type Handler = (params: Record<string, unknown>) => Promise<ToolResponse>;
 
 export class FrameTools {
-  private engine: AppleScriptEngine;
+  private engine: IEngine;
   private handlers: Map<string, Handler> = new Map();
 
-  constructor(engine: AppleScriptEngine) {
+  constructor(engine: IEngine) {
     this.engine = engine;
     this.registerHandlers();
   }
