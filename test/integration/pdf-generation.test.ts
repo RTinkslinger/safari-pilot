@@ -6,13 +6,8 @@
  *
  * Skip condition: daemon binary must exist at bin/SafariPilotd.
  *
- * KNOWN BUG: The daemon's NSPrintOperation.run() for WKWebView enters an
- * infinite page spool loop when generating PDFs from HTML. The print operation
- * never terminates, producing a continuously growing output file. Tests 1 and 2
- * will fail with TIMEOUT until PdfGenerator.swift is fixed — likely by
- * replacing NSPrintOperation with WKWebView.createPDF(configuration:).
- * The error-path test (test 3) works correctly because it fails at init
- * validation before reaching the print operation.
+ * PDF generation uses WKWebView.createPDF(configuration:) — the async API
+ * that reliably produces PDFs without the NSPrintOperation infinite spool bug.
  */
 import { describe, it, expect, afterAll, afterEach } from 'vitest';
 import { DaemonEngine } from '../../src/engines/daemon.js';
@@ -31,7 +26,6 @@ function tempPdfPath(label: string): string {
 }
 
 // ── Error path tests (daemon init-time validation) ──────────────────────────
-// These tests pass because the errors are caught before NSPrintOperation runs.
 
 describe.skipIf(!DAEMON_AVAILABLE)('PDF generation — error paths', () => {
   let daemon: DaemonEngine;
@@ -95,9 +89,6 @@ describe.skipIf(!DAEMON_AVAILABLE)('PDF generation — error paths', () => {
 });
 
 // ── Happy path tests (actual PDF generation) ────────────────────────────────
-// Each test gets its own daemon instance because NSPrintOperation.run() hangs
-// (infinite spool bug), leaving the daemon unresponsive. Isolating each test
-// ensures one stuck daemon doesn't cascade-fail subsequent tests.
 
 describe.skipIf(!DAEMON_AVAILABLE)('PDF generation — happy path', () => {
   const outputFiles: string[] = [];

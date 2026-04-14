@@ -9,7 +9,7 @@ import PDFKit
 public struct PdfResult: Sendable {
     public let path: String
     public let pageCount: Int
-    public let fileSize: Int64
+    public let fileSize: Int
     public let warnings: [String]
 }
 
@@ -25,7 +25,7 @@ public enum PdfError: Error, Sendable {
 // MARK: - PdfGenerator
 
 /// Single-use PDF renderer: loads HTML or URL into a hidden WKWebView, waits for
-/// navigation + fonts, then generates a PDF via NSPrintInfo + printOperationWithPrintInfo.
+/// navigation + fonts, then generates a PDF via WKWebView.createPDF(configuration:).
 ///
 /// Usage:
 /// ```swift
@@ -34,7 +34,7 @@ public enum PdfError: Error, Sendable {
 /// print(result.path, result.pageCount, result.fileSize)
 /// ```
 ///
-/// - Important: WKWebView and NSPrintOperation must execute on the main thread.
+/// - Important: WKWebView must be created and used on the main thread.
 ///   The `generate()` method dispatches to `@MainActor` internally.
 /// - Important: Each instance is single-use. Do not call `generate()` more than once.
 public final class PdfGenerator: NSObject, WKNavigationDelegate, @unchecked Sendable {
@@ -161,93 +161,141 @@ public final class PdfGenerator: NSObject, WKNavigationDelegate, @unchecked Send
 
     // MARK: - Main-thread implementation
 
-    /// All WKWebView and NSPrintOperation work must happen on the main thread.
+    /// All WKWebView work must happen on the main thread.
     /// This method is the @MainActor entry point dispatched from `generate()`.
     @MainActor
     private func generateOnMain() async throws -> PdfResult {
         var warnings: [String] = []
 
-        // 1. Create a hidden WKWebView
+        // 1. Determine content dimensions from paper size + margins
+        let effectivePaperWidth = paperWidth ?? 612.0   // Default: US Letter
+        let effectivePaperHeight = paperHeight ?? 792.0
+        let contentWidth = effectivePaperWidth - marginLeft - marginRight
+        let contentHeight = effectivePaperHeight - marginTop - marginBottom
+
+        // 2. Create a hidden WKWebView sized to the printable content area.
+        //    The frame width controls how the HTML layout engine flows content.
         let config = WKWebViewConfiguration()
         config.suppressesIncrementalRendering = true
 
-        let webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 1280, height: 960), configuration: config)
+        let frameWidth = landscape ? contentHeight : contentWidth
+        let webView = WKWebView(
+            frame: NSRect(x: 0, y: 0, width: frameWidth, height: 1),
+            configuration: config
+        )
         webView.navigationDelegate = self
 
-        // 2. Load content
+        // 3. Load content
         if let html = self.html {
             webView.loadHTMLString(html, baseURL: baseURL)
         } else if let url = self.url {
             webView.load(URLRequest(url: url))
         }
 
-        // 3. Wait for navigation to finish (didFinishNavigation / didFail)
+        // 4. Wait for navigation to finish (didFinishNavigation / didFail)
         try await waitForNavigation()
 
-        // 4. Wait for fonts to load (with timeout)
+        // 5. Wait for fonts to load (with timeout)
         let fontsReady = await waitForFonts(webView: webView)
         if !fontsReady {
             warnings.append("Font loading timed out after \(fontWaitTimeout)s — some fonts may not render")
         }
 
-        // 5. Detect broken images
+        // 6. Detect broken images
         let brokenCount = await detectBrokenImages(webView: webView)
         if brokenCount > 0 {
             warnings.append("\(brokenCount) image(s) failed to load (naturalWidth === 0)")
         }
 
-        // 6. Configure NSPrintInfo
-        let printInfo = NSPrintInfo()
+        // 7. Inject CSS for margins, background printing, and scale via JavaScript.
+        //    createPDF captures the visible viewport — padding on body simulates margins,
+        //    and zoom handles the scale factor.
+        var cssRules: [String] = []
 
-        // Paper size (nil = default, letting @page CSS control)
-        if let pw = paperWidth, let ph = paperHeight {
-            printInfo.paperSize = NSSize(width: pw, height: ph)
+        // Margins via body padding
+        cssRules.append("body { padding: \(marginTop)pt \(marginRight)pt \(marginBottom)pt \(marginLeft)pt !important; margin: 0 !important; box-sizing: border-box !important; }")
+
+        // Background color/image printing
+        if printBackground {
+            cssRules.append("* { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }")
         }
 
-        // Orientation
-        printInfo.orientation = landscape ? .landscape : .portrait
-
-        // Margins
-        printInfo.topMargin = CGFloat(marginTop)
-        printInfo.rightMargin = CGFloat(marginRight)
-        printInfo.bottomMargin = CGFloat(marginBottom)
-        printInfo.leftMargin = CGFloat(marginLeft)
-
-        // Scale
-        printInfo.scalingFactor = CGFloat(scale)
-
-        // Save to file, no UI
-        printInfo.jobDisposition = .save
-        printInfo.dictionary()[NSPrintInfo.AttributeKey.jobSavingURL] = outputPath
-
-        // Page ranges (1-based)
-        if let first = pageRangeFirst {
-            printInfo.dictionary()[NSPrintInfo.AttributeKey("NSFirstPage")] = first
-        }
-        if let last = pageRangeLast {
-            printInfo.dictionary()[NSPrintInfo.AttributeKey("NSLastPage")] = last
+        // Scale via CSS zoom (applied to document element to affect layout)
+        if scale != 1.0 {
+            cssRules.append("html { zoom: \(scale) !important; }")
         }
 
-        // 7. Run print operation
-        let printOp = webView.printOperation(with: printInfo)
-        printOp.showsPrintPanel = false
-        printOp.showsProgressPanel = false
+        let cssInjection = """
+        (function() {
+            var style = document.createElement('style');
+            style.textContent = \(Self.jsStringLiteral(cssRules.joined(separator: " ")));
+            document.head.appendChild(style);
+        })()
+        """
+        _ = try? await webView.evaluateJavaScript(cssInjection)
 
-        let success = printOp.run()
+        // 8. Generate PDF using WKWebView.createPDF — the reliable async API.
+        //    Unlike NSPrintOperation.run(), this completes without blocking or looping.
+        let pdfConfig = WKPDFConfiguration()
 
-        guard success else {
-            throw PdfError.generationFailed("NSPrintOperation.run() returned false")
+        // Set the capture rect to match the full paper size.
+        // The body padding we injected above creates the margin effect within this rect.
+        if landscape {
+            pdfConfig.rect = CGRect(x: 0, y: 0, width: effectivePaperHeight, height: effectivePaperWidth)
+        } else {
+            pdfConfig.rect = CGRect(x: 0, y: 0, width: effectivePaperWidth, height: effectivePaperHeight)
         }
 
-        // 8. Verify output file
+        let pdfData: Data
+        do {
+            pdfData = try await webView.pdf(configuration: pdfConfig)
+        } catch {
+            throw PdfError.generationFailed("WKWebView.createPDF failed: \(error.localizedDescription)")
+        }
+
+        // 9. Apply page range filter if requested (createPDF produces all pages)
+        let finalData: Data
+        if pageRangeFirst != nil || pageRangeLast != nil {
+            guard let sourcePdf = PDFDocument(data: pdfData) else {
+                throw PdfError.generationFailed("Failed to parse generated PDF for page range extraction")
+            }
+            let totalPages = sourcePdf.pageCount
+            let first = max((pageRangeFirst ?? 1) - 1, 0)            // Convert 1-based to 0-based
+            let last = min((pageRangeLast ?? totalPages) - 1, totalPages - 1)
+
+            guard first <= last, first < totalPages else {
+                throw PdfError.generationFailed("Page range \(first+1)-\(last+1) is out of bounds (document has \(totalPages) page(s))")
+            }
+
+            let filteredPdf = PDFDocument()
+            for i in first...last {
+                if let page = sourcePdf.page(at: i) {
+                    filteredPdf.insert(page, at: filteredPdf.pageCount)
+                }
+            }
+
+            guard let filteredData = filteredPdf.dataRepresentation() else {
+                throw PdfError.generationFailed("Failed to serialize filtered PDF")
+            }
+            finalData = filteredData
+        } else {
+            finalData = pdfData
+        }
+
+        // 10. Write PDF data to disk
+        do {
+            try finalData.write(to: outputPath)
+        } catch {
+            throw PdfError.generationFailed("Failed to write PDF to \(outputPath.path): \(error.localizedDescription)")
+        }
+
+        // 11. Verify output file
         let fm = FileManager.default
         guard fm.fileExists(atPath: outputPath.path) else {
             throw PdfError.generationFailed("PDF file was not created at \(outputPath.path)")
         }
 
-        // Read file size
-        let attrs = try fm.attributesOfItem(atPath: outputPath.path)
-        let fileSize = (attrs[.size] as? Int64) ?? 0
+        let fileSize = finalData.count
 
         // Read page count via PDFKit
         let pageCount: Int
@@ -271,6 +319,18 @@ public final class PdfGenerator: NSObject, WKNavigationDelegate, @unchecked Send
             fileSize: fileSize,
             warnings: warnings
         )
+    }
+
+    // MARK: - Helpers
+
+    /// Escape a Swift string into a JavaScript string literal (single-quoted).
+    private static func jsStringLiteral(_ s: String) -> String {
+        var escaped = s
+        escaped = escaped.replacingOccurrences(of: "\\", with: "\\\\")
+        escaped = escaped.replacingOccurrences(of: "'", with: "\\'")
+        escaped = escaped.replacingOccurrences(of: "\n", with: "\\n")
+        escaped = escaped.replacingOccurrences(of: "\r", with: "\\r")
+        return "'\(escaped)'"
     }
 
     // MARK: - Navigation waiting
