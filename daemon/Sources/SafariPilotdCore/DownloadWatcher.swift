@@ -39,7 +39,7 @@ public enum DownloadError: Error, Sendable {
     case directoryNotFound(String)
     case timeout(diagnostics: [String: String])
     case cancelled
-    case inlineRender(tabUrl: String)
+    case fsEventsUnavailable(directory: String)
 }
 
 // MARK: - DownloadWatcher
@@ -74,6 +74,7 @@ public final class DownloadWatcher: @unchecked Sendable {
     private var dispatchSources: [String: DispatchSourceFileSystemObject] = [:]
     private var fileDescriptors: [String: Int32] = [:]
     private var isSettled = false
+    private var timeoutTimer: DispatchSourceTimer?
     private var continuation: CheckedContinuation<DownloadResult, Error>?
     private let stateQueue = DispatchQueue(label: "com.safaripilot.downloadwatcher", qos: .userInitiated)
     private var startTime: Date = Date()
@@ -136,7 +137,7 @@ public final class DownloadWatcher: @unchecked Sendable {
     /// 7. On timeout: diff directory and check plist for fast completions; return `.timeout`
     ///
     /// - Returns: `DownloadResult` with enriched metadata for the completed file.
-    /// - Throws: `DownloadError.timeout`, `.cancelled`, or `.inlineRender`.
+    /// - Throws: `DownloadError.timeout`, `.cancelled`, or `.fsEventsUnavailable`.
     public func watch() async throws -> DownloadResult {
         startTime = Date()
 
@@ -310,7 +311,8 @@ public final class DownloadWatcher: @unchecked Sendable {
         )
 
         guard let stream = stream else {
-            Logger.error("DownloadWatcher: failed to create FSEventStream")
+            Logger.error("DownloadWatcher: failed to create FSEventStream for \(directory.path)")
+            resolve(with: .failure(DownloadError.fsEventsUnavailable(directory: directory.path)))
             return
         }
 
@@ -369,7 +371,7 @@ public final class DownloadWatcher: @unchecked Sendable {
         }
 
         source.setCancelHandler { [weak self] in
-            close(fd)
+            // fd closed by cleanup(), not here
             self?.fileDescriptors.removeValue(forKey: bundlePath)
         }
 
@@ -394,12 +396,11 @@ public final class DownloadWatcher: @unchecked Sendable {
 
         let finalPath = directory.appendingPathComponent(finalFilename).path
 
-        // Give the filesystem a brief moment to settle (consistent with existing daemon patterns)
-        stateQueue.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+        // Retry with backoff: 200ms, 500ms, 1s, 2s — slow storage may need time
+        retryFileCheck(finalPath: finalPath) { [weak self] found in
             guard let self = self else { return }
-            guard FileManager.default.fileExists(atPath: finalPath) else {
-                // File not yet visible — may have been moved elsewhere
-                Logger.warning("DownloadWatcher: expected final file not found at \(finalPath)")
+            guard found else {
+                Logger.warning("DownloadWatcher: expected final file not found at \(finalPath) after retries")
                 return
             }
 
@@ -433,6 +434,22 @@ public final class DownloadWatcher: @unchecked Sendable {
         }
     }
 
+    private func retryFileCheck(finalPath: String, attempt: Int = 0, completion: @escaping (Bool) -> Void) {
+        let delays: [Double] = [0.2, 0.5, 1.0, 2.0]
+        guard attempt < delays.count else {
+            completion(false)
+            return
+        }
+        stateQueue.asyncAfter(deadline: .now() + delays[attempt]) { [weak self] in
+            guard self != nil else { completion(false); return }
+            if FileManager.default.fileExists(atPath: finalPath) {
+                completion(true)
+            } else {
+                self?.retryFileCheck(finalPath: finalPath, attempt: attempt + 1, completion: completion)
+            }
+        }
+    }
+
     // MARK: - Timeout
 
     private func startTimeoutTimer() {
@@ -442,6 +459,7 @@ public final class DownloadWatcher: @unchecked Sendable {
             self?.handleTimeout()
         }
         timerSource.resume()
+        self.timeoutTimer = timerSource
     }
 
     private func handleTimeout() {
@@ -602,13 +620,17 @@ public final class DownloadWatcher: @unchecked Sendable {
 
     /// Stops the FSEvents stream, cancels all DispatchSources, and closes open file descriptors.
     private func cleanup() {
-        // Cancel all DispatchSources (their cancel handlers close the fds)
+        // Cancel timeout timer
+        timeoutTimer?.cancel()
+        timeoutTimer = nil
+
+        // Cancel all DispatchSources
         for (_, source) in dispatchSources {
             source.cancel()
         }
         dispatchSources.removeAll()
 
-        // Close any fds not yet cleaned up by cancel handlers
+        // Close all file descriptors (sole owner — cancel handlers do not close)
         for (_, fd) in fileDescriptors {
             close(fd)
         }

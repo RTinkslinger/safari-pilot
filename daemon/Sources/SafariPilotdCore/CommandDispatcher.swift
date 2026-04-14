@@ -271,6 +271,17 @@ public final class CommandDispatcher: @unchecked Sendable {
                 "quarantined": result.quarantined,
             ]
             return Response.success(id: commandID, value: AnyCodable(value), elapsedMs: elapsed)
+        } catch DownloadError.fsEventsUnavailable(let dir) {
+            let elapsed = (CFAbsoluteTimeGetCurrent() - start) * 1000
+            return Response.failure(
+                id: commandID,
+                error: StructuredError(
+                    code: "FSEVENTS_UNAVAILABLE",
+                    message: "Failed to create filesystem monitor for: \(dir)",
+                    retryable: false
+                ),
+                elapsedMs: elapsed
+            )
         } catch DownloadError.timeout(_) {
             let elapsed = (CFAbsoluteTimeGetCurrent() - start) * 1000
             return Response.failure(
