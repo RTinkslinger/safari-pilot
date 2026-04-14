@@ -42,11 +42,14 @@
     try {
       const response = await sendNativeRequest({ type: 'poll' });
 
-      if (response && response.command && response.command !== null) {
+      // Daemon proxy returns: {ok:true, value:{command:{id,script,...}}}
+      // Extract command from daemon response format
+      const commandData = response?.value?.command || response?.command;
+
+      if (commandData && commandData !== null && typeof commandData === 'object') {
         lastCommandTime = Date.now();
         switchToActivePolling();
-        const cmd = response.command;
-        await executeAndReturnResult(cmd);
+        await executeAndReturnResult(commandData);
       } else if (currentPollInterval === POLL_ACTIVE_MS &&
                  Date.now() - lastCommandTime > ACTIVE_COOLDOWN_MS) {
         switchToIdlePolling();
@@ -273,7 +276,7 @@
   browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
     // Health check
     if (message && message.type === 'ping') {
-      sendResponse({ ok: true, type: 'pong', extensionVersion: '0.1.4' });
+      sendResponse({ ok: true, type: 'pong', extensionVersion: '0.1.5' });
       return false;
     }
 
@@ -318,16 +321,16 @@
 
   // ─── Initialization ────────────────────────────────────────────────────────
 
-  // Send status check on startup to register as connected
-  sendNativeRequest({ type: 'status' })
+  // Register as connected with the daemon via the handler proxy
+  sendNativeRequest({ type: 'connected' })
     .then((response) => {
-      if (response && response.connected) {
+      if (response && (response.ok || response.connected)) {
         isConnected = true;
-        console.log('[SafariPilot] Native handler connected, version:', response.version);
+        console.log('[SafariPilot] Connected to daemon via handler proxy');
       }
     })
     .catch((err) => {
-      console.warn('[SafariPilot] Initial status check failed:', err);
+      console.warn('[SafariPilot] Initial connection failed:', err);
     });
 
   // Start polling for daemon commands

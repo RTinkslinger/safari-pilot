@@ -52,8 +52,8 @@ describe('Extension Background Script — file structure', () => {
     expect(src).toContain("type: 'result'");
   });
 
-  it('sends status check on startup', () => {
-    expect(src).toContain("type: 'status'");
+  it('sends connected signal on startup', () => {
+    expect(src).toContain("type: 'connected'");
   });
 
   // ─── Runtime Message Listener ─────────────────────────────────────────────
