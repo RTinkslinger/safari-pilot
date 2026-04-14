@@ -49,8 +49,10 @@ async function resolveDownloadDir(): Promise<string> {
       return join(homedir(), raw.slice(1));
     }
     return raw;
-  } catch {
-    return join(homedir(), 'Downloads');
+  } catch (err) {
+    const fallback = join(homedir(), 'Downloads');
+    console.warn(`[safari_wait_for_download] Could not read Safari download dir: ${err instanceof Error ? err.message : String(err)}, falling back to ${fallback}`);
+    return fallback;
   }
 }
 
@@ -58,7 +60,8 @@ async function snapshotDir(dir: string): Promise<Set<string>> {
   try {
     const entries = await readdir(dir);
     return new Set(entries);
-  } catch {
+  } catch (err) {
+    console.warn(`[safari_wait_for_download] Could not list directory: ${err instanceof Error ? err.message : String(err)}`);
     return new Set();
   }
 }
@@ -87,7 +90,8 @@ async function readPlistAsJson(plistPath: string): Promise<DownloadPlistEntry[]>
       return parsed.DownloadHistory as DownloadPlistEntry[];
     }
     return [];
-  } catch {
+  } catch (err) {
+    console.warn(`[safari_wait_for_download] Could not read Downloads.plist: ${err instanceof Error ? err.message : String(err)}`);
     return [];
   }
 }
@@ -160,22 +164,28 @@ export class DownloadTools {
     const paramTabUrl = params['tabUrl'] as string | undefined;
 
     // 1. Consume click context (one-shot — cleared on read)
-    const clickCtx = this.server.consumeClickContext();
+    const clickCtx = this.server.consumeClickContext(paramTabUrl ?? undefined);
 
-    // 2. Inline render detection
-    const inlineResult = await this.detectInlineRender(clickCtx, paramTabUrl);
-    if (inlineResult) {
-      return inlineResult;
+    try {
+      // 2. Inline render detection
+      const inlineResult = await this.detectInlineRender(clickCtx, paramTabUrl);
+      if (inlineResult) {
+        return inlineResult;
+      }
+
+      // 3. Try daemon path first
+      const daemonResult = await this.tryDaemonPath(clickCtx, timeout, filenamePattern);
+      if (daemonResult) {
+        return daemonResult;
+      }
+
+      // 4. Fallback: plist + directory polling
+      return this.pollForDownload(clickCtx, timeout, filenamePattern, start);
+    } catch (err) {
+      // Restore context for retry on unexpected errors
+      if (clickCtx) this.server.setClickContext(clickCtx);
+      throw err;
     }
-
-    // 3. Try daemon path first
-    const daemonResult = await this.tryDaemonPath(clickCtx, timeout, filenamePattern);
-    if (daemonResult) {
-      return daemonResult;
-    }
-
-    // 4. Fallback: plist + directory polling
-    return this.pollForDownload(clickCtx, timeout, filenamePattern, start);
   }
 
   // ── Inline render detection ────────────────────────────────────────────────
@@ -259,17 +269,10 @@ export class DownloadTools {
           source: 'daemon',
         };
         return this.makeSuccessResponse(metadata, 'daemon', Date.now());
-      } catch {
-        // Daemon returned non-JSON — treat as success with raw value
-        return this.makeSuccessResponse(
-          {
-            filename: 'unknown',
-            path: '',
-            url: clickCtx?.href,
-            size: 0,
-            mimeType: undefined,
-            source: 'daemon',
-          },
+      } catch (parseErr) {
+        return this.makeErrorResponse(
+          'DAEMON_PARSE_ERROR',
+          `Daemon returned unparseable response: ${String(result.value).slice(0, 200)}`,
           'daemon',
           Date.now(),
         );
@@ -401,8 +404,11 @@ export class DownloadTools {
                 source: 'plist_poll',
               };
               return this.makeSuccessResponse(metadata, 'applescript', startTime);
-            } catch {
-              // File doesn't exist yet — plist updated before write completed
+            } catch (err: unknown) {
+              const code = (err as NodeJS.ErrnoException)?.code;
+              if (code !== 'ENOENT') {
+                console.warn(`[safari_wait_for_download] Could not stat ${filePath}: ${err instanceof Error ? err.message : String(err)}`);
+              }
             }
           }
         }
@@ -412,7 +418,8 @@ export class DownloadTools {
       await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
     }
 
-    // Timeout
+    // Timeout — restore click context so the agent can retry
+    if (clickCtx) this.server.setClickContext(clickCtx);
     return this.makeErrorResponse(
       'TIMEOUT',
       `Download did not complete within ${timeout}ms`,

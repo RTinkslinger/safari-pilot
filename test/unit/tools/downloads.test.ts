@@ -42,6 +42,7 @@ function makeServer(overrides: {
   const clickContext = overrides.clickContext !== undefined ? overrides.clickContext : null;
   return {
     consumeClickContext: vi.fn().mockReturnValue(clickContext),
+    setClickContext: vi.fn(),
     getDaemonEngine: vi.fn().mockReturnValue(overrides.daemonEngine ?? null),
     getEngine: vi.fn().mockReturnValue(overrides.appleScriptEngine ?? null),
   } as unknown as SafariPilotServer;

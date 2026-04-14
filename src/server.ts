@@ -119,8 +119,8 @@ export class SafariPilotServer {
   readonly circuitBreaker: CircuitBreaker;
   readonly idpiScanner: IdpiScanner;
 
-  private clickContext: ClickContext | null = null;
-  private clickContextTimer: ReturnType<typeof setTimeout> | null = null;
+  private clickContexts: Map<string, ClickContext> = new Map();
+  private clickContextTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
 
   constructor(config?: SafariPilotConfig) {
     this.config = config ?? DEFAULT_CONFIG;
@@ -424,22 +424,36 @@ export class SafariPilotServer {
   }
 
   setClickContext(ctx: ClickContext): void {
-    if (this.clickContextTimer) clearTimeout(this.clickContextTimer);
-    this.clickContext = ctx;
-    this.clickContextTimer = setTimeout(() => {
-      this.clickContext = null;
-      this.clickContextTimer = null;
-    }, 60_000);
+    const key = ctx.tabUrl;
+    const existing = this.clickContextTimers.get(key);
+    if (existing) clearTimeout(existing);
+    this.clickContexts.set(key, ctx);
+    this.clickContextTimers.set(key, setTimeout(() => {
+      this.clickContexts.delete(key);
+      this.clickContextTimers.delete(key);
+    }, 60_000));
   }
 
-  consumeClickContext(): ClickContext | null {
-    const ctx = this.clickContext;
-    this.clickContext = null;
-    if (this.clickContextTimer) {
-      clearTimeout(this.clickContextTimer);
-      this.clickContextTimer = null;
+  consumeClickContext(tabUrl?: string): ClickContext | null {
+    if (tabUrl && this.clickContexts.has(tabUrl)) {
+      const ctx = this.clickContexts.get(tabUrl)!;
+      this.clickContexts.delete(tabUrl);
+      const timer = this.clickContextTimers.get(tabUrl);
+      if (timer) clearTimeout(timer);
+      this.clickContextTimers.delete(tabUrl);
+      return ctx;
     }
-    return ctx;
+    // Fallback: return most recent (last set) if no tabUrl specified
+    if (this.clickContexts.size > 0) {
+      const entries = [...this.clickContexts.entries()];
+      const [key, ctx] = entries[entries.length - 1];
+      this.clickContexts.delete(key);
+      const timer = this.clickContextTimers.get(key);
+      if (timer) clearTimeout(timer);
+      this.clickContextTimers.delete(key);
+      return ctx;
+    }
+    return null;
   }
 
   getEngine(): AppleScriptEngine | null {
