@@ -152,6 +152,9 @@ public final class CommandDispatcher: @unchecked Sendable {
         case "extension_execute":
             return await extensionBridge.handleExecute(commandID: command.id, params: command.params)
 
+        case "extension_poll":
+            return extensionBridge.handlePoll(commandID: command.id)
+
         case "extension_status":
             return extensionBridge.handleStatus(commandID: command.id)
 
