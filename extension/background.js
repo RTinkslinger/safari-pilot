@@ -86,20 +86,37 @@
       let result;
 
       if (cmd.script) {
-        // Route script execution to the active tab's content script
-        const tabs = await browser.tabs.query({
-          active: true,
-          currentWindow: true,
-        });
+        // Find the target tab — prefer tabUrl match, fall back to active tab
+        let tabs = [];
+        if (cmd.tabUrl) {
+          const allTabs = await browser.tabs.query({});
+          const target = cmd.tabUrl.replace(/\/$/, '');
+          tabs = allTabs.filter(t => {
+            const tabUrl = (t.url || '').replace(/\/$/, '');
+            return tabUrl === target;
+          });
+        }
+        if (!tabs.length) {
+          tabs = await browser.tabs.query({ active: true, currentWindow: true });
+        }
         const tabId = tabs[0]?.id;
 
         if (tabId != null) {
-          const responses = await browser.tabs.sendMessage(tabId, {
-            type: 'SAFARI_PILOT_COMMAND',
-            method: 'execute_script',
-            params: { script: cmd.script },
+          const execResults = await browser.scripting.executeScript({
+            target: { tabId },
+            func: (scriptBody) => {
+              try {
+                const fn = new Function(scriptBody);
+                const value = fn();
+                return { ok: true, value };
+              } catch (e) {
+                return { ok: false, error: { message: e.message, name: e.name } };
+              }
+            },
+            args: [cmd.script],
+            world: 'MAIN',
           });
-          result = responses;
+          result = execResults[0]?.result ?? { ok: true, value: null };
         } else {
           result = { ok: false, error: { message: 'No active tab' } };
         }

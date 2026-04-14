@@ -33,6 +33,21 @@ if [ ! -d "$XCODE_PROJECT_DIR/Safari Pilot.xcodeproj" ]; then
   exit 1
 fi
 
+# ── Step 1b: Replace generated stub handler with TCP proxy handler ──────────
+# safari-web-extension-packager generates a stub SafariWebExtensionHandler that
+# just echoes messages. We replace it with our TCP proxy that forwards native
+# messages to the daemon's socket listener on localhost:19474.
+
+CUSTOM_HANDLER="$EXT_DIR/native/SafariWebExtensionHandler.swift"
+GENERATED_HANDLER="$XCODE_PROJECT_DIR/Safari Pilot Extension/SafariWebExtensionHandler.swift"
+
+if [ -f "$CUSTOM_HANDLER" ]; then
+  echo "Replacing stub handler with TCP proxy handler..."
+  cp "$CUSTOM_HANDLER" "$GENERATED_HANDLER"
+else
+  echo "WARNING: Custom handler not found at $CUSTOM_HANDLER — using generated stub"
+fi
+
 # ── Step 2: Patch Xcode project ─────────────────────────────────────────────
 
 PBXPROJ="$XCODE_PROJECT_DIR/Safari Pilot.xcodeproj/project.pbxproj"
@@ -77,22 +92,34 @@ cat > "$EXT_ENTITLEMENTS" <<'PLIST'
     <true/>
     <key>com.apple.security.files.user-selected.read-only</key>
     <true/>
+    <key>com.apple.security.network.client</key>
+    <true/>
 </dict>
 </plist>
 PLIST
 
 # Inject entitlements paths into the pbxproj build settings
-# App target: insert CODE_SIGN_ENTITLEMENTS after PRODUCT_BUNDLE_IDENTIFIER for app
-sed -i '' '/PRODUCT_BUNDLE_IDENTIFIER = "com.safari-pilot.app";/{
-  a\
-\t\t\t\tCODE_SIGN_ENTITLEMENTS = "Safari Pilot/Safari Pilot.entitlements";
-}' "$PBXPROJ"
+# Use python3 for reliable tab insertion (macOS sed doesn't interpret \t)
+python3 -c "
+import re
+with open('$PBXPROJ', 'r') as f:
+    content = f.read()
 
-# Extension target: insert CODE_SIGN_ENTITLEMENTS after PRODUCT_BUNDLE_IDENTIFIER for extension
-sed -i '' '/PRODUCT_BUNDLE_IDENTIFIER = "com.safari-pilot.app.Extension";/{
-  a\
-\t\t\t\tCODE_SIGN_ENTITLEMENTS = "Safari Pilot Extension/Safari Pilot Extension.entitlements";
-}' "$PBXPROJ"
+# App target: add CODE_SIGN_ENTITLEMENTS after PRODUCT_BUNDLE_IDENTIFIER for app
+content = content.replace(
+    'PRODUCT_BUNDLE_IDENTIFIER = \"com.safari-pilot.app\";',
+    'PRODUCT_BUNDLE_IDENTIFIER = \"com.safari-pilot.app\";\n\t\t\t\tCODE_SIGN_ENTITLEMENTS = \"Safari Pilot/Safari Pilot.entitlements\";'
+)
+
+# Extension target: add CODE_SIGN_ENTITLEMENTS after PRODUCT_BUNDLE_IDENTIFIER for extension
+content = content.replace(
+    'PRODUCT_BUNDLE_IDENTIFIER = \"com.safari-pilot.app.Extension\";',
+    'PRODUCT_BUNDLE_IDENTIFIER = \"com.safari-pilot.app.Extension\";\n\t\t\t\tCODE_SIGN_ENTITLEMENTS = \"Safari Pilot Extension/Safari Pilot Extension.entitlements\";'
+)
+
+with open('$PBXPROJ', 'w') as f:
+    f.write(content)
+"
 
 echo "Entitlements created and wired into project"
 

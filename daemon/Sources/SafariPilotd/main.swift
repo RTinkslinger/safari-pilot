@@ -160,9 +160,11 @@ Logger.info("SafariPilotd: entering run loop — listening on stdin + TCP:19474"
 //   - NSAppleScript (must run on main thread)
 Task {
     await dispatcher.run()
-    // dispatcher.run() only returns when stdin is closed.
-    Logger.info("SafariPilotd: stdin closed — exiting")
-    exit(0)
+    // dispatcher.run() returns when stdin is closed. When running as a
+    // LaunchAgent (stdin=/dev/null), this returns immediately — but the
+    // socket server keeps accepting extension connections on TCP:19474.
+    // Only exit if no socket server is active.
+    Logger.info("SafariPilotd: stdin closed — socket server still active on TCP:19474")
 }
 
 RunLoop.main.run()
