@@ -9,5 +9,8 @@ export default defineConfig({
       provider: 'v8',
       include: ['src/**/*.ts'],
     },
+    // E2E tests share Safari — multiple MCP servers creating tabs simultaneously
+    // causes tab URL matching failures. Run test files sequentially.
+    fileParallelism: false,
   },
 });
