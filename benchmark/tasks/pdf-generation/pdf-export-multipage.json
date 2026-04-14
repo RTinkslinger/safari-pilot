@@ -1,0 +1,12 @@
+{
+  "id": "pdf-export-multipage",
+  "category": "pdf-generation",
+  "intent": "Navigate to the multi-page document and export it as a PDF to /tmp/safari-pilot-bench-pdf-multi.pdf. Report the exact number of pages in the generated PDF.",
+  "start_url": "http://localhost:{{PORT}}/pdf/multipage.html",
+  "timeout_ms": 60000,
+  "eval": {
+    "type": "contains",
+    "must_include": ["3"]
+  },
+  "tags": ["pdf", "multipage"]
+}

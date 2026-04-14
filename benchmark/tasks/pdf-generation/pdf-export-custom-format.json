@@ -1,0 +1,12 @@
+{
+  "id": "pdf-export-custom-format",
+  "category": "pdf-generation",
+  "intent": "Navigate to the simple page and export it as an A4 PDF with 0.5in margins to /tmp/safari-pilot-bench-pdf-a4.pdf. Report the page count.",
+  "start_url": "http://localhost:{{PORT}}/pdf/simple-page.html",
+  "timeout_ms": 45000,
+  "eval": {
+    "type": "contains",
+    "must_include": ["1"]
+  },
+  "tags": ["pdf", "format"]
+}

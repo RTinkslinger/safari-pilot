@@ -1,0 +1,12 @@
+{
+  "id": "pdf-export-basic",
+  "category": "pdf-generation",
+  "intent": "Navigate to the simple page and export it as a PDF to /tmp/safari-pilot-bench-pdf-basic.pdf. Report the page count of the generated PDF.",
+  "start_url": "http://localhost:{{PORT}}/pdf/simple-page.html",
+  "timeout_ms": 45000,
+  "eval": {
+    "type": "contains",
+    "must_include": ["1"]
+  },
+  "tags": ["pdf", "basic"]
+}

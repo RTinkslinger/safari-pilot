@@ -1,0 +1,12 @@
+{
+  "id": "pdf-export-with-background",
+  "category": "pdf-generation",
+  "intent": "Navigate to the styled page and export it as a PDF with printBackground enabled to /tmp/safari-pilot-bench-pdf-bg.pdf. Report the page count and file size in bytes.",
+  "start_url": "http://localhost:{{PORT}}/pdf/styled-page.html",
+  "timeout_ms": 45000,
+  "eval": {
+    "type": "llm_judge",
+    "criteria": "Response mentions a page count of 1 and a file size greater than 0 bytes"
+  },
+  "tags": ["pdf", "background", "styling"]
+}

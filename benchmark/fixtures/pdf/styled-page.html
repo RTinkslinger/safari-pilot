@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Safari Pilot PDF Test — Styled Page</title>
+  <style>
+    body { font-family: system-ui; margin: 40px; background-color: #f5f5f5; }
+    .header { background-color: #2563eb; color: white; padding: 20px; border-radius: 8px; }
+    .card { background-color: white; border: 1px solid #e5e7eb; border-radius: 8px; padding: 20px; margin: 20px 0; }
+    .highlight { background-color: #fef3c7; padding: 10px; border-left: 4px solid #f59e0b; }
+    .footer { background-color: #1f2937; color: #9ca3af; padding: 20px; border-radius: 8px; margin-top: 40px; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>Styled Page Test</h1>
+    <p>This page tests printBackground — background colors should appear in the PDF.</p>
+  </div>
+  <div class="card">
+    <h2>Card Component</h2>
+    <p>This card has a white background with a border.</p>
+  </div>
+  <div class="highlight">
+    <p><strong>Highlighted section:</strong> This has a yellow background with an amber left border.</p>
+  </div>
+  <div class="footer">
+    <p>Footer with dark background. Only visible in PDF when printBackground is enabled.</p>
+  </div>
+</body>
+</html>

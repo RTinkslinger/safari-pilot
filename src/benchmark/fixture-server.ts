@@ -84,6 +84,29 @@ export class FixtureServer {
         return;
       }
 
+      // PDF fixture endpoint: serve files from benchmark/fixtures/pdf/
+      if (url.startsWith('/pdf/')) {
+        const filename = decodeURIComponent(url.slice('/pdf/'.length).split('?')[0]);
+        const pdfFixturesDir = resolve(this.fixturesDir, 'pdf');
+        const filePath = resolve(pdfFixturesDir, filename);
+        const normalizedPath = normalize(filePath);
+        if (!normalizedPath.startsWith(normalize(pdfFixturesDir))) {
+          res.writeHead(403);
+          res.end('Forbidden');
+          return;
+        }
+        try {
+          const data = readFileSync(filePath);
+          const ct = CONTENT_TYPES[extname(filePath)] ?? 'application/octet-stream';
+          res.writeHead(200, { 'Content-Type': ct });
+          res.end(data);
+        } catch {
+          res.writeHead(404);
+          res.end('Not Found');
+        }
+        return;
+      }
+
       // Resolve and verify path stays within fixtures dir
       const safePath = normalize(url.startsWith('/') ? url.slice(1) : url);
       const filePath = resolve(this.fixturesDir, safePath);
