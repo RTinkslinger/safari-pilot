@@ -1,11 +1,14 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   cssToPoints,
   PAPER_SIZES,
   parsePageRanges,
   injectPrintBackground,
   injectHeaderFooter,
+  PdfTools,
 } from '../../../src/tools/pdf.js';
+import type { SafariPilotServer } from '../../../src/server.js';
+import type { EngineResult } from '../../../src/types.js';
 
 // ── cssToPoints ──────────────────────────────────────────────────────────────
 
@@ -391,5 +394,299 @@ describe('injectHeaderFooter', () => {
 
     // Should not contain raw script tag
     expect(result).not.toContain('<script>alert("xss")</script>');
+  });
+});
+
+// ── Mock factories (pattern from downloads.test.ts) ─────────────────────────
+
+function makeDaemonEngine(overrides: {
+  isAvailable?: () => Promise<boolean>;
+  command?: (method: string, params: Record<string, unknown>, timeout?: number) => Promise<EngineResult>;
+} = {}) {
+  return {
+    name: 'daemon' as const,
+    isAvailable: overrides.isAvailable
+      ? vi.fn().mockImplementation(overrides.isAvailable)
+      : vi.fn().mockResolvedValue(false),
+    command: overrides.command
+      ? vi.fn().mockImplementation(overrides.command)
+      : vi.fn().mockResolvedValue({ ok: false, error: { code: 'UNAVAILABLE', message: 'mock', retryable: false }, elapsed_ms: 1 }),
+    execute: vi.fn().mockResolvedValue({ ok: false, error: { code: 'UNAVAILABLE', message: 'mock', retryable: false }, elapsed_ms: 1 }),
+  };
+}
+
+function makeAppleScriptEngine(overrides: {
+  execute?: (script: string, timeout?: number) => Promise<EngineResult>;
+} = {}) {
+  return {
+    name: 'applescript' as const,
+    execute: overrides.execute
+      ? vi.fn().mockImplementation(overrides.execute)
+      : vi.fn().mockResolvedValue({ ok: true, value: '<html><head></head><body>Test</body></html>', elapsed_ms: 5 }),
+    isAvailable: vi.fn().mockResolvedValue(true),
+    shutdown: vi.fn().mockResolvedValue(undefined),
+  };
+}
+
+function makeServer(overrides: {
+  daemonEngine?: ReturnType<typeof makeDaemonEngine> | null;
+  appleScriptEngine?: ReturnType<typeof makeAppleScriptEngine> | null;
+} = {}): SafariPilotServer {
+  return {
+    getDaemonEngine: vi.fn().mockReturnValue(overrides.daemonEngine ?? null),
+    getEngine: vi.fn().mockReturnValue(overrides.appleScriptEngine ?? makeAppleScriptEngine()),
+  } as unknown as SafariPilotServer;
+}
+
+// ── PdfTools - getDefinitions() ─────────────────────────────────────────────
+
+describe('PdfTools - getDefinitions()', () => {
+  let tools: PdfTools;
+
+  beforeEach(() => {
+    tools = new PdfTools(makeServer());
+  });
+
+  it('returns exactly 1 tool', () => {
+    expect(tools.getDefinitions()).toHaveLength(1);
+  });
+
+  it('tool name is safari_export_pdf', () => {
+    expect(tools.getDefinitions()[0].name).toBe('safari_export_pdf');
+  });
+
+  it('path is in the required array', () => {
+    const schema = tools.getDefinitions()[0].inputSchema as Record<string, unknown>;
+    const required = schema['required'] as string[];
+    expect(required).toContain('path');
+  });
+
+  it('has format property with enum', () => {
+    const schema = tools.getDefinitions()[0].inputSchema as Record<string, unknown>;
+    const props = schema['properties'] as Record<string, Record<string, unknown>>;
+    expect(props['format']).toBeDefined();
+    expect(props['format']['enum']).toEqual(['Letter', 'Legal', 'A4', 'A3', 'Tabloid']);
+  });
+
+  it('has margin property as object type', () => {
+    const schema = tools.getDefinitions()[0].inputSchema as Record<string, unknown>;
+    const props = schema['properties'] as Record<string, Record<string, unknown>>;
+    expect(props['margin']).toBeDefined();
+    expect(props['margin']['type']).toBe('object');
+  });
+
+  it('has scale property', () => {
+    const schema = tools.getDefinitions()[0].inputSchema as Record<string, unknown>;
+    const props = schema['properties'] as Record<string, Record<string, unknown>>;
+    expect(props['scale']).toBeDefined();
+    expect(props['scale']['type']).toBe('number');
+  });
+
+  it('requirements is an empty object', () => {
+    const reqs = tools.getDefinitions()[0].requirements;
+    expect(reqs).toEqual({});
+  });
+
+  it('all tools have the safari_ prefix', () => {
+    for (const def of tools.getDefinitions()) {
+      expect(def.name).toMatch(/^safari_/);
+    }
+  });
+});
+
+// ── PdfTools - getHandler() ─────────────────────────────────────────────────
+
+describe('PdfTools - getHandler()', () => {
+  let tools: PdfTools;
+
+  beforeEach(() => {
+    tools = new PdfTools(makeServer());
+  });
+
+  it('returns a defined handler for safari_export_pdf', () => {
+    const handler = tools.getHandler('safari_export_pdf');
+    expect(handler).toBeDefined();
+    expect(typeof handler).toBe('function');
+  });
+
+  it('returns undefined for an unknown tool name', () => {
+    expect(tools.getHandler('unknown_tool')).toBeUndefined();
+  });
+});
+
+// ── PdfTools - missing path error ───────────────────────────────────────────
+
+describe('PdfTools - missing path error', () => {
+  it('returns INVALID_OUTPUT_PATH when path is missing', async () => {
+    const tools = new PdfTools(makeServer());
+    const handler = tools.getHandler('safari_export_pdf')!;
+
+    const response = await handler({});
+    const parsed = JSON.parse(response.content[0].text!);
+
+    expect(parsed).toHaveProperty('error', 'INVALID_OUTPUT_PATH');
+    expect(parsed).toHaveProperty('message');
+  });
+});
+
+// ── PdfTools - daemon dispatch ──────────────────────────────────────────────
+
+describe('PdfTools - daemon dispatch', () => {
+  it('calls daemon.command with generate_pdf method', async () => {
+    const daemon = makeDaemonEngine({
+      isAvailable: async () => true,
+      command: async () => ({
+        ok: true,
+        value: JSON.stringify({ pageCount: 1, fileSize: 5000 }),
+        elapsed_ms: 50,
+      }),
+    });
+
+    const server = makeServer({ daemonEngine: daemon });
+    const tools = new PdfTools(server);
+    const handler = tools.getHandler('safari_export_pdf')!;
+
+    await handler({ path: '/tmp/test.pdf' });
+
+    expect(daemon.command).toHaveBeenCalledWith(
+      'generate_pdf',
+      expect.any(Object),
+      expect.any(Number),
+    );
+  });
+
+  it('passes margin values converted to points', async () => {
+    const daemon = makeDaemonEngine({
+      isAvailable: async () => true,
+      command: async () => ({
+        ok: true,
+        value: JSON.stringify({ pageCount: 1, fileSize: 5000 }),
+        elapsed_ms: 50,
+      }),
+    });
+
+    const server = makeServer({ daemonEngine: daemon });
+    const tools = new PdfTools(server);
+    const handler = tools.getHandler('safari_export_pdf')!;
+
+    await handler({
+      path: '/tmp/test.pdf',
+      margin: { top: '1in', right: '0.5in', bottom: '1in', left: '0.5in' },
+    });
+
+    // 1in = 72pt, 0.5in = 36pt
+    expect(daemon.command).toHaveBeenCalledWith(
+      'generate_pdf',
+      expect.objectContaining({
+        marginTop: 72,
+        marginRight: 36,
+        marginBottom: 72,
+        marginLeft: 36,
+      }),
+      expect.any(Number),
+    );
+  });
+
+  it('passes A4 paper size dimensions', async () => {
+    const daemon = makeDaemonEngine({
+      isAvailable: async () => true,
+      command: async () => ({
+        ok: true,
+        value: JSON.stringify({ pageCount: 1, fileSize: 5000 }),
+        elapsed_ms: 50,
+      }),
+    });
+
+    const server = makeServer({ daemonEngine: daemon });
+    const tools = new PdfTools(server);
+    const handler = tools.getHandler('safari_export_pdf')!;
+
+    await handler({ path: '/tmp/test.pdf', format: 'A4' });
+
+    expect(daemon.command).toHaveBeenCalledWith(
+      'generate_pdf',
+      expect.objectContaining({
+        paperWidth: 595.28,
+        paperHeight: 841.89,
+      }),
+      expect.any(Number),
+    );
+  });
+
+  it('clamps scale to 0.1-2.0 range', async () => {
+    const daemon = makeDaemonEngine({
+      isAvailable: async () => true,
+      command: async () => ({
+        ok: true,
+        value: JSON.stringify({ pageCount: 1, fileSize: 5000 }),
+        elapsed_ms: 50,
+      }),
+    });
+
+    const server = makeServer({ daemonEngine: daemon });
+    const tools = new PdfTools(server);
+    const handler = tools.getHandler('safari_export_pdf')!;
+
+    // Scale below minimum
+    await handler({ path: '/tmp/test.pdf', scale: 0.01 });
+    expect(daemon.command).toHaveBeenCalledWith(
+      'generate_pdf',
+      expect.objectContaining({ scale: 0.1 }),
+      expect.any(Number),
+    );
+
+    daemon.command.mockClear();
+
+    // Scale above maximum
+    await handler({ path: '/tmp/test.pdf', scale: 5.0 });
+    expect(daemon.command).toHaveBeenCalledWith(
+      'generate_pdf',
+      expect.objectContaining({ scale: 2.0 }),
+      expect.any(Number),
+    );
+  });
+});
+
+// ── PdfTools - response shape ───────────────────────────────────────────────
+
+describe('PdfTools - response shape', () => {
+  it('daemon success returns content + metadata with engine=daemon', async () => {
+    const daemon = makeDaemonEngine({
+      isAvailable: async () => true,
+      command: async () => ({
+        ok: true,
+        value: JSON.stringify({ pageCount: 3, fileSize: 12345 }),
+        elapsed_ms: 100,
+      }),
+    });
+
+    const server = makeServer({ daemonEngine: daemon });
+    const tools = new PdfTools(server);
+    const handler = tools.getHandler('safari_export_pdf')!;
+
+    const response = await handler({ path: '/tmp/test.pdf' });
+
+    expect(response).toHaveProperty('content');
+    expect(Array.isArray(response.content)).toBe(true);
+    expect(response.content.length).toBeGreaterThan(0);
+    expect(response.content[0]).toHaveProperty('type', 'text');
+
+    expect(response).toHaveProperty('metadata');
+    expect(response.metadata.engine).toBe('daemon');
+    expect(response.metadata).toHaveProperty('degraded');
+    expect(typeof response.metadata.latencyMs).toBe('number');
+  });
+
+  it('no daemon returns error response', async () => {
+    const server = makeServer({ daemonEngine: null });
+    const tools = new PdfTools(server);
+    const handler = tools.getHandler('safari_export_pdf')!;
+
+    const response = await handler({ path: '/tmp/test.pdf' });
+    const parsed = JSON.parse(response.content[0].text!);
+
+    expect(parsed).toHaveProperty('error');
+    expect(response).toHaveProperty('metadata');
+    expect(typeof response.metadata.latencyMs).toBe('number');
   });
 });
