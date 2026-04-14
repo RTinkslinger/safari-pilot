@@ -5,6 +5,7 @@ import type { IEngine } from './engines/engine.js';
 import { selectEngine, EngineUnavailableError } from './engine-selector.js';
 import { AppleScriptEngine } from './engines/applescript.js';
 import { DaemonEngine } from './engines/daemon.js';
+import { ExtensionEngine } from './engines/extension.js';
 import { NavigationTools } from './tools/navigation.js';
 import { InteractionTools } from './tools/interaction.js';
 import { ExtractionTools } from './tools/extraction.js';
@@ -69,7 +70,8 @@ async function checkJsFromAppleEvents(timeoutMs: number): Promise<HealthCheck> {
       { timeout: timeoutMs },
     );
     const value = result.stdout.trim();
-    return { name: 'js_apple_events', ok: value === '2', detail: value !== '2' ? `Unexpected: ${value}` : undefined };
+    const ok = value === '2' || value === '2.0';
+    return { name: 'js_apple_events', ok, detail: !ok ? `Unexpected: ${value}` : undefined };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return {
@@ -157,13 +159,18 @@ export class SafariPilotServer {
   async initialize(): Promise<void> {
     const daemonEngine = new DaemonEngine({ timeoutMs: this.config.daemon.timeoutMs });
     const daemonAvailable = await daemonEngine.isAvailable();
-    this.setEngineAvailability({ daemon: daemonAvailable, extension: false });
+    let extensionAvailable = false;
     if (daemonAvailable) {
       this.engines.set('daemon', daemonEngine);
+      const extensionEngine = new ExtensionEngine(daemonEngine);
+      extensionAvailable = await extensionEngine.isAvailable();
+      if (extensionAvailable) {
+        this.engines.set('extension', extensionEngine);
+      }
     } else {
-      // Ensure daemon is cleaned up if it failed to start
       await daemonEngine.shutdown();
     }
+    this.setEngineAvailability({ daemon: daemonAvailable, extension: extensionAvailable });
 
     // Instantiate the AppleScript engine (always available as fallback)
     const engine = new AppleScriptEngine();
