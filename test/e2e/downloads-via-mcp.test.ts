@@ -68,6 +68,19 @@ function createDownloadServer(): { server: Server; getPort: () => number } {
   const server = createServer((req, res) => {
     const url = req.url ?? '/';
 
+    // Download page with a same-origin download link
+    if (url.startsWith('/download-page')) {
+      const params = new URL(url, 'http://localhost').searchParams;
+      const name = params.get('name') ?? 'test.bin';
+      const size = params.get('size') ?? '512';
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(`<!DOCTYPE html><html><body>
+        <h1>Download Test</h1>
+        <a id="dl" href="/download/generate?size=${size}&name=${encodeURIComponent(name)}" download="${name}">Download File</a>
+      </body></html>`);
+      return;
+    }
+
     if (url.startsWith('/download/generate')) {
       const params = new URL(url, 'http://localhost').searchParams;
       const size = parseInt(params.get('size') ?? '1024', 10);
@@ -254,48 +267,52 @@ describe('Downloads via MCP — real Safari, real files, no mocks', () => {
       filesToCleanup.push(expectedFile);
 
       try {
-        // 1. Create a new tab
+        // 1. Create a new tab and navigate to the download PAGE (not the download URL directly)
+        //    Same-origin flow: page has an <a download> link pointing to /download/generate
+        const pageUrl = `http://localhost:${fixturePort}/download-page?name=${encodeURIComponent(uniqueName)}&size=512`;
         const tabData = await callTool(
           client, 'safari_new_tab',
-          { url: 'about:blank' },
+          { url: pageUrl },
           idRef.value++,
+          15000,
         );
         expect(typeof tabData['tabUrl']).toBe('string');
-        await waitMs(1500);
+        ownedTabUrl = tabData['tabUrl'] as string;
 
-        // Resolve the canonical URL Safari assigned
+        // Wait for page to load
+        await waitMs(2000);
+
+        // Resolve the canonical tab URL Safari assigned
         const listData = await callTool(client, 'safari_list_tabs', {}, idRef.value++);
         const tabs = listData['tabs'] as Array<Record<string, unknown>>;
-        const blankTab = tabs.find(
+        const pageTab = tabs.find(
           (t) => typeof t['url'] === 'string' &&
-            ((t['url'] as string).includes('blank') || (t['url'] as string) === ''),
+            (t['url'] as string).includes('download-page'),
         );
-        ownedTabUrl = blankTab
-          ? (blankTab['url'] as string)
-          : (tabData['tabUrl'] as string);
+        if (pageTab) {
+          ownedTabUrl = pageTab['url'] as string;
+        }
 
-        // 2. Navigate to the fixture server's download endpoint
-        //    This URL serves Content-Disposition: attachment, which triggers Safari to download
-        const downloadUrl = `http://localhost:${fixturePort}/download/generate?size=512&name=${encodeURIComponent(uniqueName)}`;
+        // 2. Click the download link on the page (same-origin — this triggers a real download)
         await callTool(
-          client, 'safari_navigate',
-          { tabUrl: ownedTabUrl, url: downloadUrl },
+          client, 'safari_click',
+          { tabUrl: ownedTabUrl, selector: '#dl' },
           idRef.value++,
-          20000,
+          10000,
         );
 
         // Give Safari a moment to start the download
         await waitMs(2000);
 
         // 3. Wait for the download to complete
-        //    The tool uses plist polling + directory watching as fallback.
-        //    Daemon probe overhead adds ~5s, so MCP timeout must be generous.
+        //    Safari may show a "Allow downloads?" prompt — the user needs to allow it.
+        //    60s timeout allows time for user interaction (same as auth flows).
         const downloadData = await callTool(
           client,
           'safari_wait_for_download',
           { timeout: 60000, filenamePattern: uniqueName },
           idRef.value++,
-          90000, // MCP-level timeout: 60s tool timeout + daemon probe + user interaction margin
+          90000,
         );
 
         // 4. Verify the response metadata

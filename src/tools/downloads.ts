@@ -110,6 +110,17 @@ async function getPlistMtime(plistPath: string): Promise<number> {
   }
 }
 
+async function detectSafariDownloadSheet(): Promise<boolean> {
+  try {
+    const { stdout } = await execFileAsync('osascript', ['-e',
+      'tell application "System Events" to tell process "Safari" to return count of sheets of front window',
+    ], { timeout: 3_000 });
+    return parseInt(stdout.trim(), 10) > 0;
+  } catch {
+    return false;
+  }
+}
+
 // ── Module ───────────────────────────────────────────────────────────────────
 
 export class DownloadTools {
@@ -288,8 +299,19 @@ export class DownloadTools {
     }
 
     // Daemon returned error — fall through to plist polling
-    if (result.error?.code === 'TIMEOUT') {
-      // Daemon timed out — don't retry with plist, just return the timeout
+    if (result.error?.code === 'TIMEOUT' || result.error?.code === 'DOWNLOAD_TIMEOUT') {
+      // Check if Safari was showing a permission prompt during the timeout
+      const hasSheet = await detectSafariDownloadSheet();
+      if (hasSheet) {
+        return this.makeErrorResponse(
+          'DOWNLOAD_PERMISSION_TIMEOUT',
+          `Safari showed a download permission prompt but the user did not allow the download within ${timeout}ms. ` +
+          `URL: ${clickCtx?.href ?? 'unknown'}. ` +
+          `Tell the user to check Safari and click "Allow" on the download permission prompt, then retry.`,
+          'daemon',
+          Date.now(),
+        );
+      }
       return this.makeErrorResponse(
         'TIMEOUT',
         `Download did not complete within ${timeout}ms`,
@@ -322,10 +344,22 @@ export class DownloadTools {
     const beforeFiles = await snapshotDir(downloadDir);
     let lastPlistMtime = 0;
     const filenameRe = filenamePattern ? new RegExp(filenamePattern) : null;
+    let permissionSheetDetected = false;
+    let lastSheetCheck = 0;
+    const SHEET_CHECK_INTERVAL_MS = 3_000;
 
     const deadline = startTime + timeout;
 
     while (Date.now() < deadline) {
+      // Periodically check for Safari's "Allow downloads?" sheet
+      if (Date.now() - lastSheetCheck > SHEET_CHECK_INTERVAL_MS) {
+        lastSheetCheck = Date.now();
+        const hasSheet = await detectSafariDownloadSheet();
+        if (hasSheet && !permissionSheetDetected) {
+          permissionSheetDetected = true;
+          console.warn('[safari_wait_for_download] Safari is showing a download permission prompt. Waiting for user to allow...');
+        }
+      }
       // Check for new files in download directory
       const currentFiles = await snapshotDir(downloadDir);
       const newFiles: string[] = [];
@@ -428,6 +462,18 @@ export class DownloadTools {
 
     // Timeout — restore click context so the agent can retry
     if (clickCtx) this.server.setClickContext(clickCtx);
+
+    if (permissionSheetDetected) {
+      return this.makeErrorResponse(
+        'DOWNLOAD_PERMISSION_TIMEOUT',
+        `Safari showed a download permission prompt but the user did not allow the download within ${timeout}ms. ` +
+        `URL: ${clickCtx?.href ?? 'unknown'}. ` +
+        `Tell the user to check Safari and click "Allow" on the download permission prompt, then retry.`,
+        'applescript',
+        startTime,
+      );
+    }
+
     return this.makeErrorResponse(
       'TIMEOUT',
       `Download did not complete within ${timeout}ms`,
