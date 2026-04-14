@@ -3,6 +3,8 @@
 // + PdfTools class for safari_export_pdf tool definition and handler.
 
 import { stat } from 'node:fs/promises';
+import { resolve as resolvePath } from 'node:path';
+import { homedir, tmpdir } from 'node:os';
 import type { ToolResponse, ToolRequirements, Engine } from '../types.js';
 import type { SafariPilotServer } from '../server.js';
 
@@ -121,6 +123,14 @@ function escapeHtml(text: string): string {
     .replace(/'/g, '&#x27;');
 }
 
+/** Strip dangerous elements from header/footer templates before injection. */
+function sanitizeTemplate(tpl: string): string {
+  return tpl
+    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
+    .replace(/<iframe\b[^>]*>.*?<\/iframe>/gi, '')
+    .replace(/\bon\w+\s*=/gi, 'data-removed=');
+}
+
 /**
  * Replace magic class tokens in a header/footer template with their values.
  *
@@ -209,11 +219,13 @@ body { margin-top: ${marginTop} !important; margin-bottom: ${marginBottom} !impo
   // ── Build header/footer divs ──
   let divs = '';
   if (headerTemplate) {
-    const processed = replaceTokens(headerTemplate, tokens);
+    const sanitized = sanitizeTemplate(headerTemplate);
+    const processed = replaceTokens(sanitized, tokens);
     divs += `<div class="sp-pdf-header">${processed}</div>`;
   }
   if (footerTemplate) {
-    const processed = replaceTokens(footerTemplate, tokens);
+    const sanitized = sanitizeTemplate(footerTemplate);
+    const processed = replaceTokens(sanitized, tokens);
     divs += `<div class="sp-pdf-footer">${processed}</div>`;
   }
 
@@ -369,7 +381,31 @@ export class PdfTools {
       );
     }
 
-    const timeout = typeof params['timeout'] === 'number' ? params['timeout'] : 30_000;
+    const outputPath = path.trim();
+
+    if (!outputPath.toLowerCase().endsWith('.pdf')) {
+      return this.makeErrorResponse(
+        'INVALID_OUTPUT_PATH',
+        'Output path must end with .pdf',
+        'daemon',
+        start,
+      );
+    }
+
+    const resolvedPath = resolvePath(outputPath);
+    const home = homedir();
+    const tmp = tmpdir();
+    if (!resolvedPath.startsWith(home) && !resolvedPath.startsWith(tmp) && !resolvedPath.startsWith('/tmp/')) {
+      return this.makeErrorResponse(
+        'INVALID_OUTPUT_PATH',
+        'Output path must be under home directory or /tmp',
+        'daemon',
+        start,
+      );
+    }
+
+    const rawTimeout = typeof params['timeout'] === 'number' ? params['timeout'] : 30_000;
+    const timeout = Math.max(5_000, rawTimeout);
     const tabUrl = params['tabUrl'] as string | undefined;
     const warnings: string[] = [];
 
@@ -383,9 +419,9 @@ export class PdfTools {
     const marginBottom = cssToPoints(marginObj['bottom'] ?? '1in');
     const marginLeft = cssToPoints(marginObj['left'] ?? '1in');
 
-    // 4. Clamp scale
+    // 4. Clamp scale (NaN defaults to 1.0)
     const rawScale = typeof params['scale'] === 'number' ? params['scale'] : 1.0;
-    const scale = Math.min(2.0, Math.max(0.1, rawScale));
+    const scale = Number.isNaN(rawScale) ? 1.0 : Math.min(2.0, Math.max(0.1, rawScale));
 
     // 5. Parse page ranges
     const pageRanges = parsePageRanges(params['pageRanges'] as string | undefined);
@@ -400,6 +436,17 @@ export class PdfTools {
       documentTitle = await this.getDocumentTitle(tabUrl);
     } catch (err) {
       warnings.push(`HTML extraction failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+
+    // 6b. Check HTML size limit (10MB)
+    const MAX_HTML_SIZE = 10 * 1024 * 1024;
+    if (html && html.length > MAX_HTML_SIZE) {
+      return this.makeErrorResponse(
+        'HTML_TOO_LARGE',
+        `Extracted HTML is ${(html.length / 1024 / 1024).toFixed(1)}MB, max is 10MB`,
+        'daemon',
+        start,
+      );
     }
 
     // 7. Apply HTML injections
@@ -427,7 +474,7 @@ export class PdfTools {
     const printBackground = params['printBackground'] === true;
 
     const daemonParams: Record<string, unknown> = {
-      outputPath: path,
+      outputPath: resolvedPath,
       marginTop,
       marginRight,
       marginBottom,
@@ -443,8 +490,8 @@ export class PdfTools {
     }
 
     if (pageRanges) {
-      daemonParams['firstPage'] = pageRanges.first;
-      daemonParams['lastPage'] = pageRanges.last;
+      daemonParams['pageRangeFirst'] = pageRanges.first;
+      daemonParams['pageRangeLast'] = pageRanges.last;
     }
 
     // 9. Primary attempt: HTML-based rendering
@@ -460,25 +507,25 @@ export class PdfTools {
 
       const result = await this.callDaemon(daemonParams, timeout);
       if (result) {
-        try {
-          const parsed = typeof result.value === 'string'
-            ? JSON.parse(result.value)
-            : result.value;
-
+        if ('error' in result) {
+          // Non-retryable daemon error — surface immediately
+          if (!result.error.retryable) {
+            return this.makeErrorResponse(result.error.code, result.error.message, 'daemon', start);
+          }
+          warnings.push(`Daemon error (retryable): ${result.error.message}`);
+        } else {
           // Check if the result is viable (not empty PDF)
-          const pageCount = parsed?.pageCount ?? 0;
-          const fileSize = parsed?.fileSize ?? 0;
+          const pageCount = (result.parsed?.pageCount as number) ?? 0;
+          const fileSize = (result.parsed?.fileSize as number) ?? 0;
 
           if (pageCount > 0 && fileSize >= 100) {
-            return this.processResult(parsed, 'html', path, warnings, start);
+            return this.processResult(result.parsed, 'html', resolvedPath, warnings, start);
           }
 
           // HTML render produced empty/tiny PDF — fall through to URL fallback
           warnings.push(
             `HTML rendering produced ${pageCount} pages / ${fileSize} bytes — retrying with URL`,
           );
-        } catch (parseErr) {
-          warnings.push(`Failed to parse daemon HTML response: ${String(parseErr)}`);
         }
       }
     }
@@ -495,18 +542,13 @@ export class PdfTools {
 
       const result = await this.callDaemon(urlParams, remainingTimeout);
       if (result) {
-        try {
-          const parsed = typeof result.value === 'string'
-            ? JSON.parse(result.value)
-            : result.value;
-          return this.processResult(parsed, 'url', path, warnings, start);
-        } catch (parseErr) {
-          return this.makeErrorResponse(
-            'DAEMON_PARSE_ERROR',
-            `Daemon returned unparseable response: ${String(result.value).slice(0, 200)}`,
-            'daemon',
-            start,
-          );
+        if ('error' in result) {
+          if (!result.error.retryable) {
+            return this.makeErrorResponse(result.error.code, result.error.message, 'daemon', start);
+          }
+          warnings.push(`Daemon URL fallback error: ${result.error.message}`);
+        } else {
+          return this.processResult(result.parsed, 'url', resolvedPath, warnings, start);
         }
       }
     }
@@ -522,13 +564,11 @@ export class PdfTools {
 
   // ── Helper: extract HTML from tab ─────────────────────────────────────────
 
-  private async extractHtml(tabUrl?: string): Promise<string> {
+  private async extractHtml(_tabUrl?: string): Promise<string> {
     const engine = this.server.getEngine();
     if (!engine) throw new Error('AppleScript engine unavailable');
 
-    const script = tabUrl
-      ? `tell application "Safari" to do JavaScript "document.documentElement.outerHTML" in document 1`
-      : `tell application "Safari" to do JavaScript "document.documentElement.outerHTML" in current tab of front window`;
+    const script = `tell application "Safari" to do JavaScript "document.documentElement.outerHTML" in current tab of front window`;
 
     const result = await engine.execute(script, 10_000);
     if (!result.ok || !result.value) {
@@ -555,13 +595,11 @@ export class PdfTools {
 
   // ── Helper: get document title ────────────────────────────────────────────
 
-  private async getDocumentTitle(tabUrl?: string): Promise<string> {
+  private async getDocumentTitle(_tabUrl?: string): Promise<string> {
     const engine = this.server.getEngine();
     if (!engine) return '';
 
-    const script = tabUrl
-      ? `tell application "Safari" to return name of document 1`
-      : `tell application "Safari" to return name of current tab of front window`;
+    const script = `tell application "Safari" to return name of current tab of front window`;
 
     try {
       const result = await engine.execute(script, 5_000);
@@ -576,7 +614,11 @@ export class PdfTools {
   private async callDaemon(
     params: Record<string, unknown>,
     timeout: number,
-  ): Promise<{ value: string | Record<string, unknown> } | null> {
+  ): Promise<
+    | { parsed: Record<string, unknown> }
+    | { error: { code: string; message: string; retryable: boolean } }
+    | null
+  > {
     const daemon = this.server.getDaemonEngine();
     if (!daemon) return null;
 
@@ -586,7 +628,24 @@ export class PdfTools {
     const result = await daemon.command('generate_pdf', params, timeout + 5_000);
 
     if (result.ok && result.value) {
-      return { value: result.value };
+      try {
+        const parsed = typeof result.value === 'string'
+          ? JSON.parse(result.value)
+          : result.value;
+        return { parsed: parsed as Record<string, unknown> };
+      } catch {
+        return null;
+      }
+    }
+
+    if (result.error) {
+      return {
+        error: {
+          code: result.error.code,
+          message: result.error.message,
+          retryable: result.error.retryable,
+        },
+      };
     }
 
     return null;

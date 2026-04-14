@@ -185,6 +185,11 @@ public final class PdfGenerator: NSObject, WKNavigationDelegate, @unchecked Send
         )
         webView.navigationDelegate = self
 
+        defer {
+            webView.navigationDelegate = nil
+            webView.stopLoading()
+        }
+
         // 3. Load content
         if let html = self.html {
             webView.loadHTMLString(html, baseURL: baseURL)
@@ -310,9 +315,6 @@ public final class PdfGenerator: NSObject, WKNavigationDelegate, @unchecked Send
             throw PdfError.emptyPdf
         }
 
-        // Release the webView reference (ARC cleanup)
-        webView.navigationDelegate = nil
-
         return PdfResult(
             path: outputPath.path,
             pageCount: pageCount,
@@ -335,13 +337,29 @@ public final class PdfGenerator: NSObject, WKNavigationDelegate, @unchecked Send
 
     // MARK: - Navigation waiting
 
-    /// Wait for WKWebView navigation to complete via CheckedContinuation.
+    /// Wait for WKWebView navigation to complete via CheckedContinuation, with a timeout.
     /// The WKNavigationDelegate callbacks (`didFinish`, `didFail`, `didFailProvisionalNavigation`)
-    /// resume this continuation.
+    /// resume this continuation. If navigation doesn't settle within `timeout` seconds,
+    /// throws `PdfError.timeout`.
     @MainActor
-    private func waitForNavigation() async throws {
-        try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
-            self.navigationContinuation = cont
+    private func waitForNavigation(timeout: TimeInterval = 30) async throws {
+        let loaded = try await withThrowingTaskGroup(of: Bool.self) { group in
+            group.addTask { @MainActor in
+                try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
+                    self.navigationContinuation = cont
+                }
+                return true
+            }
+            group.addTask {
+                try await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
+                return false
+            }
+            let first = try await group.next() ?? false
+            group.cancelAll()
+            return first
+        }
+        if !loaded {
+            throw PdfError.timeout
         }
     }
 

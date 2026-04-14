@@ -5,7 +5,7 @@
  *  1. All Phase 1-4 tools still registered (63 from before — regression guard)
  *  2. All 10 Phase 5 tools are registered
  *  3. safari_emergency_stop is registered
- *  4. Total tool count is 74 (63 + 10 + 1)
+ *  4. Total tool count is 76 (63 + 10 + 1 + 2 [downloads + pdf])
  *  5. All tool names under 64-char MCP limit (mcp__safari__<name>)
  *  6. All tool names have safari_ prefix
  *  7. Emergency stop activates the kill switch
@@ -74,9 +74,16 @@ const PHASE_5_TOOLS = [
   'safari_media_control',
 ];
 
+const PHASE_6_TOOLS = [
+  // DownloadTools (1)
+  'safari_wait_for_download',
+  // PdfTools (1)
+  'safari_export_pdf',
+];
+
 const EMERGENCY_STOP = 'safari_emergency_stop';
 
-const EXPECTED_TOTAL = PHASE_1_4_TOOLS.length + PHASE_5_TOOLS.length + 1; // 63 + 10 + 1 = 74
+const EXPECTED_TOTAL = PHASE_1_4_TOOLS.length + PHASE_5_TOOLS.length + 1 + PHASE_6_TOOLS.length; // 63 + 10 + 1 + 2 = 76
 
 // ── Fixture ───────────────────────────────────────────────────────────────────
 
@@ -133,6 +140,13 @@ describe('Phase 5 Gate — Phase 5 tools registered', () => {
   it('safari_emergency_stop is registered', () => {
     const names = new Set(server.getToolNames());
     expect(names.has(EMERGENCY_STOP), 'safari_emergency_stop is missing').toBe(true);
+  });
+
+  it('all Phase 6 tools (downloads + pdf) are registered', () => {
+    const names = new Set(server.getToolNames());
+    for (const tool of PHASE_6_TOOLS) {
+      expect(names.has(tool), `Phase 6 tool "${tool}" is missing`).toBe(true);
+    }
   });
 });
 
