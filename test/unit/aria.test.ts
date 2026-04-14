@@ -534,8 +534,9 @@ describe('generateSnapshotJs — shadow DOM', () => {
     expect(js).toContain('el.shadowRoot');
   });
 
-  it('uses shadow root as child root when present', () => {
-    expect(js).toContain('el.shadowRoot ? el.shadowRoot : el');
+  it('resolves slot assigned nodes for slotted content', () => {
+    expect(js).toContain('assignedNodes');
+    expect(js).toContain('"SLOT"');
   });
 });
 

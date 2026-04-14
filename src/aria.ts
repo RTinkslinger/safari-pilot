@@ -344,14 +344,25 @@ export function generateSnapshotJs(options: SnapshotOptions = {}): string {
       'var interactable = __spIsInteractable(el);' +
       'var ref = interactable ? __spAssignRef(el) : null;' +
 
-      // Walk children (including shadow DOM)
+      // Walk children — enter shadow roots, resolve <slot> assigned nodes
       'var children = [];' +
       'var childRoot = el.shadowRoot ? el.shadowRoot : el;' +
       'var childEls = childRoot.children;' +
       'if (childEls) {' +
         'for (var ci = 0; ci < childEls.length; ci++) {' +
-          'var childNode = __spWalk(childEls[ci], depth + 1);' +
-          'if (childNode) children.push(childNode);' +
+          'var ch = childEls[ci];' +
+          'if (ch.tagName === "SLOT") {' +
+            'var assigned = ch.assignedNodes({flatten: true});' +
+            'for (var ai = 0; ai < assigned.length; ai++) {' +
+              'if (assigned[ai].nodeType === 1) {' +
+                'var childNode = __spWalk(assigned[ai], depth + 1);' +
+                'if (childNode) children.push(childNode);' +
+              '}' +
+            '}' +
+          '} else {' +
+            'var childNode = __spWalk(ch, depth + 1);' +
+            'if (childNode) children.push(childNode);' +
+          '}' +
         '}' +
       '}' +
 
