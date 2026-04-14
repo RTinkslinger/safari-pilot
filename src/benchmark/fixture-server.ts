@@ -29,9 +29,11 @@ export class FixtureServer {
       // Generate unique download file for testing (must come before generic /download/ handler)
       if (url.startsWith('/download/generate')) {
         const params = new URL(url, 'http://localhost').searchParams;
-        const size = parseInt(params.get('size') ?? '1024', 10);
-        const name = params.get('name') ?? `test-${Date.now()}.bin`;
-        const data = Buffer.alloc(Math.min(size, 10_000_000), 0x42);
+        const rawSize = parseInt(params.get('size') ?? '1024', 10);
+        const size = Number.isNaN(rawSize) || rawSize < 0 ? 1024 : Math.min(rawSize, 10_000_000);
+        const rawName = params.get('name') ?? `test-${Date.now()}.bin`;
+        const name = rawName.replace(/[^a-zA-Z0-9._-]/g, '_');
+        const data = Buffer.alloc(size, 0x42);
         res.writeHead(200, {
           'Content-Type': 'application/octet-stream',
           'Content-Disposition': `attachment; filename="${name}"`,
