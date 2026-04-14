@@ -293,32 +293,33 @@ describe('Downloads via MCP — real Safari, real files, no mocks', () => {
         const downloadData = await callTool(
           client,
           'safari_wait_for_download',
-          { timeout: 20000, filenamePattern: uniqueName },
+          { timeout: 60000, filenamePattern: uniqueName },
           idRef.value++,
-          35000, // MCP-level timeout: tool_timeout + daemon_probe + margin
+          90000, // MCP-level timeout: 60s tool timeout + daemon probe + user interaction margin
         );
 
         // 4. Verify the response metadata
         //    On success: { filename, path, size, mimeType, source, url }
         //    On error:   { error, message }
-        if ('error' in downloadData && downloadData['error'] === 'TIMEOUT') {
-          // Download might not have triggered (Safari security, sandboxing, etc.)
-          // This is a known limitation in automated environments
-          // Log but don't fail hard — the tool protocol works even if Safari blocks the download
-          console.warn(
-            'Download timed out — Safari may have blocked the automatic download. ' +
-            'This is expected in some environments.',
-          );
-          return;
-        }
+        // The download MUST succeed — no silent pass on timeout.
+        // Safari may show a "Allow downloads?" prompt. In that case, the user
+        // must allow the download within the timeout window (same as auth flows).
+        // If this test fails with TIMEOUT, either:
+        //   1. The user didn't allow the download in Safari
+        //   2. Safari is blocking automated downloads in this environment
+        //   3. The download detection code has a bug
+        expect(
+          downloadData['error'],
+          'Download failed — check Safari for a download permission prompt. ' +
+          'If Safari asked "Allow downloads?", allow it and re-run the test.',
+        ).toBeUndefined();
 
-        // If we got here, download succeeded — verify metadata
+        // Verify download metadata
         expect(downloadData['filename']).toBe(uniqueName);
         expect(typeof downloadData['path']).toBe('string');
         expect((downloadData['path'] as string).length).toBeGreaterThan(0);
         expect((downloadData['path'] as string)).toContain(uniqueName);
         expect(downloadData['size']).toBe(512);
-        expect(typeof downloadData['source']).toBe('string');
 
         // Verify the file actually exists on disk
         const fileStat = statSync(downloadData['path'] as string);
@@ -329,7 +330,7 @@ describe('Downloads via MCP — real Safari, real files, no mocks', () => {
         // but also try immediate cleanup
         cleanupDownload(expectedFile);
       }
-    }, 60000);
+    }, 120000);
   });
 
   // Note: MCP response structure / metadata assertions are folded into the

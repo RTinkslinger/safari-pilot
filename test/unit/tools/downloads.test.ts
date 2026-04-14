@@ -191,7 +191,7 @@ describe('DownloadTools - response shape (timeout path)', () => {
     const tools = new DownloadTools(server);
     const handler = tools.getHandler('safari_wait_for_download')!;
 
-    const response = await handler({ timeout: 100 });
+    const response = await handler({ timeout: 100, filenamePattern: 'IMPOSSIBLE_MATCH_UNIT_TEST_99999' });
 
     expect(response).toHaveProperty('content');
     expect(Array.isArray(response.content)).toBe(true);
@@ -205,7 +205,7 @@ describe('DownloadTools - response shape (timeout path)', () => {
     const tools = new DownloadTools(server);
     const handler = tools.getHandler('safari_wait_for_download')!;
 
-    const response = await handler({ timeout: 100 });
+    const response = await handler({ timeout: 100, filenamePattern: 'IMPOSSIBLE_MATCH_UNIT_TEST_99999' });
 
     expect(response).toHaveProperty('metadata');
     expect(response.metadata).toHaveProperty('engine');
@@ -219,7 +219,7 @@ describe('DownloadTools - response shape (timeout path)', () => {
     const tools = new DownloadTools(server);
     const handler = tools.getHandler('safari_wait_for_download')!;
 
-    const response = await handler({ timeout: 100 });
+    const response = await handler({ timeout: 100, filenamePattern: 'IMPOSSIBLE_MATCH_UNIT_TEST_99999' });
     const parsed = JSON.parse(response.content[0].text!);
 
     expect(parsed).toHaveProperty('error', 'TIMEOUT');

@@ -131,13 +131,16 @@ export class DownloadTools {
           '(href, download attribute) is captured automatically and expires after 60 seconds. ' +
           'Returns download metadata (filename, path, size, MIME type) on success. ' +
           'Detects inline rendering (e.g. PDF opened in-tab instead of downloading). ' +
+          'IMPORTANT: Safari may show a "Allow downloads?" prompt that requires user action. ' +
+          'Tell the user to check Safari and allow the download if prompted. Use a timeout ' +
+          'of at least 60000ms to allow time for user interaction. ' +
           'Prerequisites: Safari must be running, a download-triggering click must have occurred.',
         inputSchema: {
           type: 'object',
           properties: {
             timeout: {
               type: 'number',
-              description: 'Maximum time to wait for download in milliseconds (default: 30000)',
+              description: 'Maximum time to wait for download in milliseconds (default: 60000). Set higher to allow time for Safari download permission prompts.',
             },
             filenamePattern: {
               type: 'string',
@@ -164,7 +167,7 @@ export class DownloadTools {
     params: Record<string, unknown>,
   ): Promise<ToolResponse> {
     const start = Date.now();
-    const timeout = typeof params['timeout'] === 'number' ? params['timeout'] : 30_000;
+    const timeout = typeof params['timeout'] === 'number' ? params['timeout'] : 60_000;
     const filenamePattern = params['filenamePattern'] as string | undefined;
     const paramTabUrl = params['tabUrl'] as string | undefined;
 
