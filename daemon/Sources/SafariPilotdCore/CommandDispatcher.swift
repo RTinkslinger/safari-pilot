@@ -158,6 +158,9 @@ public final class CommandDispatcher: @unchecked Sendable {
         case "watch_download":
             return await handleWatchDownload(commandID: command.id, params: command.params)
 
+        case "generate_pdf":
+            return await handleGeneratePdf(commandID: command.id, params: command.params)
+
         default:
             return Response.failure(
                 id: command.id,
@@ -310,6 +313,107 @@ public final class CommandDispatcher: @unchecked Sendable {
                 id: commandID,
                 error: StructuredError(
                     code: "DOWNLOAD_ERROR",
+                    message: error.localizedDescription,
+                    retryable: false
+                ),
+                elapsedMs: elapsed
+            )
+        }
+    }
+
+    // MARK: - PDF Generator
+
+    private func handleGeneratePdf(commandID: String, params: [String: AnyCodable]) async -> Response {
+        let start = CFAbsoluteTimeGetCurrent()
+
+        let generator: PdfGenerator
+        do {
+            generator = try PdfGenerator(params: params)
+        } catch PdfError.invalidOutputPath(let msg) {
+            let elapsed = (CFAbsoluteTimeGetCurrent() - start) * 1000
+            return Response.failure(
+                id: commandID,
+                error: StructuredError(
+                    code: "INVALID_OUTPUT_PATH",
+                    message: msg,
+                    retryable: false
+                ),
+                elapsedMs: elapsed
+            )
+        } catch {
+            let elapsed = (CFAbsoluteTimeGetCurrent() - start) * 1000
+            return Response.failure(
+                id: commandID,
+                error: StructuredError(
+                    code: "PDF_GENERATION_ERROR",
+                    message: error.localizedDescription,
+                    retryable: false
+                ),
+                elapsedMs: elapsed
+            )
+        }
+
+        do {
+            let result = try await generator.generate()
+            let elapsed = (CFAbsoluteTimeGetCurrent() - start) * 1000
+
+            let value: [String: Any] = [
+                "path": result.path,
+                "pageCount": result.pageCount,
+                "fileSize": result.fileSize,
+                "warnings": result.warnings,
+            ]
+            return Response.success(id: commandID, value: AnyCodable(value), elapsedMs: elapsed)
+        } catch PdfError.loadFailed(let msg) {
+            let elapsed = (CFAbsoluteTimeGetCurrent() - start) * 1000
+            return Response.failure(
+                id: commandID,
+                error: StructuredError(
+                    code: "WKWEBVIEW_LOAD_ERROR",
+                    message: msg,
+                    retryable: true
+                ),
+                elapsedMs: elapsed
+            )
+        } catch PdfError.generationFailed(let msg) {
+            let elapsed = (CFAbsoluteTimeGetCurrent() - start) * 1000
+            return Response.failure(
+                id: commandID,
+                error: StructuredError(
+                    code: "PDF_GENERATION_ERROR",
+                    message: msg,
+                    retryable: false
+                ),
+                elapsedMs: elapsed
+            )
+        } catch PdfError.emptyPdf {
+            let elapsed = (CFAbsoluteTimeGetCurrent() - start) * 1000
+            return Response.failure(
+                id: commandID,
+                error: StructuredError(
+                    code: "PDF_EMPTY",
+                    message: "Generated PDF is empty (0 pages, <100 bytes)",
+                    retryable: true
+                ),
+                elapsedMs: elapsed
+            )
+        } catch PdfError.timeout {
+            let elapsed = (CFAbsoluteTimeGetCurrent() - start) * 1000
+            return Response.failure(
+                id: commandID,
+                error: StructuredError(
+                    code: "PDF_TIMEOUT",
+                    message: "PDF generation timed out",
+                    retryable: true
+                ),
+                elapsedMs: elapsed
+            )
+        } catch {
+            let elapsed = (CFAbsoluteTimeGetCurrent() - start) * 1000
+            return Response.failure(
+                id: commandID,
+                error: StructuredError(
+                    code: "PDF_GENERATION_ERROR",
                     message: error.localizedDescription,
                     retryable: false
                 ),
