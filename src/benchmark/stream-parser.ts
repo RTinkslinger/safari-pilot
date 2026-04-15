@@ -142,3 +142,72 @@ export function extractReasoningExcerpts(events: StreamEvent[]): string[] {
     .map((ev) => ev.textContent ?? '')
     .filter((text) => text.length > 20 && text.length < 500);
 }
+
+/**
+ * Architecture trace: extract engine metadata from tool_result events.
+ * MCP tool results include _meta with engine, degraded, latencyMs.
+ * Returns per-call records for the architecture report.
+ */
+export interface ArchitectureTraceEntry {
+  tool: string;
+  engine: string;
+  degraded: boolean;
+  latencyMs: number;
+  success: boolean;
+  order: number;
+}
+
+export function extractArchitectureTrace(events: StreamEvent[]): ArchitectureTraceEntry[] {
+  const trace: ArchitectureTraceEntry[] = [];
+  let order = 0;
+  let lastToolName = '';
+
+  for (const ev of events) {
+    if (ev.type === 'tool_use' && ev.toolName) {
+      lastToolName = ev.toolName;
+    }
+    if (ev.type === 'tool_result' && ev.toolResultContent) {
+      const content = typeof ev.toolResultContent === 'string'
+        ? ev.toolResultContent
+        : JSON.stringify(ev.toolResultContent);
+
+      let engine = 'unknown';
+      let degraded = false;
+      let latencyMs = 0;
+      let success = true;
+
+      try {
+        const parsed = JSON.parse(content);
+        if (parsed?._meta) {
+          engine = parsed._meta.engine ?? 'unknown';
+          degraded = parsed._meta.degraded ?? false;
+          latencyMs = parsed._meta.latencyMs ?? 0;
+        }
+        if (parsed?.content?.[0]?.text) {
+          try {
+            const inner = JSON.parse(parsed.content[0].text);
+            if (inner?.error) success = false;
+          } catch { /* not JSON inner content */ }
+        }
+      } catch { /* not JSON content */ }
+
+      const toolName = lastToolName.replace(/^mcp__safari__/, '');
+      if (toolName) {
+        trace.push({ tool: toolName, engine, degraded, latencyMs, success, order: order++ });
+      }
+    }
+  }
+
+  return trace;
+}
+
+/**
+ * Aggregate engine usage counts from architecture trace.
+ */
+export function aggregateEngineUsage(trace: ArchitectureTraceEntry[]): Record<string, number> {
+  const usage: Record<string, number> = {};
+  for (const entry of trace) {
+    usage[entry.engine] = (usage[entry.engine] ?? 0) + 1;
+  }
+  return usage;
+}

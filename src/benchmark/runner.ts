@@ -514,7 +514,7 @@ async function main(): Promise<void> {
           .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())[0] ??
         null;
 
-      const markdown = generateDeltaReport(report, previousRun, skipped);
+      const markdown = generateDeltaReport(report, previousRun, skipped, results);
 
       const reportPath = await saveReport(REPORTS_DIR, report, markdown);
       console.log(`Report saved: ${reportPath}`);

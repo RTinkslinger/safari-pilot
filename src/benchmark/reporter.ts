@@ -187,7 +187,8 @@ function formatMs(ms: number): string {
 export function generateDeltaReport(
   current: RunReport,
   previous: RunReport | null,
-  skipped: SkippedTask[]
+  skipped: SkippedTask[],
+  results?: TaskResult[],
 ): string {
   const lines: string[] = [];
 
@@ -260,6 +261,67 @@ export function generateDeltaReport(
       lines.push(`| ${task.id} | ${reason} |`);
     }
     lines.push('');
+  }
+
+  // ── Architecture Report ────────────────────────────────────────────────────
+  if (results && results.length > 0) {
+    lines.push('## Architecture Report');
+    lines.push('');
+
+    // Engine usage across all tasks
+    const globalEngineUsage: Record<string, number> = {};
+    for (const r of results) {
+      for (const [engine, count] of Object.entries(r.enginesUsed)) {
+        globalEngineUsage[engine] = (globalEngineUsage[engine] ?? 0) + count;
+      }
+    }
+
+    const totalToolCalls = Object.values(globalEngineUsage).reduce((s, n) => s + n, 0);
+
+    lines.push('### Engine Usage');
+    lines.push('');
+    lines.push('| Engine | Tool Calls | % of Total |');
+    lines.push('|--------|-----------|------------|');
+    for (const [engine, count] of Object.entries(globalEngineUsage).sort((a, b) => b[1] - a[1])) {
+      const pct = totalToolCalls > 0 ? ((count / totalToolCalls) * 100).toFixed(1) : '0';
+      lines.push(`| ${engine} | ${count} | ${pct}% |`);
+    }
+    lines.push(`| **Total** | **${totalToolCalls}** | |`);
+    lines.push('');
+
+    // Per-task architecture breakdown
+    lines.push('### Per-Task Code Flow');
+    lines.push('');
+    lines.push('| Task | Result | Steps | Engines Used | Duration |');
+    lines.push('|------|--------|-------|-------------|----------|');
+    for (const r of results.filter(t => !t.skipped)) {
+      const result = r.success ? 'PASS' : 'FAIL';
+      const engines = Object.entries(r.enginesUsed)
+        .map(([e, c]) => `${e}(${c})`)
+        .join(', ') || 'none';
+      lines.push(`| ${r.taskId} | ${result} | ${r.steps} | ${engines} | ${formatMs(r.durationMs)} |`);
+    }
+    lines.push('');
+
+    // Architecture compliance summary
+    const usedApplescriptOnly = results.filter(r =>
+      !r.skipped && Object.keys(r.enginesUsed).length === 1 && r.enginesUsed['applescript'] > 0
+    );
+    const usedDaemon = results.filter(r => !r.skipped && (r.enginesUsed['daemon'] ?? 0) > 0);
+    const usedExtension = results.filter(r => !r.skipped && (r.enginesUsed['extension'] ?? 0) > 0);
+
+    lines.push('### Architecture Compliance');
+    lines.push('');
+    lines.push(`- Tasks using Extension engine: **${usedExtension.length}** / ${results.filter(r => !r.skipped).length}`);
+    lines.push(`- Tasks using Daemon engine: **${usedDaemon.length}** / ${results.filter(r => !r.skipped).length}`);
+    lines.push(`- Tasks using AppleScript only: **${usedApplescriptOnly.length}** / ${results.filter(r => !r.skipped).length}`);
+    lines.push(`- Total tool calls tracked: **${totalToolCalls}**`);
+    lines.push('');
+
+    if (usedExtension.length === 0 && totalToolCalls > 0) {
+      lines.push('> **WARNING:** No tasks used the Extension engine. The three-tier architecture is not being exercised.');
+      lines.push('');
+    }
   }
 
   return lines.join('\n');

@@ -8,6 +8,9 @@ import {
   extractFinalOutput,
   extractToolCalls,
   extractReasoningExcerpts,
+  extractArchitectureTrace,
+  aggregateEngineUsage,
+  type ArchitectureTraceEntry,
 } from './stream-parser.js';
 import { evaluate, evaluateWithLlmJudge } from './eval.js';
 
@@ -19,6 +22,8 @@ export interface ParsedOutput {
   finalOutput: string;
   reasoningExcerpts: string[];
   rawLines: string[];
+  architectureTrace: ArchitectureTraceEntry[];
+  enginesUsed: Record<string, number>;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -130,7 +135,7 @@ export function buildClaudeArgs(
  */
 export function parseTaskOutput(streamOutput: string): ParsedOutput {
   if (!streamOutput.trim()) {
-    return { steps: 0, toolsUsed: [], finalOutput: '', reasoningExcerpts: [], rawLines: [] };
+    return { steps: 0, toolsUsed: [], finalOutput: '', reasoningExcerpts: [], rawLines: [], architectureTrace: [], enginesUsed: {} };
   }
 
   const rawLines = streamOutput.split('\n').filter((l) => l.trim() !== '');
@@ -140,8 +145,10 @@ export function parseTaskOutput(streamOutput: string): ParsedOutput {
   const finalOutput = extractFinalOutput(events);
   const reasoningExcerpts = extractReasoningExcerpts(events);
   const steps = events.filter((ev) => ev.type === 'tool_use').length;
+  const architectureTrace = extractArchitectureTrace(events);
+  const enginesUsed = aggregateEngineUsage(architectureTrace);
 
-  return { steps, toolsUsed, finalOutput, reasoningExcerpts, rawLines };
+  return { steps, toolsUsed, finalOutput, reasoningExcerpts, rawLines, architectureTrace, enginesUsed };
 }
 
 /**
@@ -253,7 +260,7 @@ export async function executeTask(
     steps: parsed.steps,
     durationMs,
     toolsUsed: parsed.toolsUsed,
-    enginesUsed: {},
+    enginesUsed: parsed.enginesUsed,
     reasoningExcerpts: parsed.reasoningExcerpts,
     rawOutput: stdout,
   };
