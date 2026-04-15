@@ -166,30 +166,46 @@ export function extractArchitectureTrace(events: StreamEvent[]): ArchitectureTra
     if (ev.type === 'tool_use' && ev.toolName) {
       lastToolName = ev.toolName;
     }
-    if (ev.type === 'tool_result' && ev.toolResultContent) {
-      const content = typeof ev.toolResultContent === 'string'
-        ? ev.toolResultContent
-        : JSON.stringify(ev.toolResultContent);
-
+    if (ev.type === 'tool_result') {
       let engine = 'unknown';
       let degraded = false;
       let latencyMs = 0;
       let success = true;
 
-      try {
-        const parsed = JSON.parse(content);
-        if (parsed?._meta) {
-          engine = parsed._meta.engine ?? 'unknown';
-          degraded = parsed._meta.degraded ?? false;
-          latencyMs = parsed._meta.latencyMs ?? 0;
+      const searchForMeta = (obj: unknown): void => {
+        if (!obj || typeof obj !== 'object') return;
+        const dict = obj as Record<string, unknown>;
+        if (dict['_meta'] && typeof dict['_meta'] === 'object') {
+          const meta = dict['_meta'] as Record<string, unknown>;
+          if (meta['engine']) engine = meta['engine'] as string;
+          if (meta['degraded']) degraded = meta['degraded'] as boolean;
+          if (meta['latencyMs']) latencyMs = meta['latencyMs'] as number;
         }
-        if (parsed?.content?.[0]?.text) {
-          try {
-            const inner = JSON.parse(parsed.content[0].text);
-            if (inner?.error) success = false;
-          } catch { /* not JSON inner content */ }
+        if (dict['content'] && Array.isArray(dict['content'])) {
+          for (const c of dict['content'] as Array<Record<string, unknown>>) {
+            if (c['text'] && typeof c['text'] === 'string') {
+              try {
+                const inner = JSON.parse(c['text'] as string);
+                if (inner?.error) success = false;
+              } catch { /* not JSON */ }
+            }
+          }
         }
-      } catch { /* not JSON content */ }
+        for (const v of Object.values(dict)) {
+          if (v && typeof v === 'object' && !Array.isArray(v)) searchForMeta(v);
+        }
+      };
+
+      // Search tool_result content
+      if (ev.toolResultContent) {
+        const content = typeof ev.toolResultContent === 'string'
+          ? ev.toolResultContent : JSON.stringify(ev.toolResultContent);
+        try { searchForMeta(JSON.parse(content)); } catch { /* not JSON */ }
+      }
+      // Search raw event (Claude CLI may embed _meta at different levels)
+      if (ev.raw) {
+        searchForMeta(ev.raw);
+      }
 
       const toolName = lastToolName.replace(/^mcp__safari__/, '');
       if (toolName) {
