@@ -160,11 +160,16 @@ export interface ArchitectureTraceEntry {
 export function extractArchitectureTrace(events: StreamEvent[]): ArchitectureTraceEntry[] {
   const trace: ArchitectureTraceEntry[] = [];
   let order = 0;
+
+  const toolNameById = new Map<string, string>();
   let lastToolName = '';
 
   for (const ev of events) {
     if (ev.type === 'tool_use' && ev.toolName) {
       lastToolName = ev.toolName;
+      const raw = ev.raw as Record<string, unknown> | undefined;
+      const id = (raw?.['id'] as string) ?? ev.toolInput?.toString();
+      if (id) toolNameById.set(id, ev.toolName);
     }
     if (ev.type === 'tool_result') {
       let engine = 'unknown';
@@ -185,15 +190,11 @@ export function extractArchitectureTrace(events: StreamEvent[]): ArchitectureTra
           if (meta['degraded'] !== undefined) degraded = meta['degraded'] as boolean;
           if (meta['latencyMs'] !== undefined) latencyMs = meta['latencyMs'] as number;
         }
-        if (dict['content'] && Array.isArray(dict['content'])) {
-          for (const c of dict['content'] as Array<Record<string, unknown>>) {
-            if (c['text'] && typeof c['text'] === 'string') {
-              try {
-                const inner = JSON.parse(c['text'] as string);
-                if (inner?.error) success = false;
-              } catch { /* not JSON */ }
-            }
-          }
+        if (typeof dict['text'] === 'string') {
+          try {
+            const inner = JSON.parse(dict['text'] as string);
+            if (inner?.error) success = false;
+          } catch { /* not JSON */ }
         }
         for (const v of Object.values(dict)) {
           if (v && typeof v === 'object') searchForMeta(v);
@@ -206,12 +207,16 @@ export function extractArchitectureTrace(events: StreamEvent[]): ArchitectureTra
           ? ev.toolResultContent : JSON.stringify(ev.toolResultContent);
         try { searchForMeta(JSON.parse(content)); } catch { /* not JSON */ }
       }
-      // Search raw event (Claude CLI may embed _meta at different levels)
       if (ev.raw) {
         searchForMeta(ev.raw);
       }
 
-      const toolName = lastToolName.replace(/^mcp__[^_]+__/, '');
+      // Correlate tool name by tool_use_id if available, fall back to last seen
+      const raw = ev.raw as Record<string, unknown> | undefined;
+      const toolUseId = raw?.['tool_use_id'] as string | undefined;
+      const resolvedName = (toolUseId ? toolNameById.get(toolUseId) : undefined) ?? lastToolName;
+      const toolName = resolvedName.replace(/^mcp__[^_]+__/, '');
+
       if (toolName) {
         trace.push({ tool: toolName, engine, degraded, latencyMs, success, order: order++ });
       }
