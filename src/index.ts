@@ -38,6 +38,13 @@ async function main(): Promise<void> {
         }
         return { type: 'text' as const, text: c.text ?? '' };
       }),
+      _meta: result.metadata ? {
+        engine: result.metadata.engine,
+        degraded: result.metadata.degraded,
+        degradedReason: result.metadata.degradedReason,
+        latencyMs: result.metadata.latencyMs,
+        ...(result.metadata as Record<string, unknown>),
+      } : undefined,
     };
   });
 

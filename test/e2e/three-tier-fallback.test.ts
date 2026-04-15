@@ -2,14 +2,19 @@
  * Three-Tier Fallback E2E Tests
  *
  * Verifies the three-tier engine model (Extension > Daemon > AppleScript) is
- * reported correctly through the MCP protocol, and that basic navigation
- * works regardless of which engines are available.
+ * correctly reflected in MCP response metadata. Tests prove:
+ *
+ * 1. Engine metadata (_meta.engine) is populated in every MCP response
+ * 2. The engine selected matches the highest available tier
+ * 3. Extension-required tools are rejected (not silently fallen through) when
+ *    the extension is unavailable
+ * 4. Non-extension tools prefer daemon over applescript when daemon is available
  *
  * Zero mocks. Zero source imports. Real process over stdio.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { join } from 'node:path';
-import { McpTestClient, initClient, callTool } from '../helpers/mcp-client.js';
+import { McpTestClient, initClient, callTool, rawCallTool } from '../helpers/mcp-client.js';
 
 const SERVER_PATH = join(import.meta.dirname, '../../dist/index.js');
 
@@ -17,11 +22,19 @@ describe.skipIf(process.env.CI === 'true')('Three-Tier Fallback', () => {
   let client: McpTestClient;
   let nextId: number;
   let agentTabUrl: string | undefined;
+  let extensionConnected: boolean;
+  let daemonAvailable: boolean;
 
   beforeAll(async () => {
     const init = await initClient(SERVER_PATH);
     client = init.client;
     nextId = init.nextId;
+
+    // Probe engine availability
+    const health = await callTool(client, 'safari_health_check', {}, nextId++, 20000);
+    const checks = health['checks'] as Array<Record<string, unknown>>;
+    extensionConnected = checks.find((c) => c['name'] === 'extension')?.['ok'] === true;
+    daemonAvailable = checks.find((c) => c['name'] === 'daemon')?.['ok'] === true;
   }, 30000);
 
   afterAll(async () => {
@@ -33,11 +46,12 @@ describe.skipIf(process.env.CI === 'true')('Three-Tier Fallback', () => {
     if (client) await client.close();
   });
 
-  it('health check reports all engine statuses', async () => {
+  // ── Health check: all three tiers reported ────────────────────────────────
+
+  it('health check reports all three engine tiers', async () => {
     const result = await callTool(client, 'safari_health_check', {}, nextId++, 20000);
     const checks = result['checks'] as Array<Record<string, unknown>>;
 
-    // Must report on all three engine tiers
     const checkNames = checks.map((c) => c['name'] as string);
 
     expect(checkNames).toContain('safari_running');
@@ -48,7 +62,7 @@ describe.skipIf(process.env.CI === 'true')('Three-Tier Fallback', () => {
     const safariCheck = checks.find((c) => c['name'] === 'safari_running');
     expect(safariCheck!['ok']).toBe(true);
 
-    // Daemon and extension may or may not be available — just verify the check ran
+    // Daemon and extension status should be booleans
     const daemonCheck = checks.find((c) => c['name'] === 'daemon');
     expect(typeof daemonCheck!['ok']).toBe('boolean');
 
@@ -61,8 +75,10 @@ describe.skipIf(process.env.CI === 'true')('Three-Tier Fallback', () => {
     );
   }, 25000);
 
-  it('navigation tool works via best available engine', async () => {
-    const result = await callTool(
+  // ── Engine tier routing with metadata proof ───────────────────────────────
+
+  it('extension-required tools: routed to extension or properly rejected', async () => {
+    const tabResult = await callTool(
       client,
       'safari_new_tab',
       { url: 'https://example.com' },
@@ -70,15 +86,52 @@ describe.skipIf(process.env.CI === 'true')('Three-Tier Fallback', () => {
       20000,
     );
 
-    expect(result['tabUrl']).toBeDefined();
-    expect(typeof result['tabUrl']).toBe('string');
-    agentTabUrl = result['tabUrl'] as string;
-
-    // Wait for load, then verify content is accessible
+    expect(tabResult['tabUrl']).toBeDefined();
+    agentTabUrl = tabResult['tabUrl'] as string;
     await new Promise((r) => setTimeout(r, 3000));
 
     const tabUrl = agentTabUrl.endsWith('/') ? agentTabUrl : agentTabUrl + '/';
-    const textResult = await callTool(
+
+    // safari_query_shadow requires extension (requiresShadowDom: true)
+    const { payload: shadowPayload, meta: shadowMeta } = await rawCallTool(
+      client,
+      'safari_query_shadow',
+      { tabUrl, hostSelector: 'nonexistent', shadowSelector: 'button' },
+      nextId++,
+      20000,
+    );
+
+    expect(shadowMeta).toBeDefined();
+
+    if (extensionConnected) {
+      // Extension available: must route through extension
+      expect(shadowMeta!['engine']).toBe('extension');
+    } else {
+      // Extension unavailable: must reject, not silently fall through to applescript
+      expect(shadowMeta!['degraded']).toBe(true);
+      if (shadowPayload['_rawText']) {
+        expect((shadowPayload['_rawText'] as string).toLowerCase()).toMatch(/extension|unavailable/);
+      }
+    }
+  }, 45000);
+
+  it('non-extension tools prefer highest available tier', async () => {
+    if (!agentTabUrl) {
+      const tabResult = await callTool(
+        client,
+        'safari_new_tab',
+        { url: 'https://example.com' },
+        nextId++,
+        20000,
+      );
+      agentTabUrl = tabResult['tabUrl'] as string;
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+
+    const tabUrl = agentTabUrl!.endsWith('/') ? agentTabUrl! : agentTabUrl! + '/';
+
+    // safari_get_text has requirements: {} — selectEngine follows priority chain
+    const { payload, meta } = await rawCallTool(
       client,
       'safari_get_text',
       { tabUrl },
@@ -86,12 +139,21 @@ describe.skipIf(process.env.CI === 'true')('Three-Tier Fallback', () => {
       20000,
     );
 
-    expect(textResult['text']).toBeDefined();
-    expect((textResult['text'] as string)).toContain('Example Domain');
+    expect(payload['text']).toContain('Example Domain');
+    expect(meta).toBeDefined();
+
+    if (extensionConnected) {
+      expect(meta!['engine']).toBe('extension');
+    } else if (daemonAvailable) {
+      expect(meta!['engine']).toBe('daemon');
+    } else {
+      expect(meta!['engine']).toBe('applescript');
+    }
   }, 35000);
 
-  it('response has engine metadata in MCP payload', async () => {
-    // Inspect the raw MCP response to verify the server includes content
+  // ── Metadata correctly reflects which engine ran ──────────────────────────
+
+  it('MCP response _meta is populated with engine info for every tool call', async () => {
     const resp = await client.send(
       {
         jsonrpc: '2.0',
@@ -107,22 +169,58 @@ describe.skipIf(process.env.CI === 'true')('Three-Tier Fallback', () => {
 
     const result = resp['result'] as Record<string, unknown>;
     const content = result['content'] as Array<Record<string, unknown>>;
+    const meta = result['_meta'] as Record<string, unknown>;
 
+    // Content must exist with health check data
     expect(content).toBeInstanceOf(Array);
     expect(content.length).toBeGreaterThan(0);
     expect(content[0]['type']).toBe('text');
 
-    // The text content should be valid JSON with health check data
     const payload = JSON.parse(content[0]['text'] as string) as Record<string, unknown>;
     expect(payload['checks']).toBeInstanceOf(Array);
     expect(payload).toHaveProperty('healthy');
 
-    // The checks array includes engine status (daemon, extension)
-    // which proves engine metadata flows through the full MCP pipeline
-    const checks = payload['checks'] as Array<Record<string, unknown>>;
-    const engineChecks = checks.filter((c) =>
-      ['daemon', 'extension'].includes(c['name'] as string),
-    );
-    expect(engineChecks.length).toBe(2);
+    // _meta must exist with engine info
+    expect(meta).toBeDefined();
+    expect(meta!['engine']).toBeDefined();
+    expect(['extension', 'daemon', 'applescript']).toContain(meta!['engine']);
+    expect(typeof meta!['latencyMs']).toBe('number');
   }, 25000);
+
+  // ── Engine preference order verification ──────────────────────────────────
+
+  it('engine selection follows Extension > Daemon > AppleScript priority', async () => {
+    if (!agentTabUrl) {
+      const tabResult = await callTool(
+        client,
+        'safari_new_tab',
+        { url: 'https://example.com' },
+        nextId++,
+        20000,
+      );
+      agentTabUrl = tabResult['tabUrl'] as string;
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+
+    const tabUrl = agentTabUrl!.endsWith('/') ? agentTabUrl! : agentTabUrl! + '/';
+
+    const { meta } = await rawCallTool(
+      client,
+      'safari_evaluate',
+      { tabUrl, script: 'return "tier-test"' },
+      nextId++,
+      20000,
+    );
+
+    expect(meta).toBeDefined();
+    const engine = meta!['engine'] as string;
+
+    if (extensionConnected) {
+      expect(engine).toBe('extension');
+    } else if (daemonAvailable) {
+      expect(engine).toBe('daemon');
+    } else {
+      expect(engine).toBe('applescript');
+    }
+  }, 30000);
 });

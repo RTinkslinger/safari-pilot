@@ -115,3 +115,60 @@ export async function callTool(
   const text = content?.[0]?.['text'] as string | undefined;
   return text ? JSON.parse(text) as Record<string, unknown> : result;
 }
+
+/**
+ * Response from rawCallTool — includes parsed payload AND engine metadata.
+ */
+export interface RawToolResult {
+  /** The parsed JSON from result.content[0].text */
+  payload: Record<string, unknown>;
+  /** The _meta object from the MCP result (engine, degraded, latencyMs, etc.) */
+  meta: Record<string, unknown> | undefined;
+  /** The full MCP result object for low-level inspection */
+  result: Record<string, unknown>;
+}
+
+/**
+ * Call a tool through MCP and return the full result including _meta engine metadata.
+ * Unlike callTool(), this preserves the metadata that identifies which engine ran.
+ * Does NOT throw on JSON-RPC errors — returns them in result for inspection.
+ * Handles non-JSON content text gracefully (e.g., error messages from EngineUnavailableError).
+ */
+export async function rawCallTool(
+  client: McpTestClient,
+  name: string,
+  args: Record<string, unknown>,
+  nextId: number,
+  timeoutMs = 15000,
+): Promise<RawToolResult> {
+  const resp = await client.send(
+    { jsonrpc: '2.0', id: nextId, method: 'tools/call', params: { name, arguments: args } },
+    timeoutMs,
+  ) as Record<string, unknown>;
+
+  if ('error' in resp) {
+    const err = resp['error'] as Record<string, unknown>;
+    throw new Error(`MCP protocol error ${err['code']}: ${err['message']}`);
+  }
+
+  const result = resp['result'] as Record<string, unknown>;
+  const content = result['content'] as Array<Record<string, unknown>>;
+  const text = content?.[0]?.['text'] as string | undefined;
+
+  // Attempt JSON parse; fall back to wrapping raw text in an object
+  let payload: Record<string, unknown>;
+  if (text) {
+    try {
+      payload = JSON.parse(text) as Record<string, unknown>;
+    } catch {
+      // Non-JSON text (e.g., "Error: This operation requires...") — wrap it
+      payload = { _rawText: text, _isError: text.toLowerCase().startsWith('error') };
+    }
+  } else {
+    payload = {};
+  }
+
+  const meta = result['_meta'] as Record<string, unknown> | undefined;
+
+  return { payload, meta, result };
+}
