@@ -5,6 +5,11 @@
 (() => {
   'use strict';
 
+  // Capture Function constructor before CSP can restrict eval/Function.
+  // Extension content scripts load before page CSP is enforced, so this
+  // reference remains usable even on strict-CSP pages like Reddit/GitHub.
+  const _Function = Function;
+
   // Namespace to minimize collision risk
   const SP = Object.create(null);
 
@@ -296,6 +301,11 @@
           }
           case 'detectFramework': {
             result = SP.detectFramework();
+            break;
+          }
+          case 'execute_script': {
+            const fn = new _Function(params.script);
+            result = fn();
             break;
           }
           default:

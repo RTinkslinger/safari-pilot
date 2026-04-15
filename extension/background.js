@@ -102,21 +102,36 @@
         const tabId = tabs[0]?.id;
 
         if (tabId != null) {
-          const execResults = await browser.scripting.executeScript({
-            target: { tabId },
-            func: (scriptBody) => {
-              try {
-                const fn = new Function(scriptBody);
-                const value = fn();
-                return { ok: true, value };
-              } catch (e) {
-                return { ok: false, error: { message: e.message, name: e.name } };
-              }
-            },
-            args: [cmd.script],
-            world: 'MAIN',
-          });
-          result = execResults[0]?.result ?? { ok: true, value: null };
+          // Primary: content script relay (bypasses CSP via pre-captured Function ref)
+          try {
+            const relay = await browser.tabs.sendMessage(tabId, {
+              type: 'SAFARI_PILOT_COMMAND',
+              method: 'execute_script',
+              params: { script: cmd.script },
+            });
+            result = relay;
+          } catch (relayErr) {
+            // Fallback: browser.scripting.executeScript (works on non-CSP pages)
+            try {
+              const execResults = await browser.scripting.executeScript({
+                target: { tabId },
+                func: (scriptBody) => {
+                  try {
+                    const fn = new Function(scriptBody);
+                    const value = fn();
+                    return { ok: true, value };
+                  } catch (e) {
+                    return { ok: false, error: { message: e.message, name: e.name } };
+                  }
+                },
+                args: [cmd.script],
+                world: 'MAIN',
+              });
+              result = execResults[0]?.result ?? { ok: true, value: null };
+            } catch (scriptErr) {
+              result = { ok: false, error: { message: scriptErr.message, name: scriptErr.name } };
+            }
+          }
         } else {
           result = { ok: false, error: { message: 'No active tab' } };
         }
