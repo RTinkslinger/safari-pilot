@@ -86,7 +86,7 @@ echo '{"id":"test","method":"extension_status"}' | nc -w 3 localhost 19474
 # Expected: {"ok":true,"value":"connected"}
 ```
 
-**Known limitation (2026-04-15):** `browser.scripting.executeScript` in MAIN world is subject to the page's CSP. Sites with `unsafe-eval` blocked (Reddit, GitHub) reject `new Function()`. Workaround needed: content script relay for CSP-protected sites.
+**CSP handling (2026-04-15):** Primary execution path uses content script relay (background.js → content-isolated.js → content-main.js). content-main.js captures the `Function` constructor at load time and handles `execute_script` method. Falls back to `browser.scripting.executeScript` for pages without content scripts. Structured extension operations (queryShadow, dialog interception, network interception) work on CSP-protected pages via pre-defined methods in content-main.js. Arbitrary eval-style JS may still be blocked by strict CSP — this is a Safari platform limitation.
 
 ### Tier 2: Daemon Engine (5ms p50)
 **Capabilities:** Fast AppleScript execution, PDF generation (WKWebView.createPDF), download watching (FSEvents + DispatchSource)
@@ -293,6 +293,7 @@ If any of these would NOT fail a test, the test suite is incomplete:
 
 | Date | Change | Verified By |
 |------|--------|-------------|
+| 2026-04-15 | CSP bypass: content script relay, error propagation fix, HumanApproval action mapping | 41 daemon tests, 1378 unit tests, 74 e2e tests |
 | 2026-04-15 | Extension engine operational: TCP proxy handler, daemon socket, in-memory bridge | Manual: document.title on example.com. E2E: 74 tests, _meta.engine assertions |
 | 2026-04-15 | All 9 security layers wired | Unit: 1378 pass. E2E: security-pipeline tests |
 | 2026-04-15 | Engine selection invoked every call | E2E: engine-selection tests assert _meta.engine |
