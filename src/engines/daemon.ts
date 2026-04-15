@@ -49,6 +49,7 @@ export class DaemonEngine extends BaseEngine {
   private reconnectAttempted = false;
   private shuttingDown = false;
   private useTcp = false;
+  private _ensurePromise: Promise<void> | null = null;
 
   constructor(options?: DaemonEngineOptions | string) {
     super();
@@ -213,14 +214,15 @@ export class DaemonEngine extends BaseEngine {
   // ── Private: process lifecycle ───────────────────────────────────────────
 
   private async ensureRunning(): Promise<void> {
-    if (this.useTcp) return;
-    if (this.proc && !this.proc.killed) return;
+    if (this.useTcp || (this.proc && !this.proc.killed)) return;
 
     if (this.tcpPort > 0 && await this.tryTcpConnection()) {
       this.useTcp = true;
       return;
     }
-    this.spawnDaemon();
+    if (!this.proc || this.proc.killed) {
+      this.spawnDaemon();
+    }
   }
 
   private tryTcpConnection(): Promise<boolean> {
@@ -245,7 +247,7 @@ export class DaemonEngine extends BaseEngine {
         });
       });
       sock.on('error', () => resolve(false));
-      sock.setTimeout(2000, () => { sock.destroy(); resolve(false); });
+      sock.setTimeout(200, () => { sock.destroy(); resolve(false); });
     });
   }
 
@@ -345,11 +347,17 @@ export class DaemonEngine extends BaseEngine {
     const payload = JSON.stringify({ id, method, params }) + '\n';
 
     return new Promise<DaemonResponse>((resolve, reject) => {
+      let settled = false;
+      const settle = (fn: () => void) => { if (!settled) { settled = true; fn(); } };
+
+      const sock = createConnection({ host: '127.0.0.1', port: this.tcpPort });
+
       const timer = setTimeout(() => {
-        reject(new DaemonTimeoutError(method, effectiveTimeout));
+        sock.destroy();
+        settle(() => reject(new DaemonTimeoutError(method, effectiveTimeout)));
       }, effectiveTimeout);
 
-      const sock = createConnection({ host: '127.0.0.1', port: this.tcpPort }, () => {
+      sock.on('connect', () => {
         sock.write(payload);
       });
 
@@ -361,17 +369,18 @@ export class DaemonEngine extends BaseEngine {
           sock.destroy();
           try {
             const resp = JSON.parse(buf.split('\n')[0]) as DaemonResponse;
-            resolve(resp);
+            settle(() => resolve(resp));
           } catch {
-            reject(new Error('Invalid JSON response from daemon TCP'));
+            settle(() => reject(new Error('Invalid JSON response from daemon TCP')));
           }
         }
       });
 
       sock.on('error', (err) => {
         clearTimeout(timer);
+        sock.destroy();
         this.useTcp = false;
-        reject(new Error(`Daemon TCP connection failed: ${err.message}`));
+        settle(() => reject(new Error(`Daemon TCP connection failed: ${err.message}`)));
       });
     });
   }
