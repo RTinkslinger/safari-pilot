@@ -142,6 +142,8 @@ public final class ExtensionBridge: @unchecked Sendable {
         cmd.timeoutTask.cancel()
 
         let callerResponse: Response
+
+        // Check for top-level error (direct error reporting)
         if let errorParam = params["error"],
            let errorMsg = errorParam.value as? String {
             callerResponse = Response.failure(
@@ -149,6 +151,22 @@ public final class ExtensionBridge: @unchecked Sendable {
                 error: StructuredError(
                     code: "EXTENSION_ERROR",
                     message: errorMsg,
+                    retryable: true
+                )
+            )
+        }
+        // Check for error nested inside result (background.js sends {result: {ok:false, error:{...}}})
+        else if let resultParam = params["result"],
+                let resultDict = resultParam.value as? [String: Any],
+                let ok = resultDict["ok"] as? Bool, !ok,
+                let errorObj = resultDict["error"] as? [String: Any] {
+            let msg = errorObj["message"] as? String ?? "Extension script error"
+            let name = errorObj["name"] as? String ?? "EXTENSION_ERROR"
+            callerResponse = Response.failure(
+                id: cmd.id,
+                error: StructuredError(
+                    code: name,
+                    message: msg,
                     retryable: true
                 )
             )
