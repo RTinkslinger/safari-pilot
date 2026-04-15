@@ -174,12 +174,16 @@ export function extractArchitectureTrace(events: StreamEvent[]): ArchitectureTra
 
       const searchForMeta = (obj: unknown): void => {
         if (!obj || typeof obj !== 'object') return;
+        if (Array.isArray(obj)) {
+          for (const item of obj) searchForMeta(item);
+          return;
+        }
         const dict = obj as Record<string, unknown>;
         if (dict['_meta'] && typeof dict['_meta'] === 'object') {
           const meta = dict['_meta'] as Record<string, unknown>;
-          if (meta['engine']) engine = meta['engine'] as string;
-          if (meta['degraded']) degraded = meta['degraded'] as boolean;
-          if (meta['latencyMs']) latencyMs = meta['latencyMs'] as number;
+          if (meta['engine'] !== undefined) engine = meta['engine'] as string;
+          if (meta['degraded'] !== undefined) degraded = meta['degraded'] as boolean;
+          if (meta['latencyMs'] !== undefined) latencyMs = meta['latencyMs'] as number;
         }
         if (dict['content'] && Array.isArray(dict['content'])) {
           for (const c of dict['content'] as Array<Record<string, unknown>>) {
@@ -192,7 +196,7 @@ export function extractArchitectureTrace(events: StreamEvent[]): ArchitectureTra
           }
         }
         for (const v of Object.values(dict)) {
-          if (v && typeof v === 'object' && !Array.isArray(v)) searchForMeta(v);
+          if (v && typeof v === 'object') searchForMeta(v);
         }
       };
 
@@ -207,7 +211,7 @@ export function extractArchitectureTrace(events: StreamEvent[]): ArchitectureTra
         searchForMeta(ev.raw);
       }
 
-      const toolName = lastToolName.replace(/^mcp__safari__/, '');
+      const toolName = lastToolName.replace(/^mcp__[^_]+__/, '');
       if (toolName) {
         trace.push({ tool: toolName, engine, degraded, latencyMs, success, order: order++ });
       }
