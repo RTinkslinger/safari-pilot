@@ -223,6 +223,14 @@ If a test does any of these, it belongs in `test/integration/`, not `test/e2e/`.
 
 Ask: "Does a real e2e test exercise the path a user would take?" If not, the feature is not tested and must not ship.
 
+## Canonical Architecture Document
+
+**`ARCHITECTURE.md`** is the single source of truth for how Safari Pilot works as shipped. Every data flow, IPC protocol, security layer, and engine selection path is documented there with verification evidence.
+
+**HARD RULE:** Any commit that changes component behavior, data flow, IPC protocol, security pipeline, engine selection, or test architecture MUST update `ARCHITECTURE.md` in the same commit. If code and document diverge, the code is suspect until the document is updated with verified evidence.
+
+Read `ARCHITECTURE.md` at session start. Before claiming any component "works," verify against the document. Before shipping, run the litmus tests listed there.
+
 ## Non-Obvious Constraints
 
 - **macOS only** — package.json enforces `"os": ["darwin"]`. Node 20+.
