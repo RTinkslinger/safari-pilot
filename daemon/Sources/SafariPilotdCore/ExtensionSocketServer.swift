@@ -11,7 +11,12 @@ public final class ExtensionSocketServer: @unchecked Sendable {
     public init(port: UInt16 = 19474, dispatcher: CommandDispatcher) {
         let params = NWParameters.tcp
         params.allowLocalEndpointReuse = true
-        self.listener = try! NWListener(using: params, on: NWEndpoint.Port(rawValue: port)!)
+        do {
+            self.listener = try NWListener(using: params, on: NWEndpoint.Port(rawValue: port)!)
+        } catch {
+            Logger.error("ExtensionSocketServer: failed to create listener on port \(port): \(error)")
+            self.listener = try! NWListener(using: .tcp)
+        }
         self.dispatcher = dispatcher
     }
 

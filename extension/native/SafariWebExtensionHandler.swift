@@ -40,10 +40,19 @@ class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandling {
         let connection = NWConnection(host: host, port: port, using: .tcp)
         let queue = DispatchQueue(label: "com.safari-pilot.handler-conn")
 
+        var completed = false
+        let safeComplete: ([String: Any]) -> Void = { response in
+            queue.sync {
+                guard !completed else { return }
+                completed = true
+            }
+            completion(response)
+        }
+
         let timeoutItem = DispatchWorkItem {
             os_log(.error, "SafariPilot: daemon connection timed out")
             connection.cancel()
-            completion(["error": "Daemon connection timed out", "ok": false])
+            safeComplete(["error": "Daemon connection timed out", "ok": false])
         }
         queue.asyncAfter(deadline: .now() + Self.connectionTimeout, execute: timeoutItem)
 
@@ -53,13 +62,13 @@ class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandling {
                 self.sendAndReceive(connection: connection, message: message) { response in
                     timeoutItem.cancel()
                     connection.cancel()
-                    completion(response)
+                    safeComplete(response)
                 }
             case .failed(let error):
                 os_log(.error, "SafariPilot: connection failed: %@", error.localizedDescription)
                 timeoutItem.cancel()
                 connection.cancel()
-                completion(["error": "Daemon not reachable: \(error.localizedDescription)", "ok": false])
+                safeComplete(["error": "Daemon not reachable: \(error.localizedDescription)", "ok": false])
             case .cancelled:
                 break
             default:

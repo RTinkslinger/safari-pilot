@@ -127,7 +127,9 @@ export class DaemonEngine extends BaseEngine {
         // execute always returns a string value, but guard for type safety
         const value = typeof response.value === 'string'
           ? response.value.trimEnd()
-          : undefined;
+          : typeof response.value === 'object' && response.value !== null
+            ? JSON.stringify(response.value)
+            : undefined;
         return {
           ok: true,
           value,

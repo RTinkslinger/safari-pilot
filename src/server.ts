@@ -435,6 +435,15 @@ export class SafariPilotServer {
         selectedEngineName = selectEngine(toolDef.requirements, this.engineAvailability);
       } catch (err) {
         if (err instanceof EngineUnavailableError) {
+          this.auditLog.record({
+            tool: name,
+            tabUrl: url,
+            engine: 'applescript' as Engine,
+            params,
+            result: 'error',
+            elapsed_ms: Date.now() - start,
+            session: this.sessionId,
+          });
           return {
             content: [{ type: 'text', text: `Error: ${err.message}` }],
             metadata: {
