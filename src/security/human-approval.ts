@@ -138,7 +138,8 @@ export class HumanApproval {
     }
 
     // 4. Download actions or downloadable file extensions in URL
-    if (action === 'download' || DOWNLOAD_EXTENSIONS.test(url)) {
+    const isDownloadAction = action === 'download' || action === 'safari_wait_for_download';
+    if (isDownloadAction || DOWNLOAD_EXTENSIONS.test(url)) {
       return {
         required: true,
         category: 'download',
@@ -155,8 +156,10 @@ export class HumanApproval {
       };
     }
 
-    // 6. Form submissions (POST) with sensitive field names
-    if (action === 'submit' || action === 'post') {
+    // 6. Form submissions with sensitive field names
+    const isFormAction = action === 'submit' || action === 'post'
+      || action === 'safari_fill' || action === 'safari_click';
+    if (isFormAction) {
       if (params !== undefined) {
         const fieldNames = Object.keys(params);
         const sensitiveField = fieldNames.find((f) => matchesAny(f, SENSITIVE_FORM_FIELDS));
