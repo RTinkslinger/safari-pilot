@@ -1,284 +1,188 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import {
-  mkdirSync,
-  writeFileSync,
-  readFileSync,
-  existsSync,
-  rmSync,
-  readdirSync,
-} from 'node:fs';
-import { join } from 'node:path';
-import { tmpdir } from 'node:os';
-
-// ─── Test Helpers ─────────────────────────────────────────────────────────────
-
 /**
- * File-based IPC protocol between daemon and extension:
+ * Extension Bridge Protocol Contract — TypeScript side
  *
- * Daemon writes: ~/.safari-pilot/bridge/commands/{id}.json
- *   Format: { "id": "<commandID>", "script": "...", ... }
+ * The daemon's ExtensionBridge (Swift) uses an in-memory command queue.
+ * That side is tested by 41 Swift tests in daemon/Tests/.
  *
- * Extension reads command, executes, then writes:
- *   ~/.safari-pilot/bridge/results/{id}.json
- *   Format: { "id": "<commandID>", "result": <any>, "timestamp": "..." }
+ * This file tests the TypeScript side: the sentinel strings and JSON payloads
+ * that ExtensionEngine constructs when communicating with the daemon.
+ * If these sentinels don't match what the daemon expects, the bridge is dead.
  *
- * These tests verify the file format contract without needing the actual
- * Swift daemon or Safari extension.
+ * Old file-based IPC tests were removed — file I/O bridge was replaced by
+ * in-memory queue in the daemon rewrite.
  */
 
-let testDir: string;
-let commandsDir: string;
-let resultsDir: string;
+import { describe, it, expect, vi } from 'vitest';
+import { ExtensionEngine } from '../../../src/engines/extension.js';
+import type { DaemonEngine } from '../../../src/engines/daemon.js';
+import type { EngineResult } from '../../../src/types.js';
 
-beforeEach(() => {
-  testDir = join(tmpdir(), `safari-pilot-bridge-test-${Date.now()}`);
-  commandsDir = join(testDir, 'commands');
-  resultsDir = join(testDir, 'results');
-  mkdirSync(commandsDir, { recursive: true });
-  mkdirSync(resultsDir, { recursive: true });
+const INTERNAL_PREFIX = '__SAFARI_PILOT_INTERNAL__';
+
+function makeMockDaemon(
+  capturedCalls: string[] = [],
+): DaemonEngine {
+  return {
+    name: 'daemon',
+    isAvailable: vi.fn().mockResolvedValue(true),
+    execute: vi.fn(async (script: string) => {
+      capturedCalls.push(script);
+      return { ok: true, value: 'connected', elapsed_ms: 1 } as EngineResult;
+    }),
+    shutdown: vi.fn().mockResolvedValue(undefined),
+  } as unknown as DaemonEngine;
+}
+
+// ── Sentinel Format ─────────────────────────────────────────────────────────
+
+describe('Bridge Protocol — sentinel prefix format', () => {
+
+  it('extension_status sentinel is: __SAFARI_PILOT_INTERNAL__ extension_status', async () => {
+    const calls: string[] = [];
+    const daemon = makeMockDaemon(calls);
+    const engine = new ExtensionEngine(daemon);
+
+    await engine.isAvailable();
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toBe(`${INTERNAL_PREFIX} extension_status`);
+  });
+
+  it('extension_execute sentinel starts with: __SAFARI_PILOT_INTERNAL__ extension_execute', async () => {
+    const calls: string[] = [];
+    const daemon = makeMockDaemon(calls);
+    const engine = new ExtensionEngine(daemon);
+
+    await engine.execute('return 1');
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.startsWith(`${INTERNAL_PREFIX} extension_execute `)).toBe(true);
+  });
+
+  it('sentinel prefix uses double underscores and spaces (not colons or slashes)', async () => {
+    const calls: string[] = [];
+    const daemon = makeMockDaemon(calls);
+    const engine = new ExtensionEngine(daemon);
+
+    await engine.execute('return 1');
+
+    // The daemon splits on " " and checks for "__SAFARI_PILOT_INTERNAL__"
+    // Any deviation (colons, slashes, single underscores) would break parsing
+    const sentinel = calls[0]!;
+    const parts = sentinel.split(' ');
+    expect(parts[0]).toBe('__SAFARI_PILOT_INTERNAL__');
+    expect(parts[1]).toBe('extension_execute');
+    // Remaining parts form the JSON payload
+    expect(parts.length).toBeGreaterThan(2);
+  });
 });
 
-afterEach(() => {
-  if (existsSync(testDir)) {
-    rmSync(testDir, { recursive: true, force: true });
-  }
-});
+// ── JSON Payload Structure ──────────────────────────────────────────────────
 
-// ─── Command File Format ────────────────────────────────────────────────────
+describe('Bridge Protocol — JSON payload structure', () => {
 
-describe('Bridge IPC — Command Files', () => {
-  it('command file is valid JSON with required fields', () => {
-    const commandId = 'cmd-test-001';
-    const command = {
-      id: commandId,
+  it('execute() sends JSON with "script" field', async () => {
+    const calls: string[] = [];
+    const daemon = makeMockDaemon(calls);
+    const engine = new ExtensionEngine(daemon);
+
+    await engine.execute('return document.title');
+
+    const jsonStr = calls[0]!.replace(`${INTERNAL_PREFIX} extension_execute `, '');
+    const payload = JSON.parse(jsonStr);
+
+    expect(payload).toEqual({ script: 'return document.title' });
+  });
+
+  it('executeJsInTab() sends JSON with "script" and "tabUrl" fields', async () => {
+    const calls: string[] = [];
+    const daemon = makeMockDaemon(calls);
+    const engine = new ExtensionEngine(daemon);
+
+    await engine.executeJsInTab('https://example.com/page', 'return document.title');
+
+    const jsonStr = calls[0]!.replace(`${INTERNAL_PREFIX} extension_execute `, '');
+    const payload = JSON.parse(jsonStr);
+
+    expect(payload).toEqual({
       script: 'return document.title',
-    };
-
-    const filePath = join(commandsDir, `${commandId}.json`);
-    writeFileSync(filePath, JSON.stringify(command));
-
-    const raw = readFileSync(filePath, 'utf-8');
-    const parsed = JSON.parse(raw);
-
-    expect(parsed.id).toBe(commandId);
-    expect(parsed.script).toBe('return document.title');
+      tabUrl: 'https://example.com/page',
+    });
   });
 
-  it('command file name matches the command ID', () => {
-    const commandId = 'exec-abc-123';
-    const command = { id: commandId, script: 'return 1' };
+  it('payload JSON is parseable (no truncation or encoding issues)', async () => {
+    const calls: string[] = [];
+    const daemon = makeMockDaemon(calls);
+    const engine = new ExtensionEngine(daemon);
 
-    const filePath = join(commandsDir, `${commandId}.json`);
-    writeFileSync(filePath, JSON.stringify(command));
+    // Script with special characters that could break JSON
+    const tricky = 'return "hello \\"world\\"" + \'\\n\' + `${1+2}`';
+    await engine.execute(tricky);
 
-    expect(existsSync(filePath)).toBe(true);
-    expect(filePath.endsWith(`${commandId}.json`)).toBe(true);
+    const jsonStr = calls[0]!.replace(`${INTERNAL_PREFIX} extension_execute `, '');
+    expect(() => JSON.parse(jsonStr)).not.toThrow();
+
+    const payload = JSON.parse(jsonStr);
+    expect(payload.script).toBe(tricky);
   });
 
-  it('command file supports additional params alongside script', () => {
-    const command = {
-      id: 'cmd-with-params',
-      script: 'return window.location.href',
-      timeout: 5000,
-      tabId: 42,
-    };
+  it('extension_status sentinel has NO JSON payload', async () => {
+    const calls: string[] = [];
+    const daemon = makeMockDaemon(calls);
+    const engine = new ExtensionEngine(daemon);
 
-    const filePath = join(commandsDir, `${command.id}.json`);
-    writeFileSync(filePath, JSON.stringify(command));
+    await engine.isAvailable();
 
-    const parsed = JSON.parse(readFileSync(filePath, 'utf-8'));
-    expect(parsed.timeout).toBe(5000);
-    expect(parsed.tabId).toBe(42);
-    expect(parsed.script).toBeDefined();
-  });
-
-  it('multiple command files can coexist in the directory', () => {
-    for (let i = 0; i < 5; i++) {
-      const cmd = { id: `cmd-${i}`, script: `return ${i}` };
-      writeFileSync(join(commandsDir, `cmd-${i}.json`), JSON.stringify(cmd));
-    }
-
-    const files = readdirSync(commandsDir).filter((f) => f.endsWith('.json'));
-    expect(files).toHaveLength(5);
-  });
-
-  it('oldest command file sorts first alphabetically for FIFO processing', () => {
-    // Write files with lexicographically ordered names to simulate time order
-    const ids = ['cmd-001', 'cmd-002', 'cmd-003'];
-    for (const id of ids) {
-      writeFileSync(
-        join(commandsDir, `${id}.json`),
-        JSON.stringify({ id, script: 'return 1' }),
-      );
-    }
-
-    const files = readdirSync(commandsDir)
-      .filter((f) => f.endsWith('.json'))
-      .sort();
-
-    expect(files[0]).toBe('cmd-001.json');
-    expect(files[files.length - 1]).toBe('cmd-003.json');
+    // Should be exactly the sentinel, no trailing content
+    expect(calls[0]).toBe(`${INTERNAL_PREFIX} extension_status`);
+    expect(calls[0]!.split(' ')).toHaveLength(2);
   });
 });
 
-// ─── Result File Format ────────────────────────────────────────────────────
+// ── Response Contract ───────────────────────────────────────────────────────
 
-describe('Bridge IPC — Result Files', () => {
-  it('result file is valid JSON with required fields', () => {
-    const resultId = 'cmd-test-001';
-    const result = {
-      id: resultId,
-      result: { ok: true, value: 'Example Domain' },
-      timestamp: new Date().toISOString(),
-    };
+describe('Bridge Protocol — daemon response interpretation', () => {
 
-    const filePath = join(resultsDir, `${resultId}.json`);
-    writeFileSync(filePath, JSON.stringify(result));
+  it('isAvailable treats ONLY "connected" string as true', async () => {
+    for (const value of ['connected']) {
+      const daemon = {
+        name: 'daemon',
+        isAvailable: vi.fn().mockResolvedValue(true),
+        execute: vi.fn(async () => ({ ok: true, value, elapsed_ms: 1 })),
+        shutdown: vi.fn(),
+      } as unknown as DaemonEngine;
 
-    const parsed = JSON.parse(readFileSync(filePath, 'utf-8'));
-    expect(parsed.id).toBe(resultId);
-    expect(parsed.result).toBeDefined();
-    expect(parsed.timestamp).toBeDefined();
-  });
-
-  it('result file name matches the command ID', () => {
-    const resultId = 'exec-abc-123';
-    const result = {
-      id: resultId,
-      result: 'test-value',
-      timestamp: new Date().toISOString(),
-    };
-
-    const filePath = join(resultsDir, `${resultId}.json`);
-    writeFileSync(filePath, JSON.stringify(result));
-
-    expect(existsSync(filePath)).toBe(true);
-    expect(filePath.endsWith(`${resultId}.json`)).toBe(true);
-  });
-
-  it('result file can contain error information', () => {
-    const result = {
-      id: 'cmd-error',
-      result: { ok: false, error: { message: 'Tab not found' } },
-      timestamp: new Date().toISOString(),
-    };
-
-    const filePath = join(resultsDir, `${result.id}.json`);
-    writeFileSync(filePath, JSON.stringify(result));
-
-    const parsed = JSON.parse(readFileSync(filePath, 'utf-8'));
-    expect(parsed.result.ok).toBe(false);
-    expect(parsed.result.error.message).toBe('Tab not found');
-  });
-
-  it('result file supports complex nested result values', () => {
-    const result = {
-      id: 'cmd-complex',
-      result: {
-        ok: true,
-        value: {
-          title: 'Test Page',
-          url: 'https://example.com',
-          cookies: [
-            { name: 'session', value: 'abc123' },
-          ],
-        },
-      },
-      timestamp: new Date().toISOString(),
-    };
-
-    const filePath = join(resultsDir, `${result.id}.json`);
-    writeFileSync(filePath, JSON.stringify(result));
-
-    const parsed = JSON.parse(readFileSync(filePath, 'utf-8'));
-    expect(parsed.result.value.title).toBe('Test Page');
-    expect(parsed.result.value.cookies).toHaveLength(1);
-  });
-});
-
-// ─── Full Round-Trip Protocol ───────────────────────────────────────────────
-
-describe('Bridge IPC — Round Trip', () => {
-  it('simulates daemon writing command and extension writing result', () => {
-    const commandId = 'roundtrip-001';
-
-    // Step 1: Daemon writes command
-    const command = { id: commandId, script: 'return document.title' };
-    const cmdPath = join(commandsDir, `${commandId}.json`);
-    writeFileSync(cmdPath, JSON.stringify(command));
-    expect(existsSync(cmdPath)).toBe(true);
-
-    // Step 2: Extension reads and deletes command (simulated)
-    const cmdData = JSON.parse(readFileSync(cmdPath, 'utf-8'));
-    rmSync(cmdPath);
-    expect(existsSync(cmdPath)).toBe(false);
-    expect(cmdData.id).toBe(commandId);
-
-    // Step 3: Extension writes result
-    const result = {
-      id: cmdData.id,
-      result: { ok: true, value: 'My Page Title' },
-      timestamp: new Date().toISOString(),
-    };
-    const resultPath = join(resultsDir, `${commandId}.json`);
-    writeFileSync(resultPath, JSON.stringify(result));
-    expect(existsSync(resultPath)).toBe(true);
-
-    // Step 4: Daemon reads and deletes result
-    const resultData = JSON.parse(readFileSync(resultPath, 'utf-8'));
-    rmSync(resultPath);
-    expect(existsSync(resultPath)).toBe(false);
-    expect(resultData.id).toBe(commandId);
-    expect(resultData.result.ok).toBe(true);
-    expect(resultData.result.value).toBe('My Page Title');
-  });
-
-  it('commands directory is empty after all commands are consumed', () => {
-    // Write and then consume 3 commands
-    for (let i = 0; i < 3; i++) {
-      const path = join(commandsDir, `cmd-${i}.json`);
-      writeFileSync(path, JSON.stringify({ id: `cmd-${i}`, script: `return ${i}` }));
+      const engine = new ExtensionEngine(daemon);
+      expect(await engine.isAvailable()).toBe(true);
     }
 
-    // Consume all
-    const files = readdirSync(commandsDir).filter((f) => f.endsWith('.json'));
-    for (const file of files) {
-      rmSync(join(commandsDir, file));
-    }
+    for (const value of ['disconnected', '', 'true', 'yes', 'CONNECTED', undefined]) {
+      const daemon = {
+        name: 'daemon',
+        isAvailable: vi.fn().mockResolvedValue(true),
+        execute: vi.fn(async () => ({ ok: true, value, elapsed_ms: 1 })),
+        shutdown: vi.fn(),
+      } as unknown as DaemonEngine;
 
-    const remaining = readdirSync(commandsDir).filter((f) => f.endsWith('.json'));
-    expect(remaining).toHaveLength(0);
+      const engine = new ExtensionEngine(daemon);
+      expect(await engine.isAvailable()).toBe(false);
+    }
   });
 
-  it('result ID matches the original command ID for correct routing', () => {
-    const ids = ['alpha', 'beta', 'gamma'];
+  it('isAvailable returns false when daemon response has ok:false (even if value is "connected")', async () => {
+    const daemon = {
+      name: 'daemon',
+      isAvailable: vi.fn().mockResolvedValue(true),
+      execute: vi.fn(async () => ({
+        ok: false,
+        value: 'connected',
+        error: { code: 'ERR', message: 'fail', retryable: false },
+        elapsed_ms: 1,
+      })),
+      shutdown: vi.fn(),
+    } as unknown as DaemonEngine;
 
-    // Daemon writes commands
-    for (const id of ids) {
-      writeFileSync(
-        join(commandsDir, `${id}.json`),
-        JSON.stringify({ id, script: `return "${id}"` }),
-      );
-    }
-
-    // Extension processes and writes results (in any order)
-    for (const id of [...ids].reverse()) {
-      writeFileSync(
-        join(resultsDir, `${id}.json`),
-        JSON.stringify({
-          id,
-          result: { ok: true, value: id },
-          timestamp: new Date().toISOString(),
-        }),
-      );
-    }
-
-    // Daemon reads results — each result's id matches the filename
-    for (const id of ids) {
-      const resultPath = join(resultsDir, `${id}.json`);
-      const data = JSON.parse(readFileSync(resultPath, 'utf-8'));
-      expect(data.id).toBe(id);
-      expect(data.result.value).toBe(id);
-    }
+    const engine = new ExtensionEngine(daemon);
+    expect(await engine.isAvailable()).toBe(false);
   });
 });

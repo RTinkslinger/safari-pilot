@@ -1,11 +1,14 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { ExtensionEngine } from '../../src/engines/extension.js';
 import type { DaemonEngine } from '../../src/engines/daemon.js';
 import type { EngineResult } from '../../src/types.js';
 
 // ── Mock DaemonEngine ───────────────────────────────────────────────────────
-// We never spawn a real daemon process in these tests. A typed partial mock
-// is enough because ExtensionEngine only calls daemon.execute().
+// Minimal mock that records what ExtensionEngine sends to the daemon.
+// Each test controls the daemon's response to verify the PROTOCOL,
+// not just that a value flows through.
+
+const INTERNAL_PREFIX = '__SAFARI_PILOT_INTERNAL__';
 
 function makeMockDaemon(
   impl?: (script: string, timeout?: number) => Promise<EngineResult>,
@@ -18,125 +21,274 @@ function makeMockDaemon(
   } as unknown as DaemonEngine;
 }
 
-const INTERNAL_PREFIX = '__SAFARI_PILOT_INTERNAL__';
+/** Extract the raw string passed to daemon.execute() on the Nth call (0-based). */
+function getDaemonCall(daemon: DaemonEngine, index = 0): string {
+  const calls = (daemon.execute as ReturnType<typeof vi.fn>).mock.calls;
+  return calls[index]![0] as string;
+}
+
+/** Parse the JSON payload from an `extension_execute` sentinel. */
+function parseExecutePayload(sentinelStr: string): Record<string, unknown> {
+  const prefix = `${INTERNAL_PREFIX} extension_execute `;
+  expect(sentinelStr.startsWith(prefix)).toBe(true);
+  return JSON.parse(sentinelStr.slice(prefix.length));
+}
 
 // ── Tests ───────────────────────────────────────────────────────────────────
 
 describe('ExtensionEngine', () => {
 
-  // ── Test 1: engine name ────────────────────────────────────────────────────
+  // ── Identity ──────────────────────────────────────────────────────────────
+
   it('has name "extension"', () => {
     const daemon = makeMockDaemon();
     const engine = new ExtensionEngine(daemon);
     expect(engine.name).toBe('extension');
   });
 
-  // ── Test 2: isAvailable — daemon reports disconnected ────────────────────
-  it('isAvailable returns false when daemon reports disconnected', async () => {
-    const daemon = makeMockDaemon(async () => ({
-      ok: true,
-      value: 'disconnected',
-      elapsed_ms: 1,
-    }));
-    const engine = new ExtensionEngine(daemon);
+  // ── isAvailable: extension_status sentinel ────────────────────────────────
 
-    const available = await engine.isAvailable();
+  describe('isAvailable — extension_status sentinel', () => {
 
-    expect(available).toBe(false);
-    expect(daemon.execute).toHaveBeenCalledWith(
-      `${INTERNAL_PREFIX} extension_status`,
-    );
-  });
+    it('sends the exact sentinel "__SAFARI_PILOT_INTERNAL__ extension_status"', async () => {
+      const daemon = makeMockDaemon(async () => ({
+        ok: true,
+        value: 'connected',
+        elapsed_ms: 1,
+      }));
+      const engine = new ExtensionEngine(daemon);
 
-  // ── Test 3: isAvailable — daemon reports connected ────────────────────────
-  it('isAvailable returns true when daemon reports connected', async () => {
-    const daemon = makeMockDaemon(async () => ({
-      ok: true,
-      value: 'connected',
-      elapsed_ms: 1,
-    }));
-    const engine = new ExtensionEngine(daemon);
+      await engine.isAvailable();
 
-    const available = await engine.isAvailable();
-
-    expect(available).toBe(true);
-  });
-
-  // ── Test 4: isAvailable — daemon throws ──────────────────────────────────
-  it('isAvailable returns false when daemon throws', async () => {
-    const daemon = makeMockDaemon(async () => {
-      throw new Error('Daemon not running');
+      expect(daemon.execute).toHaveBeenCalledWith(
+        `${INTERNAL_PREFIX} extension_status`,
+      );
     });
-    const engine = new ExtensionEngine(daemon);
 
-    const available = await engine.isAvailable();
-    expect(available).toBe(false);
-  });
+    it('returns true when daemon reports "connected"', async () => {
+      const daemon = makeMockDaemon(async () => ({
+        ok: true,
+        value: 'connected',
+        elapsed_ms: 1,
+      }));
+      const engine = new ExtensionEngine(daemon);
 
-  // ── Test 5: execute routes through daemon ─────────────────────────────────
-  it('execute routes through daemon with correct payload', async () => {
-    const expectedResult: EngineResult = { ok: true, value: 'result-value', elapsed_ms: 5 };
-    const daemon = makeMockDaemon(async () => expectedResult);
-    const engine = new ExtensionEngine(daemon);
-
-    const script = 'return document.title';
-    const result = await engine.execute(script);
-
-    expect(result.ok).toBe(true);
-    // elapsed_ms should be at least 0
-    expect(result.elapsed_ms).toBeGreaterThanOrEqual(0);
-
-    // Verify the daemon received the correct internal command
-    expect(daemon.execute).toHaveBeenCalledOnce();
-    const [calledScript] = (daemon.execute as ReturnType<typeof vi.fn>).mock.calls[0] as [string, number?];
-    expect(calledScript).toMatch(new RegExp(`^${INTERNAL_PREFIX} extension_execute `));
-
-    // The JSON payload should contain the script
-    const jsonPart = calledScript.replace(`${INTERNAL_PREFIX} extension_execute `, '');
-    const parsed = JSON.parse(jsonPart) as { script: string };
-    expect(parsed.script).toBe(script);
-  });
-
-  // ── Test 6: execute passes timeout to daemon ──────────────────────────────
-  it('execute passes timeout to daemon', async () => {
-    const daemon = makeMockDaemon(async () => ({ ok: true, value: 'ok', elapsed_ms: 1 }));
-    const engine = new ExtensionEngine(daemon);
-
-    await engine.execute('return 1', 5000);
-
-    const calls = (daemon.execute as ReturnType<typeof vi.fn>).mock.calls;
-    expect(calls[0]![1]).toBe(5000);
-  });
-
-  // ── Test 7: execute handles daemon error gracefully ───────────────────────
-  it('execute returns EXTENSION_ERROR when daemon returns failure', async () => {
-    const daemon = makeMockDaemon(async () => ({
-      ok: false,
-      error: { code: 'DAEMON_ERROR', message: 'something failed', retryable: true },
-      elapsed_ms: 2,
-    }));
-    const engine = new ExtensionEngine(daemon);
-
-    const result = await engine.execute('return 1');
-
-    // The daemon returned ok:false, so execute should propagate the failure
-    expect(result.ok).toBe(false);
-    expect(result.elapsed_ms).toBeGreaterThanOrEqual(0);
-  });
-
-  // ── Test 8: execute handles thrown exception ──────────────────────────────
-  it('execute wraps thrown exceptions into EXTENSION_ERROR', async () => {
-    const daemon = makeMockDaemon(async () => {
-      throw new Error('connection lost');
+      expect(await engine.isAvailable()).toBe(true);
     });
-    const engine = new ExtensionEngine(daemon);
 
-    const result = await engine.execute('return 1');
+    it('returns false when daemon reports "disconnected"', async () => {
+      const daemon = makeMockDaemon(async () => ({
+        ok: true,
+        value: 'disconnected',
+        elapsed_ms: 1,
+      }));
+      const engine = new ExtensionEngine(daemon);
 
-    expect(result.ok).toBe(false);
-    expect(result.error?.code).toBe('EXTENSION_ERROR');
-    expect(result.error?.message).toContain('connection lost');
-    expect(result.error?.retryable).toBe(true);
-    expect(result.elapsed_ms).toBeGreaterThanOrEqual(0);
+      expect(await engine.isAvailable()).toBe(false);
+    });
+
+    it('returns false when daemon returns ok:false (daemon error)', async () => {
+      const daemon = makeMockDaemon(async () => ({
+        ok: false,
+        error: { code: 'DAEMON_ERROR', message: 'not running', retryable: true },
+        elapsed_ms: 1,
+      }));
+      const engine = new ExtensionEngine(daemon);
+
+      expect(await engine.isAvailable()).toBe(false);
+    });
+
+    it('returns false when daemon throws (process not spawned)', async () => {
+      const daemon = makeMockDaemon(async () => {
+        throw new Error('Daemon not running');
+      });
+      const engine = new ExtensionEngine(daemon);
+
+      expect(await engine.isAvailable()).toBe(false);
+    });
+
+    it('returns false for unexpected value (neither "connected" nor "disconnected")', async () => {
+      const daemon = makeMockDaemon(async () => ({
+        ok: true,
+        value: 'unknown-state',
+        elapsed_ms: 1,
+      }));
+      const engine = new ExtensionEngine(daemon);
+
+      // Only "connected" is truthy — anything else means unavailable
+      expect(await engine.isAvailable()).toBe(false);
+    });
+  });
+
+  // ── execute: extension_execute sentinel ───────────────────────────────────
+
+  describe('execute — extension_execute sentinel and payload', () => {
+
+    it('sends sentinel with JSON payload containing {script}', async () => {
+      const daemon = makeMockDaemon(async () => ({ ok: true, value: 'title', elapsed_ms: 1 }));
+      const engine = new ExtensionEngine(daemon);
+
+      await engine.execute('return document.title');
+
+      const sent = getDaemonCall(daemon);
+      expect(sent).toMatch(new RegExp(`^${INTERNAL_PREFIX} extension_execute `));
+
+      const payload = parseExecutePayload(sent);
+      expect(payload).toHaveProperty('script', 'return document.title');
+    });
+
+    it('forwards timeout parameter to daemon.execute()', async () => {
+      const daemon = makeMockDaemon(async () => ({ ok: true, value: 'ok', elapsed_ms: 1 }));
+      const engine = new ExtensionEngine(daemon);
+
+      await engine.execute('return 1', 7500);
+
+      const calls = (daemon.execute as ReturnType<typeof vi.fn>).mock.calls;
+      expect(calls[0]![1]).toBe(7500);
+    });
+
+    it('propagates ok:true result from daemon', async () => {
+      const daemon = makeMockDaemon(async () => ({
+        ok: true,
+        value: 'Example Domain',
+        elapsed_ms: 3,
+      }));
+      const engine = new ExtensionEngine(daemon);
+
+      const result = await engine.execute('return document.title');
+
+      expect(result.ok).toBe(true);
+      expect(result.value).toBe('Example Domain');
+      expect(result.elapsed_ms).toBeGreaterThanOrEqual(0);
+    });
+
+    it('propagates ok:false from daemon as failure', async () => {
+      const daemon = makeMockDaemon(async () => ({
+        ok: false,
+        error: { code: 'DAEMON_ERROR', message: 'script failed', retryable: true },
+        elapsed_ms: 2,
+      }));
+      const engine = new ExtensionEngine(daemon);
+
+      const result = await engine.execute('return 1');
+
+      expect(result.ok).toBe(false);
+      expect(result.elapsed_ms).toBeGreaterThanOrEqual(0);
+    });
+
+    it('wraps daemon exceptions into EXTENSION_ERROR', async () => {
+      const daemon = makeMockDaemon(async () => {
+        throw new Error('connection lost');
+      });
+      const engine = new ExtensionEngine(daemon);
+
+      const result = await engine.execute('return 1');
+
+      expect(result.ok).toBe(false);
+      expect(result.error?.code).toBe('EXTENSION_ERROR');
+      expect(result.error?.message).toContain('connection lost');
+      expect(result.error?.retryable).toBe(true);
+    });
+  });
+
+  // ── executeJsInTab: tabUrl routing ────────────────────────────────────────
+
+  describe('executeJsInTab — sends {script, tabUrl} payload', () => {
+
+    it('includes both script and tabUrl in the JSON payload', async () => {
+      const daemon = makeMockDaemon(async () => ({
+        ok: true,
+        value: 'clicked',
+        elapsed_ms: 2,
+      }));
+      const engine = new ExtensionEngine(daemon);
+
+      await engine.executeJsInTab(
+        'https://example.com/page',
+        'document.querySelector("button").click()',
+      );
+
+      const sent = getDaemonCall(daemon);
+      const payload = parseExecutePayload(sent);
+      expect(payload).toHaveProperty('script', 'document.querySelector("button").click()');
+      expect(payload).toHaveProperty('tabUrl', 'https://example.com/page');
+    });
+
+    it('forwards timeout to daemon', async () => {
+      const daemon = makeMockDaemon(async () => ({ ok: true, value: 'ok', elapsed_ms: 1 }));
+      const engine = new ExtensionEngine(daemon);
+
+      await engine.executeJsInTab('https://example.com', 'return 1', 3000);
+
+      const calls = (daemon.execute as ReturnType<typeof vi.fn>).mock.calls;
+      expect(calls[0]![1]).toBe(3000);
+    });
+
+    it('wraps daemon exceptions into EXTENSION_ERROR', async () => {
+      const daemon = makeMockDaemon(async () => {
+        throw new Error('tab crashed');
+      });
+      const engine = new ExtensionEngine(daemon);
+
+      const result = await engine.executeJsInTab('https://example.com', 'return 1');
+
+      expect(result.ok).toBe(false);
+      expect(result.error?.code).toBe('EXTENSION_ERROR');
+      expect(result.error?.message).toContain('tab crashed');
+      expect(result.error?.retryable).toBe(true);
+    });
+  });
+
+  // ── Payload structure: protocol contract ──────────────────────────────────
+
+  describe('protocol contract — sentinel format and JSON structure', () => {
+
+    it('extension_status sentinel has no trailing payload', async () => {
+      const daemon = makeMockDaemon(async () => ({
+        ok: true,
+        value: 'connected',
+        elapsed_ms: 1,
+      }));
+      const engine = new ExtensionEngine(daemon);
+
+      await engine.isAvailable();
+
+      const sent = getDaemonCall(daemon);
+      // Must be exactly this string, no extra content
+      expect(sent).toBe(`${INTERNAL_PREFIX} extension_status`);
+    });
+
+    it('extension_execute payload is valid JSON', async () => {
+      const daemon = makeMockDaemon(async () => ({ ok: true, value: 'ok', elapsed_ms: 1 }));
+      const engine = new ExtensionEngine(daemon);
+
+      await engine.execute('return JSON.stringify({a: 1})');
+
+      const sent = getDaemonCall(daemon);
+      const jsonStr = sent.replace(`${INTERNAL_PREFIX} extension_execute `, '');
+      expect(() => JSON.parse(jsonStr)).not.toThrow();
+    });
+
+    it('execute() payload has "script" key but no "tabUrl" key', async () => {
+      const daemon = makeMockDaemon(async () => ({ ok: true, value: 'ok', elapsed_ms: 1 }));
+      const engine = new ExtensionEngine(daemon);
+
+      await engine.execute('return 1');
+
+      const payload = parseExecutePayload(getDaemonCall(daemon));
+      expect(payload).toHaveProperty('script');
+      expect(payload).not.toHaveProperty('tabUrl');
+    });
+
+    it('executeJsInTab() payload has both "script" and "tabUrl" keys', async () => {
+      const daemon = makeMockDaemon(async () => ({ ok: true, value: 'ok', elapsed_ms: 1 }));
+      const engine = new ExtensionEngine(daemon);
+
+      await engine.executeJsInTab('https://example.com', 'return 1');
+
+      const payload = parseExecutePayload(getDaemonCall(daemon));
+      expect(payload).toHaveProperty('script');
+      expect(payload).toHaveProperty('tabUrl');
+    });
   });
 });
