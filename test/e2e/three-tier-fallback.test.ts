@@ -15,6 +15,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { join } from 'node:path';
 import { McpTestClient, initClient, callTool, rawCallTool } from '../helpers/mcp-client.js';
+import { E2EReportCollector } from '../helpers/e2e-report.js';
 
 const SERVER_PATH = join(import.meta.dirname, '../../dist/index.js');
 
@@ -24,6 +25,7 @@ describe.skipIf(process.env.CI === 'true')('Three-Tier Fallback', () => {
   let agentTabUrl: string | undefined;
   let extensionConnected: boolean;
   let daemonAvailable: boolean;
+  const report = new E2EReportCollector('three-tier-fallback');
 
   beforeAll(async () => {
     const init = await initClient(SERVER_PATH);
@@ -35,9 +37,11 @@ describe.skipIf(process.env.CI === 'true')('Three-Tier Fallback', () => {
     const checks = health['checks'] as Array<Record<string, unknown>>;
     extensionConnected = checks.find((c) => c['name'] === 'extension')?.['ok'] === true;
     daemonAvailable = checks.find((c) => c['name'] === 'daemon')?.['ok'] === true;
+    report.setExtensionConnected(extensionConnected);
   }, 30000);
 
   afterAll(async () => {
+    report.writeReport();
     if (agentTabUrl && client) {
       try {
         await callTool(client, 'safari_close_tab', { tabUrl: agentTabUrl }, nextId++, 10000);
@@ -100,6 +104,8 @@ describe.skipIf(process.env.CI === 'true')('Three-Tier Fallback', () => {
       nextId++,
       20000,
     );
+    const shadowOk = !(shadowPayload['_rawText'] as string | undefined)?.toLowerCase().includes('error');
+    report.recordCall('safari_query_shadow', { tabUrl, hostSelector: 'nonexistent', shadowSelector: 'button' }, shadowMeta, shadowOk, shadowOk ? undefined : (shadowPayload['_rawText'] as string));
 
     expect(shadowMeta).toBeDefined();
 
@@ -138,6 +144,7 @@ describe.skipIf(process.env.CI === 'true')('Three-Tier Fallback', () => {
       nextId++,
       20000,
     );
+    report.recordCall('safari_get_text', { tabUrl }, meta, !!payload['text']);
 
     expect(payload['text']).toContain('Example Domain');
     expect(meta).toBeDefined();
@@ -211,6 +218,7 @@ describe.skipIf(process.env.CI === 'true')('Three-Tier Fallback', () => {
       nextId++,
       20000,
     );
+    report.recordCall('safari_evaluate', { tabUrl, script: 'return "tier-test"' }, meta, true);
 
     expect(meta).toBeDefined();
     const engine = meta!['engine'] as string;

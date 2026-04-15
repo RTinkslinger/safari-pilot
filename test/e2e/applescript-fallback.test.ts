@@ -10,7 +10,8 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { join } from 'node:path';
-import { McpTestClient, initClient, callTool } from '../helpers/mcp-client.js';
+import { McpTestClient, initClient, callTool, rawCallTool } from '../helpers/mcp-client.js';
+import { E2EReportCollector } from '../helpers/e2e-report.js';
 
 const SERVER_PATH = join(import.meta.dirname, '../../dist/index.js');
 
@@ -18,6 +19,7 @@ describe.skipIf(process.env.CI === 'true')('AppleScript Fallback — Basic Tool 
   let client: McpTestClient;
   let nextId: number;
   let agentTabUrl: string | undefined;
+  const report = new E2EReportCollector('applescript-fallback');
 
   beforeAll(async () => {
     const init = await initClient(SERVER_PATH);
@@ -26,6 +28,7 @@ describe.skipIf(process.env.CI === 'true')('AppleScript Fallback — Basic Tool 
   }, 30000);
 
   afterAll(async () => {
+    report.writeReport();
     // Safety net: close any tab we opened if individual test didn't
     if (agentTabUrl && client) {
       try {
@@ -36,13 +39,14 @@ describe.skipIf(process.env.CI === 'true')('AppleScript Fallback — Basic Tool 
   });
 
   it('safari_new_tab creates a tab with URL', async () => {
-    const result = await callTool(
+    const { payload: result, meta } = await rawCallTool(
       client,
       'safari_new_tab',
       { url: 'https://example.com' },
       nextId++,
       20000,
     );
+    report.recordCall('safari_new_tab', { url: 'https://example.com' }, meta, !!result['tabUrl']);
 
     expect(result['tabUrl']).toBeDefined();
     expect(typeof result['tabUrl']).toBe('string');
@@ -56,13 +60,14 @@ describe.skipIf(process.env.CI === 'true')('AppleScript Fallback — Basic Tool 
     expect(agentTabUrl).toBeDefined();
 
     const tabUrl = agentTabUrl!.endsWith('/') ? agentTabUrl! : agentTabUrl! + '/';
-    const result = await callTool(
+    const { payload: result, meta } = await rawCallTool(
       client,
       'safari_navigate',
       { tabUrl, url: 'https://example.com/' },
       nextId++,
       20000,
     );
+    report.recordCall('safari_navigate', { tabUrl, url: 'https://example.com/' }, meta, true);
 
     // Navigate should succeed — verify the response indicates the navigation happened
     expect(result).toBeDefined();
@@ -75,13 +80,14 @@ describe.skipIf(process.env.CI === 'true')('AppleScript Fallback — Basic Tool 
     expect(agentTabUrl).toBeDefined();
 
     const tabUrl = agentTabUrl!.endsWith('/') ? agentTabUrl! : agentTabUrl! + '/';
-    const result = await callTool(
+    const { payload: result, meta } = await rawCallTool(
       client,
       'safari_get_text',
       { tabUrl },
       nextId++,
       20000,
     );
+    report.recordCall('safari_get_text', { tabUrl }, meta, !!result['text']);
 
     expect(result['text']).toBeDefined();
     expect(typeof result['text']).toBe('string');
@@ -95,13 +101,14 @@ describe.skipIf(process.env.CI === 'true')('AppleScript Fallback — Basic Tool 
     expect(agentTabUrl).toBeDefined();
 
     const tabUrl = agentTabUrl!.endsWith('/') ? agentTabUrl! : agentTabUrl! + '/';
-    const result = await callTool(
+    const { payload: result, meta } = await rawCallTool(
       client,
       'safari_evaluate',
       { tabUrl, script: 'return document.title' },
       nextId++,
       20000,
     );
+    report.recordCall('safari_evaluate', { tabUrl, script: 'return document.title' }, meta, !!result['value']);
 
     expect(result['value']).toBeDefined();
     expect(typeof result['value']).toBe('string');
@@ -120,7 +127,7 @@ describe.skipIf(process.env.CI === 'true')('AppleScript Fallback — Basic Tool 
     let closed = false;
     for (const url of urlVariants) {
       try {
-        const result = await callTool(
+        const { payload: result, meta } = await rawCallTool(
           client,
           'safari_close_tab',
           { tabUrl: url },
@@ -128,6 +135,7 @@ describe.skipIf(process.env.CI === 'true')('AppleScript Fallback — Basic Tool 
           15000,
         );
         if (result['closed']) {
+          report.recordCall('safari_close_tab', { tabUrl: url }, meta, true);
           closed = true;
           break;
         }

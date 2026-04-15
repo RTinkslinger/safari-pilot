@@ -20,6 +20,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { join } from 'node:path';
 import { McpTestClient, initClient, callTool, rawCallTool } from '../helpers/mcp-client.js';
+import { E2EReportCollector } from '../helpers/e2e-report.js';
 
 const SERVER_PATH = join(import.meta.dirname, '../../dist/index.js');
 
@@ -41,6 +42,8 @@ async function rawSend(
   );
 }
 
+const securityReport = new E2EReportCollector('security-pipeline');
+
 describe.skipIf(process.env.CI === 'true')('Security Pipeline — MCP E2E', () => {
   let client: McpTestClient;
   let nextId: number;
@@ -54,6 +57,10 @@ describe.skipIf(process.env.CI === 'true')('Security Pipeline — MCP E2E', () =
   afterAll(async () => {
     if (client) await client.close();
   });
+
+  // Note: securityReport.setExtensionConnected is set by the 'Full security pipeline' sub-suite
+  // which has access to a health check. The kill-switch sub-suite uses a client that gets
+  // killed, so extension state is unknown there (defaults to false).
 
   // ── Layer 1: KillSwitch ───────────────────────────────────────────────────
 
@@ -180,6 +187,12 @@ describe.skipIf(process.env.CI === 'true')('Security Pipeline — MCP E2E', () =
       const rawUrl = tabResult['tabUrl'] as string;
       pipelineTabUrl = rawUrl.endsWith('/') ? rawUrl : rawUrl + '/';
       await new Promise((r) => setTimeout(r, 2000));
+
+      // Probe extension availability for the report
+      const healthForReport = await callTool(pipelineClient, 'safari_health_check', {}, pipelineNextId++, 20000);
+      const checksForReport = healthForReport['checks'] as Array<Record<string, unknown>>;
+      const extConnected = checksForReport.find((c) => c['name'] === 'extension')?.['ok'] === true;
+      securityReport.setExtensionConnected(extConnected);
     }, 45000);
 
     afterAll(async () => {
@@ -212,6 +225,7 @@ describe.skipIf(process.env.CI === 'true')('Security Pipeline — MCP E2E', () =
         pipelineNextId++,
         20000,
       );
+      securityReport.recordCall('safari_get_text', { tabUrl }, meta, !!payload['text']);
 
       // Layer 7+8 proof: engine metadata in _meta
       expect(meta).toBeDefined();
@@ -249,6 +263,7 @@ describe.skipIf(process.env.CI === 'true')('Security Pipeline — MCP E2E', () =
         pipelineNextId++,
         20000,
       );
+      securityReport.recordCall('safari_evaluate', { tabUrl, script: 'return "security-pipeline-test"' }, meta, true);
 
       expect(meta).toBeDefined();
 
@@ -284,6 +299,7 @@ describe.skipIf(process.env.CI === 'true')('Security Pipeline — MCP E2E', () =
         pipelineNextId++,
         20000,
       );
+      securityReport.recordCall('safari_get_text', { tabUrl }, meta, true);
 
       expect(meta).toBeDefined();
 
@@ -315,6 +331,7 @@ describe.skipIf(process.env.CI === 'true')('TabOwnership — MCP E2E', () => {
   }, 30000);
 
   afterAll(async () => {
+    securityReport.writeReport();
     if (client) await client.close();
   });
 
@@ -361,6 +378,8 @@ describe.skipIf(process.env.CI === 'true')('TabOwnership — MCP E2E', () => {
     const tabUrl = newTabPayload['tabUrl'] as string;
 
     // Engine metadata proves the call went through executeToolWithSecurity
+    securityReport.recordCall('safari_new_tab', { url: 'https://example.com' }, newTabMeta, !!newTabPayload['tabUrl']);
+
     expect(newTabMeta).toBeDefined();
     expect(newTabMeta!['engine']).toBeDefined();
 
@@ -375,6 +394,7 @@ describe.skipIf(process.env.CI === 'true')('TabOwnership — MCP E2E', () => {
       nextId++,
       20000,
     );
+    securityReport.recordCall('safari_get_text', { tabUrl: normalizedUrl }, meta, !!payload['text']);
 
     expect(payload['text']).toBeDefined();
     expect(typeof payload['text']).toBe('string');

@@ -11,3 +11,4 @@ ROADMAP.md
 app/
 benchmark/traces/
 benchmark/reports/
+test/e2e/reports/

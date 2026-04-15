@@ -8,7 +8,8 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { join } from 'node:path';
-import { McpTestClient, initClient, callTool } from '../helpers/mcp-client.js';
+import { McpTestClient, initClient, callTool, rawCallTool } from '../helpers/mcp-client.js';
+import { E2EReportCollector } from '../helpers/e2e-report.js';
 
 const SERVER_PATH = join(import.meta.dirname, '../../dist/index.js');
 
@@ -16,6 +17,7 @@ describe.skipIf(process.env.CI === 'true')('Navigation Tools E2E', () => {
   let client: McpTestClient;
   let nextId: number;
   const tabUrls: string[] = [];
+  const report = new E2EReportCollector('navigation-tools');
 
   beforeAll(async () => {
     const init = await initClient(SERVER_PATH);
@@ -24,6 +26,7 @@ describe.skipIf(process.env.CI === 'true')('Navigation Tools E2E', () => {
   }, 30000);
 
   afterAll(async () => {
+    report.writeReport();
     // Clean up all tabs we created
     for (const url of tabUrls) {
       try {
@@ -44,45 +47,48 @@ describe.skipIf(process.env.CI === 'true')('Navigation Tools E2E', () => {
   });
 
   it('safari_new_tab creates a tab and returns tabUrl', async () => {
-    const result = await callTool(
+    const { payload, meta } = await rawCallTool(
       client,
       'safari_new_tab',
       { url: 'https://example.com' },
       nextId++,
       20000,
     );
+    report.recordCall('safari_new_tab', { url: 'https://example.com' }, meta, !!payload['tabUrl']);
 
-    expect(result['tabUrl']).toBeDefined();
-    expect(typeof result['tabUrl']).toBe('string');
-    tabUrls.push(result['tabUrl'] as string);
+    expect(payload['tabUrl']).toBeDefined();
+    expect(typeof payload['tabUrl']).toBe('string');
+    tabUrls.push(payload['tabUrl'] as string);
   }, 25000);
 
   it('safari_navigate changes the tab URL', async () => {
     // Navigate the tab we just created to a different URL
-    const result = await callTool(
+    const { payload, meta } = await rawCallTool(
       client,
       'safari_navigate',
       { url: 'https://www.iana.org/help/example-domains' },
       nextId++,
       20000,
     );
+    report.recordCall('safari_navigate', { url: 'https://www.iana.org/help/example-domains' }, meta, !!payload['url']);
 
-    expect(result['url']).toBeDefined();
-    const newUrl = result['url'] as string;
+    expect(payload['url']).toBeDefined();
+    const newUrl = payload['url'] as string;
     expect(newUrl).toContain('iana.org');
   }, 25000);
 
   it('safari_list_tabs returns the created tabs', async () => {
-    const result = await callTool(
+    const { payload, meta } = await rawCallTool(
       client,
       'safari_list_tabs',
       {},
       nextId++,
       15000,
     );
+    report.recordCall('safari_list_tabs', {}, meta, !!payload['tabs']);
 
-    expect(result['tabs']).toBeInstanceOf(Array);
-    const tabs = result['tabs'] as Array<Record<string, unknown>>;
+    expect(payload['tabs']).toBeInstanceOf(Array);
+    const tabs = payload['tabs'] as Array<Record<string, unknown>>;
     expect(tabs.length).toBeGreaterThan(0);
 
     // Each tab should have url and title
@@ -94,13 +100,14 @@ describe.skipIf(process.env.CI === 'true')('Navigation Tools E2E', () => {
 
   it('safari_close_tab removes tab from list', async () => {
     // Open a second tab that we will close
-    const newTab = await callTool(
+    const { payload: newTab, meta: newTabMeta } = await rawCallTool(
       client,
       'safari_new_tab',
       { url: 'https://example.com' },
       nextId++,
       20000,
     );
+    report.recordCall('safari_new_tab', { url: 'https://example.com' }, newTabMeta, !!newTab['tabUrl']);
     const newTabUrl = newTab['tabUrl'] as string;
     expect(newTabUrl).toBeDefined();
 

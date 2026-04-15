@@ -24,6 +24,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { join } from 'node:path';
 import { McpTestClient, initClient, callTool, rawCallTool } from '../helpers/mcp-client.js';
+import { E2EReportCollector } from '../helpers/e2e-report.js';
 
 const SERVER_PATH = join(import.meta.dirname, '../../dist/index.js');
 
@@ -33,6 +34,7 @@ describe.skipIf(process.env.CI === 'true')('Extension Engine — MCP E2E', () =>
   let extensionConnected: boolean;
   let daemonAvailable: boolean;
   let agentTabUrl: string | undefined;
+  const report = new E2EReportCollector('extension-engine');
 
   beforeAll(async () => {
     const init = await initClient(SERVER_PATH);
@@ -44,6 +46,7 @@ describe.skipIf(process.env.CI === 'true')('Extension Engine — MCP E2E', () =>
     const checks = health['checks'] as Array<Record<string, unknown>>;
     extensionConnected = checks.find((c) => c['name'] === 'extension')?.['ok'] === true;
     daemonAvailable = checks.find((c) => c['name'] === 'daemon')?.['ok'] === true;
+    report.setExtensionConnected(extensionConnected);
 
     // Open a tab for JS evaluation tests
     const tabResult = await callTool(
@@ -61,6 +64,7 @@ describe.skipIf(process.env.CI === 'true')('Extension Engine — MCP E2E', () =>
   }, 45000);
 
   afterAll(async () => {
+    report.writeReport();
     if (agentTabUrl && client) {
       try {
         await callTool(client, 'safari_close_tab', { tabUrl: agentTabUrl }, nextId++, 10000);
@@ -113,6 +117,7 @@ describe.skipIf(process.env.CI === 'true')('Extension Engine — MCP E2E', () =>
       nextId++,
       20000,
     );
+    report.recordCall('safari_query_shadow', { tabUrl, hostSelector: 'nonexistent-host', shadowSelector: 'button' }, meta, true);
 
     // CRITICAL: engine metadata MUST be 'extension' — nothing else can handle shadow DOM
     expect(meta).toBeDefined();
@@ -141,6 +146,8 @@ describe.skipIf(process.env.CI === 'true')('Extension Engine — MCP E2E', () =>
       nextId++,
       20000,
     );
+    const queryOk = !(payload['_rawText'] as string | undefined)?.toLowerCase().includes('error');
+    report.recordCall('safari_query_shadow', { tabUrl, hostSelector: 'nonexistent-host', shadowSelector: 'button' }, meta, queryOk, queryOk ? undefined : (payload['_rawText'] as string));
 
     // Without extension, the server MUST NOT silently fall back to applescript.
     // It should return an error indicating the extension is required.
@@ -169,6 +176,8 @@ describe.skipIf(process.env.CI === 'true')('Extension Engine — MCP E2E', () =>
       nextId++,
       20000,
     );
+    const clickOk = !(payload['_rawText'] as string | undefined)?.toLowerCase().includes('error');
+    report.recordCall('safari_click_shadow', { tabUrl, hostSelector: 'nonexistent-host', shadowSelector: 'button' }, meta, clickOk, clickOk ? undefined : (payload['_rawText'] as string));
 
     expect(meta).toBeDefined();
     if (extensionConnected) {
@@ -193,6 +202,8 @@ describe.skipIf(process.env.CI === 'true')('Extension Engine — MCP E2E', () =>
       nextId++,
       20000,
     );
+
+    report.recordCall('safari_evaluate', { tabUrl, script: 'return document.title' }, meta, !!payload['value']);
 
     // safari_evaluate has requirements: {} so selectEngine picks best available.
     expect(meta).toBeDefined();
@@ -223,6 +234,8 @@ describe.skipIf(process.env.CI === 'true')('Extension Engine — MCP E2E', () =>
       20000,
     );
 
+    report.recordCall('safari_evaluate', { tabUrl, script: 'return 2 + 2' }, meta, !!payload['value']);
+
     expect(Number(payload['value'])).toBe(4);
     expect(meta).toBeDefined();
     expect(meta!['engine']).toBeDefined();
@@ -243,6 +256,8 @@ describe.skipIf(process.env.CI === 'true')('Extension Engine — MCP E2E', () =>
 
     const value = payload['value'] as string;
     const parsed = JSON.parse(value);
+    report.recordCall('safari_evaluate', { tabUrl, script: 'return JSON.stringify(...)' }, meta, !!payload['value']);
+
     expect(parsed['href']).toContain('example.com');
     expect(parsed['nodeType']).toBe(9); // DOCUMENT_NODE
 
@@ -261,6 +276,7 @@ describe.skipIf(process.env.CI === 'true')('Extension Engine — MCP E2E', () =>
       nextId++,
       20000,
     );
+    report.recordCall('safari_get_text', { tabUrl }, meta, true);
 
     expect(meta).toBeDefined();
     expect(typeof meta!['degraded']).toBe('boolean');
@@ -278,6 +294,7 @@ describe.skipIf(process.env.CI === 'true')('Extension Engine — MCP E2E', () =>
 
     for (const { name, args } of tools) {
       const { meta } = await rawCallTool(client, name, args, nextId++, 20000);
+      report.recordCall(name, args, meta, true);
       expect(meta).toBeDefined();
       expect(meta!['engine']).toBeDefined();
       expect(['extension', 'daemon', 'applescript']).toContain(meta!['engine']);
@@ -304,6 +321,8 @@ describe.skipIf(process.env.CI === 'true')('Extension Engine — MCP E2E', () =>
       20000,
     );
 
+    report.recordCall('safari_evaluate', { tabUrl, script: 'typeof __safariPilot...' }, meta, payload['value'] === 'present');
+
     expect(meta!['engine']).toBe('extension');
     expect(payload['value']).toBe('present');
   }, 25000);
@@ -319,6 +338,8 @@ describe.skipIf(process.env.CI === 'true')('Extension Engine — MCP E2E', () =>
       nextId++,
       20000,
     );
+
+    report.recordCall('safari_get_text', { tabUrl }, meta, !!payload['text']);
 
     expect(payload['text']).toContain('Example Domain');
     expect(meta).toBeDefined();

@@ -17,6 +17,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { join } from 'node:path';
 import { McpTestClient, initClient, callTool, rawCallTool } from '../helpers/mcp-client.js';
+import { E2EReportCollector } from '../helpers/e2e-report.js';
 
 const SERVER_PATH = join(import.meta.dirname, '../../dist/index.js');
 
@@ -26,6 +27,7 @@ describe.skipIf(process.env.CI === 'true')('Engine Selection', () => {
   let agentTabUrl: string | undefined;
   let extensionConnected: boolean;
   let daemonAvailable: boolean;
+  const report = new E2EReportCollector('engine-selection');
 
   beforeAll(async () => {
     const init = await initClient(SERVER_PATH);
@@ -37,6 +39,7 @@ describe.skipIf(process.env.CI === 'true')('Engine Selection', () => {
     const checks = health['checks'] as Array<Record<string, unknown>>;
     extensionConnected = checks.find((c) => c['name'] === 'extension')?.['ok'] === true;
     daemonAvailable = checks.find((c) => c['name'] === 'daemon')?.['ok'] === true;
+    report.setExtensionConnected(extensionConnected);
 
     // Open a tab
     const newTabResult = await callTool(client, 'safari_new_tab', { url: 'https://example.com' }, nextId++, 20000);
@@ -47,6 +50,7 @@ describe.skipIf(process.env.CI === 'true')('Engine Selection', () => {
   }, 45000);
 
   afterAll(async () => {
+    report.writeReport();
     if (agentTabUrl && client) {
       try {
         await callTool(client, 'safari_close_tab', { tabUrl: agentTabUrl }, nextId++, 10000);
@@ -60,6 +64,7 @@ describe.skipIf(process.env.CI === 'true')('Engine Selection', () => {
   it('every tool response includes _meta with engine field', async () => {
     const tabUrl = agentTabUrl!.endsWith('/') ? agentTabUrl! : agentTabUrl! + '/';
     const { meta } = await rawCallTool(client, 'safari_get_text', { tabUrl }, nextId++, 20000);
+    report.recordCall('safari_get_text', { tabUrl }, meta, true);
 
     expect(meta).toBeDefined();
     expect(meta!['engine']).toBeDefined();
@@ -69,6 +74,7 @@ describe.skipIf(process.env.CI === 'true')('Engine Selection', () => {
   it('_meta includes degraded and latencyMs fields', async () => {
     const tabUrl = agentTabUrl!.endsWith('/') ? agentTabUrl! : agentTabUrl! + '/';
     const { meta } = await rawCallTool(client, 'safari_get_text', { tabUrl }, nextId++, 20000);
+    report.recordCall('safari_get_text', { tabUrl }, meta, true);
 
     expect(meta).toBeDefined();
     expect(typeof meta!['degraded']).toBe('boolean');
@@ -90,6 +96,8 @@ describe.skipIf(process.env.CI === 'true')('Engine Selection', () => {
       nextId++,
       20000,
     );
+    const shadowOk = !payload['_rawText']?.toString().includes('Error');
+    report.recordCall('safari_query_shadow', { tabUrl, hostSelector: 'nonexistent', shadowSelector: 'button' }, meta, shadowOk, shadowOk ? undefined : payload['_rawText'] as string);
 
     expect(meta).toBeDefined();
 
@@ -122,6 +130,7 @@ describe.skipIf(process.env.CI === 'true')('Engine Selection', () => {
       nextId++,
       20000,
     );
+    report.recordCall('safari_get_text', { tabUrl }, meta, !!payload['text']);
 
     expect(payload['text']).toBeDefined();
     expect((payload['text'] as string)).toContain('Example Domain');
@@ -148,6 +157,7 @@ describe.skipIf(process.env.CI === 'true')('Engine Selection', () => {
       nextId++,
       20000,
     );
+    report.recordCall('safari_evaluate', { tabUrl, script: 'return document.title' }, meta, !!payload['value']);
 
     expect(payload['value']).toBeDefined();
     expect(meta).toBeDefined();
@@ -173,6 +183,7 @@ describe.skipIf(process.env.CI === 'true')('Engine Selection', () => {
 
     for (const { name, args } of tools) {
       const { meta } = await rawCallTool(client, name, args, nextId++, 20000);
+      report.recordCall(name, args, meta, true);
       expect(meta).toBeDefined();
       expect(meta!['engine']).toBeDefined();
       expect(validEngines).toContain(meta!['engine']);
@@ -195,6 +206,7 @@ describe.skipIf(process.env.CI === 'true')('Engine Selection', () => {
         nextId++,
         20000,
       );
+      report.recordCall('safari_get_text', { tabUrl }, meta, true);
       results.push(meta!['engine']);
     }
 
