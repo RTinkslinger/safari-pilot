@@ -73,14 +73,14 @@ describe('DaemonEngine', () => {
   // ── Test 1: name ──────────────────────────────────────────────────────────
   it('has name "daemon"', async () => {
     const { DaemonEngine } = await import('../../src/engines/daemon.js');
-    const engine = new DaemonEngine('/fake/path/SafariPilotd');
+    const engine = new DaemonEngine({ daemonPath: '/fake/path/SafariPilotd', tcpPort: 0 });
     expect(engine.name).toBe('daemon');
   });
 
   // ── Test 2: sends NDJSON command and parses response ──────────────────────
   it('sends NDJSON command and parses response', async () => {
     const { DaemonEngine } = await import('../../src/engines/daemon.js');
-    const engine = new DaemonEngine('/fake/path/SafariPilotd');
+    const engine = new DaemonEngine({ daemonPath: '/fake/path/SafariPilotd', tcpPort: 0 });
 
     // Intercept stdin.write so we can capture the request and reply
     fakeProc.stdin.write.mockImplementation((data: string) => {
@@ -105,7 +105,7 @@ describe('DaemonEngine', () => {
   // ── Test 3: handles timeout when daemon doesn't respond ───────────────────
   it('handles timeout when daemon does not respond', async () => {
     const { DaemonEngine } = await import('../../src/engines/daemon.js');
-    const engine = new DaemonEngine('/fake/path/SafariPilotd');
+    const engine = new DaemonEngine({ daemonPath: '/fake/path/SafariPilotd', tcpPort: 0 });
 
     // stdin.write does nothing — response never arrives
     fakeProc.stdin.write.mockReturnValue(true);
@@ -124,7 +124,7 @@ describe('DaemonEngine', () => {
       throw new Error('spawn ENOENT');
     });
 
-    const engine = new DaemonEngine('/nonexistent/SafariPilotd');
+    const engine = new DaemonEngine({ daemonPath: '/nonexistent/SafariPilotd', tcpPort: 0 });
     const available = await engine.isAvailable();
     expect(available).toBe(false);
   });
@@ -132,7 +132,7 @@ describe('DaemonEngine', () => {
   // ── Test 5: matches responses to requests by ID ───────────────────────────
   it('matches responses to the correct request by ID', async () => {
     const { DaemonEngine } = await import('../../src/engines/daemon.js');
-    const engine = new DaemonEngine('/fake/path/SafariPilotd');
+    const engine = new DaemonEngine({ daemonPath: '/fake/path/SafariPilotd', tcpPort: 0 });
 
     // Capture all written requests so we can match IDs, then reply in reverse order
     const written: Array<{ id: string; method: string; params: { script: string } }> = [];
@@ -166,7 +166,7 @@ describe('DaemonEngine', () => {
   // ── Test 6: handles daemon process exit ───────────────────────────────────
   it('handles daemon process exit and marks pending requests as failed', async () => {
     const { DaemonEngine } = await import('../../src/engines/daemon.js');
-    const engine = new DaemonEngine('/fake/path/SafariPilotd');
+    const engine = new DaemonEngine({ daemonPath: '/fake/path/SafariPilotd', tcpPort: 0 });
 
     // stdin.write triggers process exit without responding
     fakeProc.stdin.write.mockImplementation(() => {
@@ -183,7 +183,7 @@ describe('DaemonEngine', () => {
   // ── Test 7: isAvailable returns true when ping succeeds ───────────────────
   it('isAvailable returns true when ping returns pong', async () => {
     const { DaemonEngine } = await import('../../src/engines/daemon.js');
-    const engine = new DaemonEngine('/fake/path/SafariPilotd');
+    const engine = new DaemonEngine({ daemonPath: '/fake/path/SafariPilotd', tcpPort: 0 });
 
     fakeProc.stdin.write.mockImplementation((data: string) => {
       const req = JSON.parse(data.trim());
@@ -200,7 +200,7 @@ describe('DaemonEngine', () => {
   // ── Test 8: shutdown sends shutdown command and kills process ─────────────
   it('shutdown sends shutdown command and cleans up process', async () => {
     const { DaemonEngine } = await import('../../src/engines/daemon.js');
-    const engine = new DaemonEngine('/fake/path/SafariPilotd');
+    const engine = new DaemonEngine({ daemonPath: '/fake/path/SafariPilotd', tcpPort: 0 });
 
     // First trigger ensureRunning by starting any operation
     fakeProc.stdin.write.mockReturnValue(true);

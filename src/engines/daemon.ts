@@ -1,9 +1,11 @@
 import { spawn } from 'node:child_process';
+import { createConnection, type Socket } from 'node:net';
 import type { ChildProcess } from 'node:child_process';
 import { BaseEngine } from './engine.js';
 import type { Engine, EngineResult } from '../types.js';
 
 const DEFAULT_TIMEOUT_MS = 30_000;
+const DAEMON_TCP_PORT = 19474;
 let _idCounter = 0;
 
 class DaemonTimeoutError extends Error {
@@ -33,6 +35,7 @@ interface DaemonResponse {
 export interface DaemonEngineOptions {
   daemonPath?: string;
   timeoutMs?: number;
+  tcpPort?: number;
 }
 
 export class DaemonEngine extends BaseEngine {
@@ -42,19 +45,23 @@ export class DaemonEngine extends BaseEngine {
   private pending: Map<string, PendingRequest> = new Map();
   private daemonPath: string;
   private readonly defaultTimeoutMs: number;
+  private readonly tcpPort: number;
   private reconnectAttempted = false;
   private shuttingDown = false;
+  private useTcp = false;
 
   constructor(options?: DaemonEngineOptions | string) {
     super();
     if (typeof options === 'string') {
       this.daemonPath = options;
       this.defaultTimeoutMs = DEFAULT_TIMEOUT_MS;
+      this.tcpPort = DAEMON_TCP_PORT;
     } else {
       this.daemonPath = options?.daemonPath
         ?? process.env['SAFARI_PILOT_DAEMON']
         ?? './bin/SafariPilotd';
       this.defaultTimeoutMs = options?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+      this.tcpPort = options?.tcpPort ?? DAEMON_TCP_PORT;
     }
   }
 
@@ -185,8 +192,11 @@ export class DaemonEngine extends BaseEngine {
 
   async shutdown(): Promise<void> {
     this.shuttingDown = true;
+    if (this.useTcp) {
+      this.useTcp = false;
+      return;
+    }
     if (this.proc && !this.proc.killed) {
-      // Best-effort graceful shutdown command
       try {
         if (this.proc.stdin?.writable) {
           this.proc.stdin.write(JSON.stringify({ method: 'shutdown' }) + '\n');
@@ -203,10 +213,40 @@ export class DaemonEngine extends BaseEngine {
   // ── Private: process lifecycle ───────────────────────────────────────────
 
   private async ensureRunning(): Promise<void> {
-    if (this.proc && !this.proc.killed) {
+    if (this.useTcp) return;
+    if (this.proc && !this.proc.killed) return;
+
+    if (this.tcpPort > 0 && await this.tryTcpConnection()) {
+      this.useTcp = true;
       return;
     }
     this.spawnDaemon();
+  }
+
+  private tryTcpConnection(): Promise<boolean> {
+    return new Promise((resolve) => {
+      const sock = createConnection({ host: '127.0.0.1', port: this.tcpPort }, () => {
+        const pingPayload = JSON.stringify({ id: 'tcp-probe', method: 'ping' }) + '\n';
+        sock.write(pingPayload);
+
+        let buf = '';
+        sock.on('data', (chunk) => {
+          buf += chunk.toString();
+          if (buf.includes('\n')) {
+            try {
+              const resp = JSON.parse(buf.split('\n')[0]) as DaemonResponse;
+              sock.destroy();
+              resolve(resp.ok === true);
+            } catch {
+              sock.destroy();
+              resolve(false);
+            }
+          }
+        });
+      });
+      sock.on('error', () => resolve(false));
+      sock.setTimeout(2000, () => { sock.destroy(); resolve(false); });
+    });
   }
 
   private spawnDaemon(): void {
@@ -268,6 +308,10 @@ export class DaemonEngine extends BaseEngine {
     params: Record<string, unknown>,
     timeout?: number,
   ): Promise<DaemonResponse> {
+    if (this.useTcp) {
+      return this.sendCommandViaTcp(method, params, timeout);
+    }
+
     const effectiveTimeout = timeout ?? this.defaultTimeoutMs;
     const id = nextId();
     const payload = JSON.stringify({ id, method, params }) + '\n';
@@ -288,6 +332,47 @@ export class DaemonEngine extends BaseEngine {
       }
 
       this.proc.stdin.write(payload);
+    });
+  }
+
+  private sendCommandViaTcp(
+    method: string,
+    params: Record<string, unknown>,
+    timeout?: number,
+  ): Promise<DaemonResponse> {
+    const effectiveTimeout = timeout ?? this.defaultTimeoutMs;
+    const id = nextId();
+    const payload = JSON.stringify({ id, method, params }) + '\n';
+
+    return new Promise<DaemonResponse>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        reject(new DaemonTimeoutError(method, effectiveTimeout));
+      }, effectiveTimeout);
+
+      const sock = createConnection({ host: '127.0.0.1', port: this.tcpPort }, () => {
+        sock.write(payload);
+      });
+
+      let buf = '';
+      sock.on('data', (chunk) => {
+        buf += chunk.toString();
+        if (buf.includes('\n')) {
+          clearTimeout(timer);
+          sock.destroy();
+          try {
+            const resp = JSON.parse(buf.split('\n')[0]) as DaemonResponse;
+            resolve(resp);
+          } catch {
+            reject(new Error('Invalid JSON response from daemon TCP'));
+          }
+        }
+      });
+
+      sock.on('error', (err) => {
+        clearTimeout(timer);
+        this.useTcp = false;
+        reject(new Error(`Daemon TCP connection failed: ${err.message}`));
+      });
     });
   }
 

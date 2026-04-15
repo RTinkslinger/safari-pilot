@@ -70,13 +70,12 @@ describe('SafariPilotServer — extension engine initialization', () => {
     expect(typeof daemonCheck.ok).toBe('boolean');
   });
 
-  it('engine selector reflects extension unavailability after initialize()', async () => {
+  it('engine selector throws EngineUnavailableError when extension is forced unavailable', async () => {
     const server = new SafariPilotServer();
     await server.initialize();
 
-    // A tool requiring extension-only capabilities should fail engine selection
-    // when extension is not available (falls back or throws).
-    // requiresShadowDom is only available on extension engine.
+    server.setEngineAvailability({ daemon: true, extension: false });
+
     const { EngineUnavailableError } = await import('../../src/engine-selector.js');
     expect(() =>
       server.getSelectedEngine({ requiresShadowDom: true }),
