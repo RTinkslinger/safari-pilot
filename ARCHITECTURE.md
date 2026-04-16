@@ -1,10 +1,17 @@
 # Safari Pilot Architecture — Canonical Source of Truth
 
-*Last verified: 2026-04-16 | Branch: feat/file-download-handling | Commit: 9a660aa*
+*Last verified: 2026-04-16 | Branch: feat/file-download-handling*
 
 **This document describes how Safari Pilot ACTUALLY works as shipped. Every statement is backed by verified evidence. If code changes contradict this document, either the code is wrong or this document must be updated — never silently diverge.**
 
 **Update rule:** Any commit that changes component behavior, data flow, IPC protocol, security pipeline order, engine selection logic, or test architecture MUST update this document in the same commit.
+
+## CURRENT STATE WARNING
+
+**Extension engine command execution does NOT work end-to-end as of 2026-04-16.** The daemon, handler, engine selection, and security pipeline are all wired correctly. The extension connects and reports status correctly. But `extension_execute` commands time out — background.js's polling mechanism fails in Safari MV3 due to service worker suspension. All tools currently route through AppleScript/Daemon engines via the proxy fallback. See `EXTENSION_DEBUGGING_ISSUE.md` for root cause analysis and attempted solutions.
+
+**What this means for tools:** All working. They route through AppleScript/Daemon.
+**What this means for extension-only capabilities:** Closed Shadow DOM, CSP bypass via content script relay, dialog interception, network interception — these are CODED but not REACHABLE until the extension runtime issue is resolved.
 
 ---
 

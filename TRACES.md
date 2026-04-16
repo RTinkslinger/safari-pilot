@@ -44,6 +44,36 @@
 **Context:** Subagent-driven development: 10 implementation tasks dispatched to fresh agents, 2-stage review (spec compliance + code quality) after each. Code review found 2 critical (timer leak, double-close fds) + adversarial audit found 2 more critical (daemon path dead — trimEnd on objects, FSEvents nil guard). All 14 critical+important findings fixed. Key discoveries: (1) Safari blocks downloads from direct URL navigation but allows them from same-origin `<a download>` clicks, (2) plist reading needs python3 plistlib not plutil (binary bookmark data breaks JSON conversion), (3) download permission sheet detectable via System Events `count of sheets of front window`, (4) daemon probe overhead means FSEvents starts after download completes — quickDirectoryCheck catches this, (5) e2e test flakiness was vitest file parallelism competing for Safari tabs. 21 commits, 22 files, +2500 lines. 1299 unit + 5 integration + 48 e2e tests all green.
 ---
 
+### Iteration 11 - 2026-04-14
+**What:** P1 PDF Generation — WKWebView.createPDF, page ranges via PDFKit, margin/scale via CSS injection
+**Changes:** `daemon/Sources/SafariPilotdCore/PdfGenerator.swift` (375 lines), `src/tools/pdf.ts` (550 lines), plus gates, fixtures, 73 unit + 5 integration + 3 e2e tests
+**Context:** Major bug: NSPrintOperation.run() with WKWebView enters infinite spool loop. Fixed with createPDF API. Code review + adversarial audit found 3 critical + 5 important, all fixed.
+---
+
+### Iteration 12 - 2026-04-14
+**What:** Bug fixes: click navigation via el.href, Shadow DOM slot traversal in aria.ts, health check accepts "2.0", ExtensionEngine wired in server init (never was before)
+**Changes:** `src/aria.ts` (slot.assignedNodes traversal — Reddit 82→18178 chars), `src/tools/interaction.ts` (click nav fix), `src/server.ts` (ExtensionEngine created+checked)
+**Context:** CRITICAL DISCOVERY: Extension engine had NEVER been functional. SafariWebExtensionHandler was an Xcode stub. Three-tier engine model was always two-tier. User demanded full audit.
+---
+
+### Iteration 13 - 2026-04-15
+**What:** Full 547-step architecture fix — 15 phases. Daemon TCP socket, handler TCP proxy, in-memory command queue, IEngine interface unification, 12 tool module refactor, selectEngine wired into execution path, all 9 security layers wired, 14 e2e test files rewritten from scratch.
+**Changes:** `daemon/Sources/SafariPilotdCore/ExtensionSocketServer.swift` (created), `daemon/Sources/SafariPilotdCore/ExtensionBridge.swift` (rewritten with in-memory queue), `extension/native/SafariWebExtensionHandler.swift` (TCP proxy), `app/Safari Pilot/Safari Pilot Extension/Safari Pilot Extension.entitlements` (+network.client), `src/engines/engine.ts` (IEngine + executeJsInTab), `src/engines/daemon.ts` + `src/engines/extension.ts` (implementations), 12 tool files (IEngine type), `src/server.ts` (selectEngine wired, all 9 security layers), `extension/background.js` (daemon proxy response format), 14 new e2e test files, `CLAUDE.md` (+Ways of Working + tool count 76), `ARCHITECTURE.md` (canonical source created), `scripts/build-extension.sh` (custom handler copy, python3 pbxproj injection)
+**Context:** Previous state: extension was a stub, engine selection was dead code, 3 security layers unused. Fixed everything structurally. Adversarial audit found 3 critical + 3 important issues — all addressed. 1378 unit tests, 74 e2e tests, 41 daemon tests all passing.
+---
+
+### Iteration 14 - 2026-04-16
+**What:** RCA + fixes for benchmark failures + discovered extension never worked (stale DerivedData build + service worker suspension)
+**Changes:** `src/engines/daemon.ts` (TCP reuse for LaunchAgent daemon, settle guard, 200ms probe), `src/engines/engine-proxy.ts` (created — routes tool calls through selected engine), `src/server.ts` (EngineProxy wired, __engine embedded in text content), `src/benchmark/runner.ts` (preflight probes real engines), `src/benchmark/stream-parser.ts` (recursive _meta search, __engine fallback, tool_use_id correlation), `src/benchmark/reporter.ts` (architecture report section), `CLAUDE.md` (honest ScreenshotRedaction)
+**Context:** ROOT CAUSES: (1) Benchmark preflight hardcoded `healthyEngines: ['applescript','daemon']` — extension tasks always skipped. (2) Claude CLI strips `_meta` from stream-json — benchmark could never see engine metadata. (3) Extension in Safari was from stale DerivedData debug build (April 13), not bin/ — every rebuild was ignored. (4) EngineProxy was missing — selectEngine result only stamped metadata, tools always used AppleScriptEngine from constructor. (5) Full benchmark: 42.2% (38/90) but with broken extension.
+---
+
+### Iteration 15 - 2026-04-16
+**What:** Discovered extension runtime does not execute commands — service worker suspension breaks polling. 7+ push architectures attempted, none verified working end-to-end. Created EXTENSION_DEBUGGING_ISSUE.md as systematic debugging reference.
+**Changes:** `extension/native/AppDelegate.swift` (stashed), `daemon/Sources/SafariPilotdCore/AppRelayServer.swift` (stashed), `daemon/Sources/SafariPilotdCore/ExtensionBridge.swift` (onCommandQueued — stashed), multiple `extension/background.js` polling variants (stashed), `extension/native/SafariWebExtensionHandler.swift` long-polling (stashed), `EXTENSION_DEBUGGING_ISSUE.md` (created), `CHECKPOINT.md` (comprehensive state for UPP pipeline), `ARCHITECTURE.md` (honest current-state warning), `TRACES.md` (restored iterations 11-15)
+**Context:** Deep research via Parallel MCP (trun_4719934bf6364778a0bf373a2c479243 "ultra"): dispatchMessage is only sub-2s push path but Xcode 16 marks it unavailable in app extensions. Attempts: setInterval (killed by worker suspension), alarms (30s min too slow), persistent bg (MV3 rejects), Promise chain, dispatchMessage, NSDistributedNotification, TCP app relay, long-polling with stored context, connectNative port, hybrid setInterval+alarms. None produced observable poll activity in daemon log. Core debugging gap: no Safari Web Inspector access — all tests were blind CLI timeouts. User directed: clean context + full UPP pipeline for systematic debugging.
+---
+
 <!-- Iterations 5-6 archived to traces/archive/milestone-2.md -->
 
 <!-- Iterations 7-9 archived to traces/archive/milestone-3.md -->
