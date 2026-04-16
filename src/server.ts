@@ -518,7 +518,7 @@ export class SafariPilotServer {
         try {
           const parsed = JSON.parse(result.content[0].text);
           parsed.__engine = selectedEngineName;
-          parsed.__latencyMs = Date.now() - start;
+          parsed.__latencyMs = result.metadata?.latencyMs ?? Date.now() - start;
           result.content[0].text = JSON.stringify(parsed);
         } catch {
           // content is not JSON — leave as-is
