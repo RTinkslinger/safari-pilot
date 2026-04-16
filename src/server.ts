@@ -6,6 +6,7 @@ import { selectEngine, EngineUnavailableError } from './engine-selector.js';
 import { AppleScriptEngine } from './engines/applescript.js';
 import { DaemonEngine } from './engines/daemon.js';
 import { ExtensionEngine } from './engines/extension.js';
+import { EngineProxy } from './engines/engine-proxy.js';
 import { NavigationTools } from './tools/navigation.js';
 import { InteractionTools } from './tools/interaction.js';
 import { ExtractionTools } from './tools/extraction.js';
@@ -126,6 +127,7 @@ export class SafariPilotServer {
   readonly humanApproval: HumanApproval;
   readonly screenshotRedaction: ScreenshotRedaction;
 
+  private engineProxy: EngineProxy | null = null;
   private clickContexts: Map<string, ClickContext> = new Map();
   private clickContextTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
 
@@ -200,20 +202,27 @@ export class SafariPilotServer {
       handler: async (params) => this.handleHealthCheck(params),
     });
 
-    // Instantiate all tool modules
+    // Create engine proxy — tools receive this and it delegates to whichever
+    // engine selectEngine() picks before each call. This ensures engine selection
+    // actually affects execution, not just metadata.
+    const proxy = new EngineProxy(engine);
+    this.engineProxy = proxy;
+
+    // Instantiate tool modules with the proxy (IEngine-accepting) or AppleScript
+    // engine directly (for tab management tools that always need AppleScript)
     const navTools = new NavigationTools(engine);
-    const interactionTools = new InteractionTools(engine, this);
-    const extractionTools = new ExtractionTools(engine);
-    const networkTools = new NetworkTools(engine);
-    const storageTools = new StorageTools(engine);
-    const shadowTools = new ShadowTools(engine);
-    const frameTools = new FrameTools(engine);
-    const permissionTools = new PermissionTools(engine);
-    const clipboardTools = new ClipboardTools(engine);
-    const serviceWorkerTools = new ServiceWorkerTools(engine);
-    const performanceTools = new PerformanceTools(engine);
-    const structuredExtractionTools = new StructuredExtractionTools(engine);
-    const waitTools = new WaitTools(engine);
+    const interactionTools = new InteractionTools(proxy, this);
+    const extractionTools = new ExtractionTools(proxy);
+    const networkTools = new NetworkTools(proxy);
+    const storageTools = new StorageTools(proxy);
+    const shadowTools = new ShadowTools(proxy);
+    const frameTools = new FrameTools(proxy);
+    const permissionTools = new PermissionTools(proxy);
+    const clipboardTools = new ClipboardTools(proxy);
+    const serviceWorkerTools = new ServiceWorkerTools(proxy);
+    const performanceTools = new PerformanceTools(proxy);
+    const structuredExtractionTools = new StructuredExtractionTools(proxy);
+    const waitTools = new WaitTools(proxy);
     const compoundTools = new CompoundTools(engine);
     const downloadTools = new DownloadTools(this);
     const pdfTools = new PdfTools(this);
@@ -456,6 +465,12 @@ export class SafariPilotServer {
         }
         throw err;
       }
+    }
+
+    // 7b. Set engine proxy delegate so the tool actually uses the selected engine
+    if (this.engineProxy) {
+      const selectedEngine = this.engines.get(selectedEngineName) || this._engine!;
+      this.engineProxy.setDelegate(selectedEngine);
     }
 
     // 8. Execute the tool, record circuit breaker outcome, and audit
