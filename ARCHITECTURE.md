@@ -1,6 +1,6 @@
 # Safari Pilot Architecture — Canonical Source of Truth
 
-*Last verified: 2026-04-16 | Branch: feat/file-download-handling | Commit: 35976fc*
+*Last verified: 2026-04-16 | Branch: feat/file-download-handling | Commit: 9a660aa*
 
 **This document describes how Safari Pilot ACTUALLY works as shipped. Every statement is backed by verified evidence. If code changes contradict this document, either the code is wrong or this document must be updated — never silently diverge.**
 
