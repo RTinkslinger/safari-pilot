@@ -49,7 +49,6 @@ export class DaemonEngine extends BaseEngine {
   private reconnectAttempted = false;
   private shuttingDown = false;
   private useTcp = false;
-  private _ensurePromise: Promise<void> | null = null;
 
   constructor(options?: DaemonEngineOptions | string) {
     super();

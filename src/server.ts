@@ -512,6 +512,19 @@ export class SafariPilotServer {
         result.metadata.engine = selectedEngineName;
       }
 
+      // Embed engine in text content so benchmark tracking works even when
+      // Claude CLI strips _meta from stream-json output
+      if (result.content?.[0]?.type === 'text' && result.content[0].text) {
+        try {
+          const parsed = JSON.parse(result.content[0].text);
+          parsed.__engine = selectedEngineName;
+          parsed.__latencyMs = Date.now() - start;
+          result.content[0].text = JSON.stringify(parsed);
+        } catch {
+          // content is not JSON — leave as-is
+        }
+      }
+
       return result;
     } catch (error) {
       this.circuitBreaker.recordFailure(domain);

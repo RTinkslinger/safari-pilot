@@ -6,6 +6,77 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Safari Pilot is a native Safari browser automation framework for AI agents on macOS. It exposes 76 tools via MCP (stdio), letting Claude Code control Safari directly through AppleScript, a persistent Swift daemon, or a Safari Web Extension — no Chrome needed.
 
+## Ways of Working
+
+### 1. Think Before Coding
+
+- State assumptions explicitly. Uncertain? Ask.
+- Search for verifiable facts before proposing — never reason from memory.
+- Present multiple interpretations with tradeoffs. Never pick silently.
+- Simpler approach exists? Say so. Push back when warranted.
+- Unclear? Stop. Name the confusion. Ask.
+- Read ARCHITECTURE.md, CLAUDE.md, and source files BEFORE proposing. Unread = unknown.
+- "Tests pass" ≠ "feature works." Know the difference.
+
+### 2. Simplicity First
+
+- No abstractions for single-use code. No unrequested flexibility.
+- No error handling for impossible scenarios.
+- 200 lines that could be 50? Rewrite.
+- Three similar lines > premature abstraction.
+- Ship complete or don't ship. No half-finished implementations.
+- If a senior engineer would call it overcomplicated, simplify.
+
+### 3. Surgical Changes
+
+- Touch only what the request requires.
+- Don't "improve" adjacent code, comments, or formatting.
+- Don't refactor what isn't broken. Match existing style.
+- Unrelated dead code or bugs? Flag them — don't silently fix or delete.
+- Remove only orphans YOUR changes created. Never pre-existing dead code.
+- Every changed line must trace to the user's request.
+
+### 4. Goal-Driven Execution
+
+Transform tasks into verifiable goals:
+- "Add validation" → write tests for invalid inputs, make them pass
+- "Fix the bug" → write reproducing test, make it pass
+- "Refactor X" → tests pass before and after
+
+Multi-step tasks get a plan:
+```
+1. [Step] → verify: [check]
+2. [Step] → verify: [check]
+```
+
+Strong success criteria = independent looping. Weak criteria = constant clarification.
+
+### 5. Verify Against Reality
+
+Every claim needs evidence from THIS session:
+- "X works" → run it, show output, verify it matches expectations.
+- "Tests pass" → run them, show count, read any failures.
+- "Component is wired" → grep the call site. No hit = not wired.
+- "Architecture is correct" → trace actual data flow through actual files, not what docs claim.
+- Claims go stale after code changes. Re-verify.
+- Mocks prove the mock works. Only real execution proves the system works.
+
+### 6. Test What Ships
+
+- E2E = shipped architecture: which engine ran, which security layers fired, what users experience.
+- "Tool returns result" = functional test. "Tool routes through correct engine + security layers" = architecture test. Both needed.
+- Litmus: delete a critical component — does any test fail? No → suite incomplete.
+- Never lower thresholds, skip tests, or mock broken paths to hide failures. Investigate root causes.
+- Verify tests FAIL when the thing they test breaks. Always-passing tests test nothing.
+
+### 7. Own Mistakes
+
+- False claim? Correct it. Identify what led to it.
+- Code broken? Say so. Don't reframe as "limitation" or "roadmap item."
+- Tests pass but feature broken? Tests are wrong.
+- User catches something you missed? Identify the skipped check. Add it to your process.
+- Disagreements resolved with evidence, not assertions.
+
 ## Commands
 
 ```bash
@@ -55,7 +126,7 @@ Nine sequential layers run before every tool execution in `server.ts`:
 6. **IdpiScanner** — indirect prompt injection detection in extracted text
 7. **HumanApproval** — flags sensitive actions on untrusted domains
 8. **AuditLog** — records every tool call (params redacted for passwords)
-9. **ScreenshotRedaction** — blurs cross-origin iframes, redacts password fields
+9. **ScreenshotRedaction** — attaches CSS blur script for cross-origin iframes and banking domains (metadata-only; caller must apply the script)
 
 ### Tool Module Pattern
 

@@ -407,14 +407,60 @@ async function main(): Promise<void> {
   }
   console.log(`Loaded ${tasks.length} tasks from ${TASKS_DIR}`);
 
-  // Build v1 preflight — hardcoded: all basic tools available, applescript+daemon healthy,
-  // no auth domains needed, competitiveReady from config flag.
+  // Preflight: probe actual engine availability via the daemon socket
+  const healthyEngines: string[] = ['applescript'];
+  try {
+    const net = await import('node:net');
+    const probeResult = await new Promise<string>((resolve) => {
+      const sock = net.createConnection({ host: '127.0.0.1', port: 19474 }, () => {
+        sock.write('{"id":"preflight-ping","method":"ping"}\n');
+        let buf = '';
+        sock.on('data', (d: Buffer) => {
+          buf += d.toString();
+          if (buf.includes('\n')) {
+            sock.destroy();
+            resolve(buf.split('\n')[0]);
+          }
+        });
+      });
+      sock.on('error', () => resolve(''));
+      sock.setTimeout(500, () => { sock.destroy(); resolve(''); });
+    });
+    if (probeResult) {
+      const parsed = JSON.parse(probeResult);
+      if (parsed.ok) {
+        healthyEngines.push('daemon');
+        // Check extension status
+        const extResult = await new Promise<string>((resolve) => {
+          const sock = net.createConnection({ host: '127.0.0.1', port: 19474 }, () => {
+            sock.write('{"id":"preflight-ext","method":"extension_status"}\n');
+            let buf = '';
+            sock.on('data', (d: Buffer) => {
+              buf += d.toString();
+              if (buf.includes('\n')) { sock.destroy(); resolve(buf.split('\n')[0]); }
+            });
+          });
+          sock.on('error', () => resolve(''));
+          sock.setTimeout(500, () => { sock.destroy(); resolve(''); });
+        });
+        if (extResult) {
+          const extParsed = JSON.parse(extResult);
+          if (extParsed.ok && extParsed.value === 'connected') {
+            healthyEngines.push('extension');
+          }
+        }
+      }
+    }
+  } catch { /* probe failed, stick with applescript only */ }
+
+  console.log(`Healthy engines: ${healthyEngines.join(', ')}`);
+
   const preflight: PreflightResult = {
     availableTools: ALL_SAFARI_TOOLS,
-    healthyEngines: ['applescript', 'daemon'],
+    healthyEngines,
     authenticatedDomains: [],
     competitiveReady: config.competitive,
-    fixtureServerRunning: false, // will be updated after fixture server starts
+    fixtureServerRunning: false,
   };
 
   // Filter tasks

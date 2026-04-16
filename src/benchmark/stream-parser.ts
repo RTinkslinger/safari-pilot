@@ -194,6 +194,8 @@ export function extractArchitectureTrace(events: StreamEvent[]): ArchitectureTra
           try {
             const inner = JSON.parse(dict['text'] as string);
             if (inner?.error) success = false;
+            if (inner?.__engine && engine === 'unknown') engine = inner.__engine;
+            if (inner?.__latencyMs !== undefined && latencyMs === 0) latencyMs = inner.__latencyMs;
           } catch { /* not JSON */ }
         }
         for (const v of Object.values(dict)) {
