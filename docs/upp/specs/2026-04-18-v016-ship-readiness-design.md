@@ -24,6 +24,9 @@ Safari Pilot v0.1.6 was merged to main with the HTTP short-poll IPC pivot and ev
 - HTTP error counters (`httpBindFailureCount`, `httpRequestErrorCount1h`) in HealthStore
 - Structured READY log (`HTTP_READY port=19475` / `HTTP_BIND_FAILED port=19475`)
 - Daemon startup self-test (verify HTTP:19475 is serving after start)
+- Update ARCHITECTURE.md to document new health fields and startup sequence
+- Update CLAUDE.md test count (700+ → actual count)
+- Extend `health-check.sh` to parse new health fields
 
 **Explicitly NOT in scope:**
 - npm publish (manual step after user verifies in Safari)
@@ -32,20 +35,21 @@ Safari Pilot v0.1.6 was merged to main with the HTTP short-poll IPC pivot and ev
 - HTML dashboard for benchmark/test results
 - Long-poll timeout tests or concurrent poll stress tests
 - Benchmark runner changes (already has structured output)
+- Universal binary build (local rebuild is host-arch only; CI pipeline handles universal via release.yml)
 
 ## 3. Architecture
 
-### Execution Order (Approach A: Sequential Pipeline)
+### Execution Order (Optimized Sequential Pipeline)
 
 ```
-Subsystem A: Rebuild Pipeline
-  src/index.ts version fix → npm build → daemon rebuild → extension build
-  → artifact verification → extension smoke test → GitHub Release draft
-          │
+Subsystem C: Observability Hardening (code only, no rebuild yet)
+  HealthStore HTTP counters → ExtensionHTTPServer onServerRunning callback
+  → self-test wiring → swift build --package-path daemon (compile gate)
+          │ compile gate passes
           ▼
-Subsystem C: Observability Hardening
-  HealthStore HTTP counters → ExtensionHTTPServer READY callback
-  → daemon startup self-test → rebuild daemon (incorporates changes)
+Subsystem A: Rebuild Pipeline (incorporates C's changes)
+  src/index.ts version fix → npm build → daemon rebuild (includes C)
+  → extension build → artifact verification → smoke test → GitHub Release draft
           │
           ▼
 Subsystem B: Test Result Capture
@@ -53,9 +57,9 @@ Subsystem B: Test Result Capture
   → verification run → confirm seed data files exist
 ```
 
-Subsystem A must come first — correct binaries are prerequisite for meaningful test runs and observability verification. Subsystem C modifies daemon Swift code, requiring a second daemon rebuild. Subsystem B is a vitest config change with no production code impact.
+**Why C before A:** Subsystem C modifies daemon Swift code. By coding C first and verifying it compiles (`swift build --package-path daemon`), we incorporate C's changes into A's single daemon rebuild. This avoids rebuilding the daemon twice. The compile gate (`swift build` succeeds) must pass before A proceeds — if C introduces compile errors, they're caught immediately before touching the build pipeline.
 
-**Optimization:** Subsystem C's daemon changes can be coded before Subsystem A's rebuild, so only ONE daemon rebuild is needed (incorporating both the merged main code AND the new observability code). The sequence becomes: C code changes → A rebuild (includes C) → A verification → B test capture.
+**Distribution personas:** Git-clone users and npm users receive updated daemon + extension when the GitHub Release draft is promoted (manual step) and `npm publish` is run (out of scope). No additional work needed beyond the existing release + publish pipeline.
 
 ### Data Flow
 
@@ -75,9 +79,10 @@ benchmark run (existing, unchanged)
 health-check.sh (hourly LaunchAgent)
   │
   ├── TCP:19474 probe → extension_health JSON → parse counters
-  │   (now includes: httpBindFailureCount, httpRequestErrorCount1h)
-  ├── HTTP:19475 probe → curl status code
-  └── ~/.safari-pilot/health.log (append-only log line)
+  │   (existing: roundtripCount1h, timeoutCount1h, uncertainCount1h, forceReloadCount24h)
+  │   (new: httpBindFailureCount, httpRequestErrorCount1h)
+  ├── HTTP:19475 probe → curl status code (already added)
+  └── ~/.safari-pilot/health.log (append-only log line with all fields)
 ```
 
 ## 4. Subsystem A: Rebuild Pipeline
@@ -100,7 +105,9 @@ Verify: `dist/index.js` exists, `grep '0.1.6' dist/index.js` confirms version.
 bash scripts/update-daemon.sh
 ```
 
-This script: builds universal binary (arm64 + x86_64), atomic swap of `bin/SafariPilotd`, `launchctl` restart of the LaunchAgent. The binary now includes Hummingbird and the ExtensionHTTPServer.
+This script: builds for host architecture (`swift build -c release` — ARM64 on this machine, NOT universal), does `launchctl stop` → build → atomic `mv` swap of `bin/SafariPilotd` → `launchctl unload` → `launchctl load` → `launchctl kickstart`. The binary now includes Hummingbird, ExtensionHTTPServer, and Subsystem C's observability changes.
+
+**Note:** This produces an ARM64-only binary. Universal binary (ARM64 + x86_64 via `lipo`) is handled by the CI release pipeline (`release.yml`) on tag push, not by the local dev rebuild script. The GitHub Release draft will contain an ARM64-only binary; the CI pipeline replaces it with a universal binary when the tag is pushed.
 
 Verify: `./bin/SafariPilotd --version` reports `0.1.6`.
 
@@ -110,27 +117,40 @@ Verify: `./bin/SafariPilotd --version` reports `0.1.6`.
 bash scripts/build-extension.sh
 ```
 
-This script: Xcode archive → export → codesign → notarize → staple → copy to `bin/Safari Pilot.app`. Per CLAUDE.md hard rules: never bypass this script, never use manual codesign, version syncs from package.json, build number is timestamp-based.
+This script: generate Xcode project → replace handler with stub → strip DEBUG blocks → patch pbxproj → create entitlements → archive → export → copy to bin/ → verify signature → notarize → Gatekeeper check. Per CLAUDE.md hard rules: never bypass this script, never use manual codesign, version syncs from package.json, build number is timestamp-based.
 
 Verify: `codesign -d --entitlements - "bin/Safari Pilot.app"` shows `app-sandbox`.
 
 ### 4.5 Artifact Verification
 
-Extend `scripts/verify-artifact-integrity.sh` with HTTP-specific checks:
-- `bin/Safari Pilot.app/.../background.js` contains `fetch(` and `127.0.0.1:19475`
-- `bin/Safari Pilot.app/.../background.js` does NOT contain `sendNativeMessage`
-- `bin/Safari Pilot.app/.../manifest.json` contains `connect-src` with `127.0.0.1:19475`
-- `bin/Safari Pilot.app/.../manifest.json` version is `0.1.6`
+Extend `scripts/verify-artifact-integrity.sh` with HTTP-specific checks. The background.js inside the .app is at `bin/Safari Pilot.app/Contents/PlugIns/Safari Pilot Extension.appex/Contents/Resources/background.js`. Add checks:
 
-Run the extended script. All checks must pass.
+```bash
+BG_PATH="bin/Safari Pilot.app/Contents/PlugIns/Safari Pilot Extension.appex/Contents/Resources/background.js"
+MANIFEST_PATH="bin/Safari Pilot.app/Contents/PlugIns/Safari Pilot Extension.appex/Contents/Resources/manifest.json"
+
+# HTTP IPC checks
+grep -q 'fetch(' "$BG_PATH" || { echo "FAIL: background.js missing fetch()"; exit 1; }
+grep -q '127.0.0.1:19475' "$BG_PATH" || { echo "FAIL: background.js missing HTTP URL"; exit 1; }
+grep -q 'sendNativeMessage' "$BG_PATH" && { echo "FAIL: background.js still has sendNativeMessage"; exit 1; }
+grep -q 'connect-src' "$MANIFEST_PATH" || { echo "FAIL: manifest.json missing CSP connect-src"; exit 1; }
+```
+
+Append these to the existing script after the current checks. Run the extended script. All checks must pass.
 
 ### 4.6 Extension Smoke Test
 
+**Note:** `scripts/verify-extension-smoke.sh` has 6 steps — steps 1-5 rebuild TypeScript, daemon, and extension from scratch, then step 6 runs 5 e2e tests. Since steps 4.2-4.4 already rebuilt everything, running the full smoke script would double-build (~10-15 min wasted on notarization alone).
+
+**Solution:** Run only the e2e test step directly:
+
 ```bash
-bash scripts/verify-extension-smoke.sh
+npx vitest run test/e2e/mcp-handshake.test.ts test/e2e/extension-engine.test.ts \
+  test/e2e/extension-lifecycle.test.ts test/e2e/extension-health.test.ts \
+  test/e2e/commit-1a-shippable.test.ts test/e2e/http-roundtrip.test.ts
 ```
 
-Runs 5 critical e2e tests against the rebuilt artifacts. Must all pass.
+All 6 e2e test files must pass. This verifies the already-built artifacts without rebuilding.
 
 ### 4.7 GitHub Release Draft
 
@@ -138,46 +158,153 @@ Runs 5 critical e2e tests against the rebuilt artifacts. Must all pass.
 cd bin && zip -r "Safari Pilot.zip" "Safari Pilot.app"
 gh release create v0.1.6 --draft \
   --title "v0.1.6 — HTTP Short-Poll IPC + Event-Page Lifecycle" \
-  --notes "..." \
+  --notes-file /dev/stdin <<'NOTES'
+## What's New
+
+- **HTTP short-poll IPC**: Extension communicates with daemon via fetch() to localhost:19475 (Hummingbird). Replaces sendNativeMessage → handler → TCP proxy.
+- **Reconcile protocol**: 5-case classification (acked/uncertain/reQueued/inFlight/pushNew) for reliable command delivery across event page kills.
+- **Event-page lifecycle**: MV3 event page (persistent:false) with storage-backed queue, alarm keepalive, and drain-on-wake.
+- **Observability**: HTTP error counters, structured READY log, startup self-test, health check HTTP probe.
+
+## Artifacts
+
+- `SafariPilotd` — ARM64 daemon binary (universal binary available from CI on tag push)
+- `Safari Pilot.zip` — Signed + notarized extension .app
+
+## Note
+
+This is a draft release. Promote to published after manual Safari verification.
+NOTES
   bin/SafariPilotd \
   "bin/Safari Pilot.zip"
 ```
 
-Draft release — not published until user manually promotes after Safari verification.
+**Rollback:** If artifacts are broken after promotion, `gh release delete v0.1.6` removes the release. Previous version (v0.1.5) remains available.
 
 ## 5. Subsystem C: Observability Hardening
 
 ### 5.1 HTTP Error Counters in HealthStore
 
-Add two new fields to `HealthStore`:
-- `httpBindFailureCount: Int` — incremented when HTTP server fails to bind port. Persisted (survives daemon restart).
-- `httpRequestErrorCount1h: Int` — rolling 1-hour window counter for HTTP request errors (5xx responses, malformed request bodies). In-memory only (like existing `roundtripCount1h`).
+Add two new fields to `HealthStore` (`daemon/Sources/SafariPilotdCore/HealthStore.swift`):
 
-Exposed in `healthSnapshot()` return dictionary alongside existing counters.
+**`httpBindFailureCount: Int`** — Persisted (survives daemon restart).
+- Add `httpBindFailureCount: Int` to the `PersistedState` Codable struct (currently has `lastAlarmFireTimestamp` and `forceReloadTimestamps`)
+- Make it optional in `PersistedState` with default `0` for backward compatibility with existing `~/.safari-pilot/health.json` files that don't have this field
+- Update `init(persistPath:)` decoder to read it (with fallback to 0)
+- Update `persist()` method to include it
+- Add public `func recordHttpBindFailure()` method (increments + persists)
+
+**`httpRequestErrorCount1h: Int`** — In-memory rolling 1-hour window (like existing `roundtripCount1h`).
+- Add `private var httpRequestErrorTimestamps: [Date] = []` (same pattern as `roundtripTimestamps`)
+- Add public computed var `httpRequestErrorCount1h` that filters to last 60 minutes
+- Add public `func recordHttpRequestError()` method
+- Counting mechanism: Add a Hummingbird middleware to ExtensionHTTPServer that calls `healthStore.recordHttpRequestError()` for any response with status >= 500
+
+**Wiring into health snapshot:** Update `ExtensionBridge.healthSnapshot(store:)` (at `daemon/Sources/SafariPilotdCore/ExtensionBridge.swift:415`) to include both new fields in the returned dictionary:
+```swift
+"httpBindFailureCount": store.httpBindFailureCount,
+"httpRequestErrorCount1h": store.httpRequestErrorCount1h,
+```
+
+**Wiring into health-check.sh:** Add extraction lines following the existing pattern (lines 16-19 of `scripts/health-check.sh`):
+```bash
+HTTP_BIND_FAIL=$(echo "$HEALTH_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('value',{}).get('httpBindFailureCount',0))" 2>/dev/null || echo "0")
+HTTP_REQ_ERR=$(echo "$HEALTH_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('value',{}).get('httpRequestErrorCount1h',0))" 2>/dev/null || echo "0")
+```
+
+Add to log line and breach detection.
 
 ### 5.2 ExtensionHTTPServer READY Callback
 
-Add a callback mechanism from ExtensionHTTPServer to the caller (main.swift):
-- On successful Hummingbird bind: `Logger.info("HTTP_READY port=19475")`
-- On bind failure: `Logger.error("HTTP_BIND_FAILED port=19475 error=\(error)")` + increment `healthStore.httpBindFailureCount`
+Use Hummingbird's `onServerRunning` lifecycle callback — this is the built-in API that fires exactly when the server socket is bound and listening. It's passed as a parameter to the `Application` constructor.
 
-Implementation: ExtensionHTTPServer.start() currently logs internally. Add two closure properties to ExtensionHTTPServer: `var onReady: (() -> Void)?` and `var onBindFailure: ((Error) -> Void)?`. Set them in main.swift before calling `start()`. Inside the server Task, call `onReady?()` after `app.runService()` begins (use a small delay or Hummingbird's lifecycle hook), and call `onBindFailure?(error)` in the catch block.
+**Implementation in ExtensionHTTPServer.swift:**
+
+```swift
+// In start(), modify the Application constructor:
+let app = Application(
+    router: router,
+    configuration: ApplicationConfiguration(
+        address: .hostname("127.0.0.1", port: Int(port)),
+        serverName: "SafariPilot-ExtHTTP"
+    ),
+    onServerRunning: { channel in
+        Logger.info("HTTP_READY port=\(self.port)")
+        self.onReady?()
+    }
+)
+```
+
+**In the catch block** (existing line 70):
+```swift
+} catch {
+    Logger.error("HTTP_BIND_FAILED port=\(port) error=\(error)")
+    self.onBindFailure?(error)
+}
+```
+
+**Closure properties on ExtensionHTTPServer:**
+```swift
+public var onReady: (() -> Void)?
+public var onBindFailure: ((Error) -> Void)?
+```
+
+**Wiring in main.swift** (before `httpServer.start()`):
+```swift
+httpServer.onReady = {
+    // Run self-test (Section 5.3)
+}
+httpServer.onBindFailure = { error in
+    healthStore.recordHttpBindFailure()
+}
+```
+
+**Thread safety note:** The closures are set once before `start()` and called from the server Task. Since they're set-once-read-once, no synchronization is needed beyond the `@unchecked Sendable` annotation the class already has.
 
 ### 5.3 Daemon Startup Self-Test
 
-After HTTP server `start()` returns and a brief delay (500ms for Hummingbird to bind):
-- Attempt `URLSession` GET to `http://127.0.0.1:19475/poll`
-- Expected: 204 (no pending commands)
-- Log: `HTTP_SELF_TEST pass` or `HTTP_SELF_TEST fail error=<msg>`
-- On failure: increment `healthStore.httpBindFailureCount`
+Wire the self-test to the `onReady` callback (NOT a 500ms delay — eliminates race condition):
 
-This runs once at daemon startup. It's a sanity check, not a continuous monitor (the hourly health-check.sh handles ongoing monitoring).
+```swift
+httpServer.onReady = {
+    // Self-test: verify HTTP server is actually serving
+    Task {
+        do {
+            let url = URL(string: "http://127.0.0.1:\(19475)/poll")!
+            let (_, response) = try await URLSession.shared.data(from: url)
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            if status == 200 || status == 204 {
+                Logger.info("HTTP_SELF_TEST pass status=\(status)")
+            } else {
+                Logger.warning("HTTP_SELF_TEST unexpected status=\(status)")
+            }
+        } catch {
+            Logger.error("HTTP_SELF_TEST fail error=\(error)")
+            healthStore.recordHttpBindFailure()
+        }
+    }
+}
+```
+
+Accepts both 200 (commands pending) and 204 (no commands) as passing. The bridge is freshly initialized so 204 is expected, but 200 is not an error.
+
+This runs once at daemon startup. Non-blocking (Task). Non-fatal (logging only, no process exit).
 
 ### 5.4 Tests
 
-- Unit test: HealthStore has `httpBindFailureCount` and `httpRequestErrorCount1h` fields
-- Unit test: healthSnapshot includes the new fields with correct types
-- Integration test: ExtensionHTTPServer calls onReady callback after start
+- Unit test: HealthStore has `httpBindFailureCount` and `httpRequestErrorCount1h` fields, increments correctly
+- Unit test: `ExtensionBridge.healthSnapshot(store:)` includes new fields with correct types (number, not null)
+- Integration test: ExtensionHTTPServer calls `onReady` callback after start (start server on test port, verify callback fires within 2s)
+
+### 5.5 Compile Gate
+
+After all C code changes are written, before proceeding to Subsystem A:
+
+```bash
+cd daemon && swift build
+```
+
+If this fails, fix C's code before touching the rebuild pipeline. This prevents C from blocking A.
 
 ## 6. Subsystem B: Test Result Capture
 
@@ -186,51 +313,55 @@ This runs once at daemon startup. It's a sanity check, not a continuous monitor 
 Update `vitest.config.ts`:
 
 ```typescript
+import { defineConfig } from 'vitest/config';
+
 export default defineConfig({
   test: {
+    globals: true,
+    environment: 'node',
+    include: ['test/**/*.test.ts'],
     reporters: [
-      'default',  // console output (unchanged)
+      'default',
       ['junit', { outputFile: `test-results/junit/${Date.now()}.xml` }],
       ['json', { outputFile: `test-results/json/${Date.now()}.json` }],
     ],
-    // ... existing config preserved
+    coverage: {
+      provider: 'v8',
+      include: ['src/**/*.ts'],
+    },
+    fileParallelism: false,
   },
 });
 ```
 
-All three reporters run simultaneously. Console output unchanged. XML and JSON files accumulate in `test-results/`.
+All three reporters run simultaneously. Console output unchanged. XML and JSON files accumulate in `test-results/`. The `Date.now()` evaluates at config load time — produces unique filenames for each `vitest run` invocation. Watch mode re-runs within the same process would overwrite the same file (acceptable — watch mode is for development, not result capture).
 
 ### 6.2 Directory Structure
 
-```
-test-results/
-├── junit/          # JUnit XML files (one per run, named by timestamp)
-├── json/           # JSON files (one per run, named by timestamp)
-└── .gitignore      # Contains: *
-```
-
-Add `test-results/` to project root `.gitignore`.
+Add `test-results/` to project root `.gitignore`. The directories are created automatically by vitest when it writes the first result file. No nested `.gitignore` needed — the root entry is sufficient.
 
 ### 6.3 Retention Policy
 
-Post-test cleanup script or vitest setup hook:
+Add a `posttest` script to `package.json`:
 
-```bash
-# Keep last 10 files in each directory (by mtime)
-ls -t test-results/junit/*.xml 2>/dev/null | tail -n +11 | xargs rm -f
-ls -t test-results/json/*.json 2>/dev/null | tail -n +11 | xargs rm -f
+```json
+"posttest": "ls -t test-results/junit/*.xml 2>/dev/null | tail -n +11 | xargs rm -f 2>/dev/null; ls -t test-results/json/*.json 2>/dev/null | tail -n +11 | xargs rm -f 2>/dev/null; true"
 ```
 
-Wired as a `posttest` script in package.json or as a vitest `globalTeardown` file.
+This runs after every `npm test` / `npm run test:unit` / etc. The `2>/dev/null` handles the case where the directory doesn't exist yet. The trailing `true` ensures the script exits 0 even if no files needed pruning. Direct `npx vitest run` calls won't trigger this — acceptable because retention is a convenience, not a correctness concern.
 
 ### 6.4 Verification
 
 After setup:
 1. Run `npm run test:unit`
-2. Confirm `test-results/junit/*.xml` exists, contains `<testsuite>` elements with ~1427 tests
-3. Confirm `test-results/json/*.json` exists, contains `numPassedTests: 1427`
-4. Run again, confirm 2 files in each directory
-5. Run 11 times, confirm oldest file was pruned (10 remain)
+2. Confirm `test-results/junit/*.xml` exists, contains `<testsuite>` elements
+3. Confirm `test-results/json/*.json` exists, has `numPassedTests` field
+4. Run again, confirm 2 files in each directory (both retained)
+
+### 6.5 Documentation Updates
+
+- Update CLAUDE.md line 88: change `700+ unit tests` to actual count from fresh run
+- Update ARCHITECTURE.md: add note about test result capture in `test-results/` and benchmark data in `benchmark/`
 
 ## 7. Success Criteria
 
@@ -240,24 +371,27 @@ After setup:
 | `dist/index.js` contains version 0.1.6 | grep |
 | `bin/Safari Pilot.app` background.js has HTTP fetch, no sendNativeMessage | verify-artifact-integrity.sh |
 | Extension entitlements include app-sandbox | codesign -d --entitlements |
-| Extension smoke tests pass (5/5) | verify-extension-smoke.sh exit 0 |
+| E2E tests pass (6 files) | vitest exit 0 |
 | GitHub Release v0.1.6 exists as draft with 2 artifacts | gh release view v0.1.6 |
-| `safari_extension_health` includes `httpBindFailureCount` and `httpRequestErrorCount1h` | MCP tool call or daemon test |
+| `safari_extension_health` includes `httpBindFailureCount` and `httpRequestErrorCount1h` | daemon test |
 | Daemon logs `HTTP_READY port=19475` on startup | daemon stderr |
 | Daemon logs `HTTP_SELF_TEST pass` on startup | daemon stderr |
-| `npm run test:unit` produces `test-results/junit/*.xml` | file exists |
-| `npm run test:unit` produces `test-results/json/*.json` | file exists |
-| Retention: 11th run prunes oldest file | ls -t count |
-| All 1427 unit tests pass | exit 0 |
-| All 68 daemon tests pass | exit 0 |
-| All e2e tests pass | exit 0 |
+| `npm run test:unit` produces `test-results/junit/*.xml` | file exists + content check |
+| `npm run test:unit` produces `test-results/json/*.json` | file exists + content check |
+| All unit tests pass | exit 0 |
+| All daemon tests pass | exit 0 |
+| ARCHITECTURE.md updated with new health fields | diff |
+| CLAUDE.md test count updated | diff |
 
 ## 8. Risks
 
 | Risk | Mitigation |
 |------|-----------|
 | Notarization fails (Apple service outage, credential expiry) | build-extension.sh retries. If persistent, fall back to "build without notarize" and notarize manually. |
-| Port 19475 already in use during daemon rebuild (system daemon running) | update-daemon.sh does launchctl unload → build → swap → launchctl load. Port freed during unload. |
+| Port 19475 already in use during daemon rebuild | update-daemon.sh does launchctl stop → build → swap → unload → load → kickstart. Port freed during stop. |
 | Vitest reporter config breaks existing test execution | Reporters are additive — default reporter preserved. JSON/JUnit are output-only, don't affect test behavior. |
 | Hummingbird API changes between builds | Package.swift pins `from: "2.0.0"` — resolved version is locked in Package.resolved. |
-| Self-test probe fails because HTTP server hasn't bound yet | 500ms delay before probe. Hummingbird typically binds in <100ms. If still fails, log warning but don't block daemon startup. |
+| C code changes introduce Swift compile errors blocking A | Compile gate (swift build) runs after C, before A. Fix C before proceeding. |
+| GitHub Release has ARM64-only binary | Expected for local dev builds. CI release pipeline (release.yml) produces universal binary on tag push. Draft release notes state this. |
+| Partial build failure (daemon OK, extension fails) | Each build step is independent. If extension notarization fails, daemon binary is already swapped and running. Retry extension build separately. |
+| Existing health.json missing new httpBindFailureCount field | PersistedState decoder uses optional with default 0. Backward compatible. |
