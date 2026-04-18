@@ -189,10 +189,10 @@ Add two new fields to `HealthStore` (`daemon/Sources/SafariPilotdCore/HealthStor
 
 **`httpBindFailureCount: Int`** — Persisted (survives daemon restart).
 - Add `httpBindFailureCount: Int` to the `PersistedState` Codable struct (currently has `lastAlarmFireTimestamp` and `forceReloadTimestamps`)
-- Declare as `var httpBindFailureCount: Int = 0` in `PersistedState` (Swift's synthesized Codable decoder uses the default value when the key is missing from JSON — backward compatible with existing health.json files that lack this field)
+- Declare as `var httpBindFailureCount: Int?` in `PersistedState` (Optional — Swift's synthesized Codable decoder decodes missing keys as `nil` for Optional properties. `var x: Int = 0` does NOT work — synthesized Codable always tries to decode non-Optional properties and throws `DecodingError.keyNotFound` if the key is missing, causing the entire decode to fail and ALL persisted state to be lost)
 - Add `private var _httpBindFailureCount: Int = 0` stored property to HealthStore (alongside existing `_lastAlarmFireTimestamp` at line 7)
-- Update `init(persistPath:)` to read: `self._httpBindFailureCount = state.httpBindFailureCount` (line ~33)
-- Update `persist()` to include it in `PersistedState` construction (line ~72)
+- Update `init(persistPath:)` to read: `self._httpBindFailureCount = state.httpBindFailureCount ?? 0` (line ~33, defaults nil to 0)
+- Update `persist()` to explicitly pass the value: `PersistedState(lastAlarmFireTimestamp: ..., forceReloadTimestamps: ..., httpBindFailureCount: _httpBindFailureCount)` (line ~72). Without this, the synthesized memberwise init would pass `nil` (the Optional's default), resetting the counter to 0 on every persist call from `recordAlarmFire()` or `incrementForceReload()`.
 - Add public computed var `httpBindFailureCount: Int { queue.sync { _httpBindFailureCount } }`
 - Add public `func recordHttpBindFailure()` method (increments `_httpBindFailureCount` under queue + calls `persist()`)
 
@@ -200,7 +200,7 @@ Add two new fields to `HealthStore` (`daemon/Sources/SafariPilotdCore/HealthStor
 - Add `private var httpRequestErrorTimestamps: [Date] = []` (same pattern as `roundtripTimestamps`)
 - Add public computed var `httpRequestErrorCount1h` that filters to last 60 minutes
 - Add public `func recordHttpRequestError()` method
-- Counting mechanism: increment directly in `ExtensionHTTPServer.jsonResponse()` when `status.code >= 500`. This function is already the centralized response builder for all error paths (line 231). Add `if status.code >= 500 { healthStore.recordHttpRequestError() }` before the return. No middleware needed — simpler and catches all error responses.
+- Counting mechanism: increment directly in `ExtensionHTTPServer.jsonResponse()` when `status.code >= 500`. This function is already the centralized response builder for all error paths (line 231). Add `if status.code >= 500 { healthStore.recordHttpRequestError() }` before the return. ALSO add `healthStore.recordHttpRequestError()` in the JSON serialization fallback path (line 235-242) which returns `.internalServerError` directly — without this, serialization failures bypass the counter. No middleware needed — simpler and catches all error responses including the fallback.
 
 **Wiring into health snapshot:** Update `ExtensionBridge.healthSnapshot(store:)` (at `daemon/Sources/SafariPilotdCore/ExtensionBridge.swift:415`). Insert after the `"forceReloadCount24h"` line (line 439) to group HealthStore-sourced counters together:
 ```swift
@@ -214,7 +214,12 @@ HTTP_BIND_FAIL=$(echo "$HEALTH_JSON" | python3 -c "import sys,json; d=json.load(
 HTTP_REQ_ERR=$(echo "$HEALTH_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('value',{}).get('httpRequestErrorCount1h',0))" 2>/dev/null || echo "0")
 ```
 
-Add to log line and breach detection.
+Add to log line (format: `... hbf=$HTTP_BIND_FAIL hre=$HTTP_REQ_ERR`) and breach detection:
+```bash
+if [[ "$HTTP_BIND_FAIL" -gt 0 ]]; then BREACH="$BREACH http-bind-failure"; fi
+if [[ "$HTTP_REQ_ERR" -gt 5 ]]; then BREACH="$BREACH http-request-errors"; fi
+```
+Threshold: `httpBindFailureCount > 0` is always a breach (any bind failure means HTTP server is down). `httpRequestErrorCount1h > 5` allows occasional transient errors.
 
 ### 5.2 ExtensionHTTPServer READY Callback
 
@@ -289,17 +294,27 @@ httpServer.start()
 
 ### 5.3 Daemon Startup Self-Test
 
-Wire the self-test to the `onReady` callback (NOT a 500ms delay — eliminates race condition). Since `onReady` is now `async`, the self-test runs in structured concurrency within the `onServerRunning` context — no unstructured Task needed:
+Wire the self-test to the `onReady` callback (NOT a 500ms delay — eliminates race condition). Since `onReady` is now `async`, the self-test runs in structured concurrency within the `onServerRunning` context — no unstructured Task needed.
+
+**IMPORTANT:** Do NOT use `GET /poll` for the self-test. `handlePoll()` uses a 5-second long-poll hold (`pollWaitTimeout: 5.0`), meaning the self-test would block for 5 seconds on every daemon startup. Use `POST /connect` instead — it returns immediately with a reconcile response and is a better health indicator (tests JSON parsing, bridge access, and reconcile logic):
 
 ```swift
 // In main.swift, the onReady closure passed to ExtensionHTTPServer init:
 onReady: {
     // Self-test: verify HTTP server is actually serving
+    // Uses POST /connect (instant response) instead of GET /poll (5s long-hold)
     do {
-        let url = URL(string: "http://127.0.0.1:19475/poll")!
-        let (_, response) = try await URLSession.shared.data(from: url)
+        let url = URL(string: "http://127.0.0.1:19475/connect")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: [
+            "executedIds": [] as [String],
+            "pendingIds": [] as [String],
+        ])
+        let (_, response) = try await URLSession.shared.data(for: request)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-        if status == 200 || status == 204 {
+        if status == 200 {
             Logger.info("HTTP_SELF_TEST pass status=\(status)")
         } else {
             Logger.warning("HTTP_SELF_TEST unexpected status=\(status)")
@@ -311,9 +326,9 @@ onReady: {
 }
 ```
 
-Accepts both 200 (commands pending) and 204 (no commands) as passing. The bridge is freshly initialized so 204 is expected, but 200 is not an error.
+Note: The self-test `POST /connect` will set `isConnected=true` and trigger a reconcile with empty IDs. This is harmless — the real extension connection will overwrite the state on its next connect. The self-test's reconcile response will have all empty arrays (no commands pending at startup).
 
-This runs once at daemon startup within the `onServerRunning` async context. Non-fatal (logging only, no process exit). `URLSession.shared.data(from:)` is available from macOS 12+; the self-test only runs inside the macOS 14+ guard so availability is guaranteed.
+This runs once at daemon startup within the `onServerRunning` async context. Non-fatal (logging only, no process exit). Returns in <10ms (no long-poll hold). `URLSession.shared.data(for:)` is available from macOS 12+; the self-test only runs inside the macOS 14+ guard so availability is guaranteed.
 
 ### 5.4 Tests
 
@@ -369,21 +384,27 @@ Add `test-results/` to project root `.gitignore`. The directories are created au
 
 **npm lifecycle constraint:** `posttest` only fires after the exact `test` script, NOT after `test:unit`, `test:e2e`, etc. (npm matches script names exactly). And `npm test` starts vitest in watch mode (never exits cleanly), so `posttest` would never fire in practice.
 
-**Solution:** Use vitest's `globalTeardown` config option — runs after every vitest invocation regardless of which npm script triggered it:
+**Solution:** Use vitest's `globalSetup` config with a named `teardown` export. Vitest does NOT have a `globalTeardown` config key — the `globalSetup` file can export a `teardown` function that runs after all tests complete.
 
-Create `test/teardown-retention.ts`:
+Create `test/setup-retention.ts`:
 ```typescript
-export default function () {
-  const { execSync } = require('node:child_process');
+import { execSync } from 'node:child_process';
+
+// No setup needed — only teardown for retention pruning
+export function setup() {}
+
+export function teardown() {
   try {
     execSync('ls -t test-results/junit/*.xml 2>/dev/null | tail -n +11 | xargs rm -f 2>/dev/null; ls -t test-results/json/*.json 2>/dev/null | tail -n +11 | xargs rm -f 2>/dev/null', { shell: '/bin/bash' });
-  } catch { /* no files to prune */ }
+  } catch { /* no files to prune — directory may not exist yet */ }
 }
 ```
 
+Note: uses `import` (not `require`) because the project is ESM (`"type": "module"` in package.json).
+
 Add to `vitest.config.ts`:
 ```typescript
-globalTeardown: ['./test/teardown-retention.ts'],
+globalSetup: ['./test/setup-retention.ts'],
 ```
 
 This fires after `npm run test:unit`, `npm run test:e2e`, `npx vitest run`, and any other vitest invocation. It does NOT fire in watch mode re-runs (only on process exit), which is acceptable — watch mode is for development, not result capture.
