@@ -76,7 +76,7 @@ describe('ExtensionEngine', () => {
       expect(await engine.isAvailable()).toBe(true);
     });
 
-    it('returns false when daemon reports "disconnected"', async () => {
+    it('returns true when daemon reports "disconnected" (event-page dormant but daemon queues)', async () => {
       const daemon = makeMockDaemon(async () => ({
         ok: true,
         value: 'disconnected',
@@ -84,7 +84,7 @@ describe('ExtensionEngine', () => {
       }));
       const engine = new ExtensionEngine(daemon);
 
-      expect(await engine.isAvailable()).toBe(false);
+      expect(await engine.isAvailable()).toBe(true);
     });
 
     it('returns false when daemon returns ok:false (daemon error)', async () => {
@@ -107,7 +107,7 @@ describe('ExtensionEngine', () => {
       expect(await engine.isAvailable()).toBe(false);
     });
 
-    it('returns false for unexpected value (neither "connected" nor "disconnected")', async () => {
+    it('returns true for any ok:true response (daemon reachable = extension functionally available)', async () => {
       const daemon = makeMockDaemon(async () => ({
         ok: true,
         value: 'unknown-state',
@@ -115,8 +115,7 @@ describe('ExtensionEngine', () => {
       }));
       const engine = new ExtensionEngine(daemon);
 
-      // Only "connected" is truthy — anything else means unavailable
-      expect(await engine.isAvailable()).toBe(false);
+      expect(await engine.isAvailable()).toBe(true);
     });
   });
 
@@ -137,14 +136,14 @@ describe('ExtensionEngine', () => {
       expect(payload).toHaveProperty('script', 'return document.title');
     });
 
-    it('forwards timeout parameter to daemon.execute()', async () => {
+    it('enforces 90s minimum timeout for event-page wake cycle', async () => {
       const daemon = makeMockDaemon(async () => ({ ok: true, value: 'ok', elapsed_ms: 1 }));
       const engine = new ExtensionEngine(daemon);
 
       await engine.execute('return 1', 7500);
 
       const calls = (daemon.execute as ReturnType<typeof vi.fn>).mock.calls;
-      expect(calls[0]![1]).toBe(7500);
+      expect(calls[0]![1]).toBe(90_000);
     });
 
     it('propagates ok:true result from daemon', async () => {
@@ -214,14 +213,14 @@ describe('ExtensionEngine', () => {
       expect(payload).toHaveProperty('tabUrl', 'https://example.com/page');
     });
 
-    it('forwards timeout to daemon', async () => {
+    it('enforces 90s minimum timeout for event-page wake cycle', async () => {
       const daemon = makeMockDaemon(async () => ({ ok: true, value: 'ok', elapsed_ms: 1 }));
       const engine = new ExtensionEngine(daemon);
 
       await engine.executeJsInTab('https://example.com', 'return 1', 3000);
 
       const calls = (daemon.execute as ReturnType<typeof vi.fn>).mock.calls;
-      expect(calls[0]![1]).toBe(3000);
+      expect(calls[0]![1]).toBe(90_000);
     });
 
     it('wraps daemon exceptions into EXTENSION_ERROR', async () => {

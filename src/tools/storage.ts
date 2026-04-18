@@ -52,7 +52,7 @@ export class StorageTools {
           },
           required: [],
         },
-        requirements: {},
+        requirements: { idempotent: true },
       },
       {
         name: 'safari_set_cookie',
@@ -87,7 +87,7 @@ export class StorageTools {
           },
           required: ['tabUrl', 'name', 'value'],
         },
-        requirements: {},
+        requirements: { idempotent: false },
       },
       {
         name: 'safari_delete_cookie',
@@ -105,7 +105,7 @@ export class StorageTools {
           },
           required: ['tabUrl', 'name'],
         },
-        requirements: {},
+        requirements: { idempotent: false },
       },
       {
         name: 'safari_storage_state_export',
@@ -120,7 +120,7 @@ export class StorageTools {
           },
           required: ['tabUrl'],
         },
-        requirements: {},
+        requirements: { idempotent: true },
       },
       {
         name: 'safari_storage_state_import',
@@ -145,7 +145,7 @@ export class StorageTools {
           },
           required: ['tabUrl', 'state'],
         },
-        requirements: {},
+        requirements: { idempotent: false },
       },
       {
         name: 'safari_local_storage_get',
@@ -158,7 +158,7 @@ export class StorageTools {
           },
           required: ['tabUrl', 'key'],
         },
-        requirements: {},
+        requirements: { idempotent: true },
       },
       {
         name: 'safari_local_storage_set',
@@ -172,7 +172,7 @@ export class StorageTools {
           },
           required: ['tabUrl', 'key', 'value'],
         },
-        requirements: {},
+        requirements: { idempotent: false },
       },
       {
         name: 'safari_session_storage_get',
@@ -185,7 +185,7 @@ export class StorageTools {
           },
           required: ['tabUrl', 'key'],
         },
-        requirements: {},
+        requirements: { idempotent: true },
       },
       {
         name: 'safari_session_storage_set',
@@ -199,7 +199,7 @@ export class StorageTools {
           },
           required: ['tabUrl', 'key', 'value'],
         },
-        requirements: {},
+        requirements: { idempotent: false },
       },
       {
         name: 'safari_idb_list',
@@ -213,7 +213,7 @@ export class StorageTools {
           },
           required: ['tabUrl'],
         },
-        requirements: {},
+        requirements: { idempotent: true },
       },
       {
         name: 'safari_idb_get',
@@ -242,7 +242,7 @@ export class StorageTools {
           },
           required: ['tabUrl', 'database', 'store'],
         },
-        requirements: {},
+        requirements: { idempotent: true },
       },
     ];
   }

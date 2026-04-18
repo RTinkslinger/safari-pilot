@@ -114,6 +114,48 @@ export class DaemonEngine extends BaseEngine {
     }
   }
 
+  /**
+   * Send an arbitrary NDJSON method to the daemon and return the raw parsed
+   * response (not wrapped in `EngineResult`). Used by observability/diagnostic
+   * tools (e.g. `safari_extension_health`, `safari_extension_debug_dump`) that
+   * need structured `value` rather than the `execute()`/`command()` string
+   * normalization.
+   *
+   * Returns a `{ ok, value?, error? }` shape where `value` preserves the
+   * daemon's original JSON (object/array/primitive) rather than being
+   * JSON.stringify'd like `command()` does.
+   */
+  public async sendRawCommand(
+    method: string,
+    params: Record<string, unknown> = {},
+    timeout?: number,
+  ): Promise<{ ok: boolean; value?: unknown; error?: { code: string; message: string } }> {
+    try {
+      await this.ensureRunning();
+      const response = await this.sendCommand(method, params, timeout);
+      if (response.ok) {
+        return { ok: true, value: response.value };
+      }
+      return {
+        ok: false,
+        error: {
+          code: response.error?.code ?? 'DAEMON_ERROR',
+          message: response.error?.message ?? 'Daemon returned an error',
+        },
+      };
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const isTimeout = err instanceof DaemonTimeoutError;
+      return {
+        ok: false,
+        error: {
+          code: isTimeout ? 'TIMEOUT' : 'DAEMON_ERROR',
+          message: msg,
+        },
+      };
+    }
+  }
+
   async isAvailable(): Promise<boolean> {
     try {
       await this.ensureRunning();

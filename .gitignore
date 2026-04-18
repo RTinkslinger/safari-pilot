@@ -12,3 +12,8 @@ app/
 benchmark/traces/
 benchmark/reports/
 test/e2e/reports/
+.verified-this-session
+.multi-profile-verified-*
+.last-rollback-commit
+.latest-stable
+.breached/

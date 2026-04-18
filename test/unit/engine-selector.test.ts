@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { selectEngine, EngineUnavailableError, ENGINE_CAPS } from '../../src/engine-selector.js';
+import { CircuitBreaker } from '../../src/security/circuit-breaker.js';
 import type { ToolRequirements } from '../../src/types.js';
 
 const ALL_AVAILABLE = { daemon: true, extension: true };
@@ -69,6 +70,49 @@ describe('selectEngine', () => {
     expect(() => selectEngine({ requiresCspBypass: true }, NEITHER)).toThrowError(
       /Safari Web Extension/
     );
+  });
+});
+
+describe('selectEngine + engine breaker (Task 9 wiring)', () => {
+  it('when extension breaker is tripped, selectEngine skips extension for non-required tools', () => {
+    const cb = new CircuitBreaker();
+    for (let i = 0; i < 5; i++) cb.recordEngineFailure('extension', 'EXTENSION_TIMEOUT');
+    const result = selectEngine(
+      { idempotent: true },
+      { daemon: true, extension: true },
+      cb
+    );
+    expect(result).toBe('daemon');
+  });
+
+  it('when extension breaker is tripped AND tool requires extension, throws EngineUnavailableError', () => {
+    const cb = new CircuitBreaker();
+    for (let i = 0; i < 5; i++) cb.recordEngineFailure('extension', 'EXTENSION_TIMEOUT');
+    expect(() =>
+      selectEngine(
+        { idempotent: true, requiresShadowDom: true },
+        { daemon: true, extension: true },
+        cb
+      )
+    ).toThrow(/extension/i);
+  });
+
+  it('without breaker argument, existing behavior preserved', () => {
+    const result = selectEngine(
+      { idempotent: true },
+      { daemon: true, extension: true }
+    );
+    expect(result).toBe('extension');
+  });
+
+  it('breaker not tripped: extension still chosen', () => {
+    const cb = new CircuitBreaker();
+    const result = selectEngine(
+      { idempotent: true },
+      { daemon: true, extension: true },
+      cb
+    );
+    expect(result).toBe('extension');
   });
 });
 

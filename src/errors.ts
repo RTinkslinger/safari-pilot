@@ -1,4 +1,4 @@
-import type { Engine, ToolError } from './types.js';
+import type { Engine, StructuredUncertainty, ToolError } from './types.js';
 
 // ─── Error Codes ─────────────────────────────────────────────────────────────
 
@@ -25,6 +25,7 @@ export const ERROR_CODES = {
   FRAME_NOT_FOUND: 'FRAME_NOT_FOUND',
   CIRCUIT_BREAKER_OPEN: 'CIRCUIT_BREAKER_OPEN',
   INTERNAL_ERROR: 'INTERNAL_ERROR',
+  EXTENSION_UNCERTAIN: 'EXTENSION_UNCERTAIN',
 } as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES];
@@ -274,6 +275,28 @@ export class InternalError extends SafariPilotError {
   }
 }
 
+export class ExtensionUncertainError extends SafariPilotError {
+  readonly code = ERROR_CODES.EXTENSION_UNCERTAIN;
+  readonly retryable = false; // non-idempotent tools are NEVER auto-retried
+  readonly hints: string[];
+  readonly uncertainResult: StructuredUncertainty;
+
+  constructor(uncertainResult: StructuredUncertainty, options?: { url?: string; selector?: string }) {
+    super(
+      `Extension disconnected during ${uncertainResult.disconnectPhase} (likelyExecuted=${uncertainResult.likelyExecuted})`,
+      options,
+    );
+    this.uncertainResult = uncertainResult;
+    this.hints = [
+      uncertainResult.recommendation === 'probe_state'
+        ? 'Probe page state before retrying — the action may have partially completed'
+        : "Retry is the caller's decision — side effects may or may not have occurred",
+      'Non-idempotent tools are never auto-retried on EXTENSION_UNCERTAIN',
+      `Disconnect phase: ${uncertainResult.disconnectPhase}`,
+    ];
+  }
+}
+
 // ─── formatToolError ──────────────────────────────────────────────────────────
 
 export function formatToolError(
@@ -293,5 +316,8 @@ export function formatToolError(
       elapsed_ms,
     },
     ...(error.cause ? { cause_chain: [String(error.cause)] } : {}),
+    ...(error instanceof ExtensionUncertainError
+      ? { uncertainResult: error.uncertainResult }
+      : {}),
   };
 }

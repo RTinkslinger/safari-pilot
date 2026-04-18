@@ -19,6 +19,7 @@ describe('Extension Manifest', () => {
       'cookies',
       'nativeMessaging',
       'declarativeNetRequest',
+      'alarms',
     ];
     for (const perm of required) {
       expect(manifest.permissions).toContain(perm);
@@ -29,9 +30,14 @@ describe('Extension Manifest', () => {
     expect(manifest.host_permissions).toContain('<all_urls>');
   });
 
-  it('has background service_worker', () => {
+  it('has background as event page (scripts + persistent:false)', () => {
     expect(manifest.background).toBeDefined();
-    expect(manifest.background.service_worker).toBe('background.js');
+    expect(manifest.background).toEqual({
+      scripts: ['background.js'],
+      persistent: false,
+    });
+    expect(manifest.background.service_worker).toBeUndefined();
+    expect(manifest.background.type).toBeUndefined();
   });
 
   it('has exactly two content_scripts', () => {

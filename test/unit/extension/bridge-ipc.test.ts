@@ -143,8 +143,8 @@ describe('Bridge Protocol — JSON payload structure', () => {
 
 describe('Bridge Protocol — daemon response interpretation', () => {
 
-  it('isAvailable treats ONLY "connected" string as true', async () => {
-    for (const value of ['connected']) {
+  it('isAvailable returns true for any ok:true response (event-page model: daemon reachable = available)', async () => {
+    for (const value of ['connected', 'disconnected', '', 'true', 'yes', 'CONNECTED', undefined]) {
       const daemon = {
         name: 'daemon',
         isAvailable: vi.fn().mockResolvedValue(true),
@@ -154,18 +154,6 @@ describe('Bridge Protocol — daemon response interpretation', () => {
 
       const engine = new ExtensionEngine(daemon);
       expect(await engine.isAvailable()).toBe(true);
-    }
-
-    for (const value of ['disconnected', '', 'true', 'yes', 'CONNECTED', undefined]) {
-      const daemon = {
-        name: 'daemon',
-        isAvailable: vi.fn().mockResolvedValue(true),
-        execute: vi.fn(async () => ({ ok: true, value, elapsed_ms: 1 })),
-        shutdown: vi.fn(),
-      } as unknown as DaemonEngine;
-
-      const engine = new ExtensionEngine(daemon);
-      expect(await engine.isAvailable()).toBe(false);
     }
   });
 

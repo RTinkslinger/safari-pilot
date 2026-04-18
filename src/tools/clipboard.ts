@@ -56,7 +56,7 @@ export class ClipboardTools {
           },
           required: ['tabUrl'],
         },
-        requirements: {} as ToolRequirements,
+        requirements: { idempotent: true } as ToolRequirements,
       },
       {
         name: 'safari_clipboard_write',
@@ -69,7 +69,7 @@ export class ClipboardTools {
           },
           required: ['tabUrl', 'text'],
         },
-        requirements: {} as ToolRequirements,
+        requirements: { idempotent: false } as ToolRequirements,
       },
     ];
   }

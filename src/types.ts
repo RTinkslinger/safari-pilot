@@ -11,6 +11,16 @@ export interface EngineCapabilities {
 }
 
 export interface ToolRequirements {
+  /**
+   * Whether the tool is safe to retry automatically if the caller observes an
+   * ambiguous disconnect (e.g. Extension engine loses native-host socket mid-call
+   * with no success confirmation). Tools that mutate page or browser state —
+   * clicks, typing, navigation, cookie writes, permission overrides — must be
+   * `false` so the caller is required to make an explicit retry decision.
+   *
+   * Required — no default. Every registered tool must declare this.
+   */
+  idempotent: boolean;
   requiresShadowDom?: boolean;
   requiresCspBypass?: boolean;
   requiresDialogIntercept?: boolean;
@@ -33,6 +43,12 @@ export interface EngineError {
   retryable: boolean;
 }
 
+export interface StructuredUncertainty {
+  disconnectPhase: 'before_dispatch' | 'after_dispatch_before_ack' | 'after_ack_before_result';
+  likelyExecuted: boolean;
+  recommendation: 'probe_state' | 'caller_decides';
+}
+
 export interface ToolError {
   code: string;
   message: string;
@@ -45,6 +61,12 @@ export interface ToolError {
     elapsed_ms: number;
   };
   cause_chain?: string[];
+  /**
+   * Populated only for EXTENSION_UNCERTAIN errors. Surfaces the disconnect phase
+   * and recommended caller action so non-idempotent tools can make an informed
+   * retry decision instead of being auto-retried.
+   */
+  uncertainResult?: StructuredUncertainty;
 }
 
 export interface ToolResponse {

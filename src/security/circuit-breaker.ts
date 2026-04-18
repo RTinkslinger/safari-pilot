@@ -44,6 +44,14 @@ export class CircuitBreaker {
   private readonly windowMs: number;
   private readonly cooldownMs: number;
 
+  // Engine scope state (independent from per-domain state)
+  private engineFailures: Map<string, number[]> = new Map();
+  private engineTrippedUntil: Map<string, number> = new Map();
+
+  private readonly engineErrorThreshold = 5;
+  private readonly engineWindowMs = 120_000;
+  private readonly engineCooldownMs = 120_000;
+
   constructor(options: CircuitBreakerOptions = {}) {
     this.failureThreshold = options.failureThreshold ?? DEFAULT_FAILURE_THRESHOLD;
     this.windowMs = options.windowMs ?? DEFAULT_WINDOW_MS;
@@ -156,6 +164,58 @@ export class CircuitBreaker {
       state.probeInFlight = true;
       this.states.set(domain, state);
     }
+  }
+
+  // ── Engine scope API (independent from per-domain state) ────────────────────
+
+  /**
+   * Record a failure attributable to a specific engine. Only extension-lifecycle
+   * error codes (EXTENSION_TIMEOUT / EXTENSION_UNCERTAIN / EXTENSION_DISCONNECTED)
+   * count toward the engine breaker; other codes are ignored.
+   *
+   * Trips at 5 failures within a rolling 120s window; stays tripped for 120s.
+   */
+  recordEngineFailure(engine: string, errorCode: string): void {
+    const triggering = new Set([
+      'EXTENSION_TIMEOUT',
+      'EXTENSION_UNCERTAIN',
+      'EXTENSION_DISCONNECTED',
+    ]);
+    if (!triggering.has(errorCode)) return;
+
+    const now = Date.now();
+    const list = this.engineFailures.get(engine) ?? [];
+    const recent = list.filter((t) => now - t < this.engineWindowMs);
+    recent.push(now);
+    this.engineFailures.set(engine, recent);
+
+    if (recent.length >= this.engineErrorThreshold) {
+      this.engineTrippedUntil.set(engine, now + this.engineCooldownMs);
+    }
+  }
+
+  /**
+   * True when the given engine's breaker is currently tripped. Self-heals on
+   * read: once the cooldown expires, the tripped state and failure history are
+   * cleared so the engine starts fresh.
+   */
+  isEngineTripped(engine: string): boolean {
+    const until = this.engineTrippedUntil.get(engine);
+    if (until === undefined) return false;
+    if (Date.now() >= until) {
+      this.engineTrippedUntil.delete(engine);
+      this.engineFailures.delete(engine);
+      return false;
+    }
+    return true;
+  }
+
+  /**
+   * Read-only state accessor for the engine scope. Used by extension_health
+   * snapshot's `engineCircuitBreakerState` field.
+   */
+  getEngineState(engine: string): 'closed' | 'open' {
+    return this.isEngineTripped(engine) ? 'open' : 'closed';
   }
 
   // ── Internal ─────────────────────────────────────────────────────────────────

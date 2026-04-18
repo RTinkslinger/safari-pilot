@@ -187,4 +187,18 @@ export class HumanApproval {
       throw new HumanApprovalRequiredError(action, domain);
     }
   }
+
+  /**
+   * Invalidate any memoized approval state for this tool.
+   *
+   * At commit 1a this is a no-op: HumanApproval is stateless. The hook exists so that
+   * when engine degradation forces a security re-evaluation against a different
+   * engine's action surface, callers have a stable API to invoke. Commit 1c may add
+   * engine-aware caching; this method becomes meaningful then.
+   *
+   * @param _toolName tool being re-evaluated — unused at 1a
+   */
+  invalidateForDegradation(_toolName: string): void {
+    // Stateless at 1a; reserved for future caching semantics.
+  }
 }

@@ -24,35 +24,24 @@ public final class CommandDispatcher: @unchecked Sendable {
     /// Manages Safari extension connection state and pending requests.
     public let extensionBridge: ExtensionBridge
 
+    /// Observability + persisted alarm-fire timestamp. Shared across the process —
+    /// never construct a second instance pointing at the same persistPath.
+    public let healthStore: HealthStore
+
     // MARK: Init
 
     public init(
         lineSource: @escaping LineSource,
         outputSink: @escaping OutputSink,
         executor: ScriptExecutorProtocol,
-        extensionBridge: ExtensionBridge = ExtensionBridge()
+        extensionBridge: ExtensionBridge = ExtensionBridge(),
+        healthStore: HealthStore
     ) {
         self.lineSource = lineSource
         self.outputSink = outputSink
         self.executor = executor
         self.extensionBridge = extensionBridge
-    }
-
-    /// Convenience initialiser for production use: reads from stdin, writes to stdout.
-    public convenience init(executor: ScriptExecutorProtocol = AppleScriptExecutor()) {
-        self.init(
-            lineSource: {
-                // `readLine(strippingNewline:)` blocks until a line arrives or EOF.
-                readLine(strippingNewline: true)
-            },
-            outputSink: { line in
-                print(line, terminator: "")
-                // Flush stdout immediately so the TypeScript host receives responses
-                // without buffering delay.
-                fflush(stdout)
-            },
-            executor: executor
-        )
+        self.healthStore = healthStore
     }
 
     // MARK: - Run Loop
@@ -153,10 +142,40 @@ public final class CommandDispatcher: @unchecked Sendable {
             return await extensionBridge.handleExecute(commandID: command.id, params: command.params)
 
         case "extension_poll":
-            return extensionBridge.handlePoll(commandID: command.id)
+            let waitTimeout = (command.params["waitTimeout"]?.value as? Double) ?? 0.0
+            return await extensionBridge.handlePoll(commandID: command.id, waitTimeout: waitTimeout)
 
         case "extension_status":
             return extensionBridge.handleStatus(commandID: command.id)
+
+        case "extension_log":
+            // Telemetry / breadcrumb messages from background.js.
+            // Recognised prefix: "alarm_fire" — updates HealthStore.lastAlarmFireTimestamp
+            // so /health can surface persisted wake-tick progress across daemon restarts.
+            let msg = (command.params["message"]?.value as? String) ?? ""
+            if msg.hasPrefix("alarm_fire") {
+                healthStore.recordAlarmFire()
+            }
+            Logger.info("EXT-LOG: \(msg)")
+            return Response.success(id: command.id, value: AnyCodable("log_ack"))
+
+        case "extension_reconcile":
+            let executedIds = (command.params["executedIds"]?.value as? [Any])?.compactMap { $0 as? String } ?? []
+            let pendingIds = (command.params["pendingIds"]?.value as? [Any])?.compactMap { $0 as? String } ?? []
+            let response = extensionBridge.handleReconcile(
+                commandID: command.id,
+                executedIds: executedIds,
+                pendingIds: pendingIds
+            )
+            healthStore.markReconcile()
+            return response
+
+        case "extension_health":
+            // Composite snapshot: bridge state + HealthStore counters + placeholders
+            // for fields wired in Commit 1b (executedLogSize, claimedByProfiles,
+            // engineCircuitBreakerState, killSwitchActive).
+            let snapshot = extensionBridge.healthSnapshot(store: healthStore)
+            return Response.success(id: command.id, value: AnyCodable(snapshot))
 
         case "watch_download":
             return await handleWatchDownload(commandID: command.id, params: command.params)

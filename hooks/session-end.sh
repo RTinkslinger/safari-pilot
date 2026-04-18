@@ -5,6 +5,7 @@
 
 set -euo pipefail
 
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SAFARI_PILOT_DATA="${SAFARI_PILOT_DATA:-$HOME/.safari-pilot}"
 LOG_DIR="${SAFARI_PILOT_DATA}/logs"
 AUDIT_LOG="${SAFARI_PILOT_DATA}/audit.log"
@@ -62,6 +63,17 @@ fi
 #   fi
 #   rm -f "$PID_FILE"
 # fi
+
+# ── 5. Rollback detector ─────────────────────────────────────────────────────
+if [[ -f "$ROOT/.last-rollback-commit" ]]; then
+  ROLLBACK_TS=$(python3 -c "import json; print(json.load(open('$ROOT/.last-rollback-commit'))['timestamp'])")
+  NEWEST_INCIDENT_TS=$(find "$ROOT/docs/upp/incidents" -name "*.md" ! -name "TEMPLATE.md" -exec stat -f "%m" {} \; 2>/dev/null | sort -nr | head -1 || echo "0")
+  if [[ -z "$NEWEST_INCIDENT_TS" ]] || [[ "$NEWEST_INCIDENT_TS" -le "$ROLLBACK_TS" ]]; then
+    echo "BLOCKED: Rollback recorded but no incident doc newer than rollback timestamp." >&2
+    echo "Create docs/upp/incidents/$(date +%Y-%m-%d)-<slug>.md before closing session." >&2
+    exit 1
+  fi
+fi
 
 echo "safari-pilot: Session ended" >&2
 exit 0

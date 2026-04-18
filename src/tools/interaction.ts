@@ -145,7 +145,7 @@ export class InteractionTools {
           },
           required: ['tabUrl'],
         },
-        requirements: {},
+        requirements: { idempotent: false },
       },
       {
         name: 'safari_double_click',
@@ -162,7 +162,7 @@ export class InteractionTools {
           },
           required: ['tabUrl'],
         },
-        requirements: {},
+        requirements: { idempotent: false },
       },
       {
         name: 'safari_fill',
@@ -188,7 +188,7 @@ export class InteractionTools {
           },
           required: ['tabUrl', 'value'],
         },
-        requirements: {},
+        requirements: { idempotent: false },
       },
       {
         name: 'safari_select_option',
@@ -207,7 +207,7 @@ export class InteractionTools {
           },
           required: ['tabUrl'],
         },
-        requirements: {},
+        requirements: { idempotent: false },
       },
       {
         name: 'safari_check',
@@ -223,7 +223,7 @@ export class InteractionTools {
           },
           required: ['tabUrl', 'checked'],
         },
-        requirements: {},
+        requirements: { idempotent: false },
       },
       {
         name: 'safari_hover',
@@ -240,7 +240,7 @@ export class InteractionTools {
           },
           required: ['tabUrl'],
         },
-        requirements: {},
+        requirements: { idempotent: false },
       },
       {
         name: 'safari_type',
@@ -258,7 +258,7 @@ export class InteractionTools {
           },
           required: ['tabUrl', 'content'],
         },
-        requirements: {},
+        requirements: { idempotent: false },
       },
       {
         name: 'safari_press_key',
@@ -282,7 +282,7 @@ export class InteractionTools {
           },
           required: ['tabUrl', 'key'],
         },
-        requirements: {},
+        requirements: { idempotent: false },
       },
       {
         name: 'safari_scroll',
@@ -306,7 +306,7 @@ export class InteractionTools {
           },
           required: ['tabUrl'],
         },
-        requirements: {},
+        requirements: { idempotent: false },
       },
       {
         name: 'safari_drag',
@@ -327,7 +327,7 @@ export class InteractionTools {
           },
           required: ['tabUrl'],
         },
-        requirements: {},
+        requirements: { idempotent: false },
       },
       {
         name: 'safari_handle_dialog',
@@ -357,7 +357,7 @@ export class InteractionTools {
           },
           required: ['tabUrl', 'autoHandle', 'action'],
         },
-        requirements: { requiresDialogIntercept: true },
+        requirements: { idempotent: false, requiresDialogIntercept: true },
       },
     ];
   }

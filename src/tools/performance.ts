@@ -140,7 +140,7 @@ export class PerformanceTools {
           },
           required: ['tabUrl'],
         },
-        requirements: {} as ToolRequirements,
+        requirements: { idempotent: false } as ToolRequirements,
       },
       {
         name: 'safari_end_trace',
@@ -155,7 +155,7 @@ export class PerformanceTools {
           },
           required: ['tabUrl'],
         },
-        requirements: {} as ToolRequirements,
+        requirements: { idempotent: false } as ToolRequirements,
       },
       {
         name: 'safari_get_page_metrics',
@@ -170,7 +170,7 @@ export class PerformanceTools {
           },
           required: ['tabUrl'],
         },
-        requirements: {} as ToolRequirements,
+        requirements: { idempotent: true } as ToolRequirements,
       },
     ];
   }

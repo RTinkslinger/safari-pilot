@@ -46,6 +46,11 @@ export interface HealthCheckConfig {
   timeoutMs: number;
 }
 
+export interface ExtensionConfig {
+  enabled: boolean;
+  killSwitchVersion: string;
+}
+
 export interface SafariPilotConfig {
   schemaVersion: string;
   rateLimit: RateLimitConfig;
@@ -55,6 +60,7 @@ export interface SafariPilotConfig {
   audit: AuditConfig;
   daemon: DaemonConfig;
   healthCheck: HealthCheckConfig;
+  extension: ExtensionConfig;
 }
 
 export const DEFAULT_CONFIG: SafariPilotConfig = {
@@ -87,6 +93,10 @@ export const DEFAULT_CONFIG: SafariPilotConfig = {
   },
   healthCheck: {
     timeoutMs: 3_000,
+  },
+  extension: {
+    enabled: true,
+    killSwitchVersion: '0.1.5',
   },
 };
 
@@ -188,6 +198,10 @@ function validate(config: SafariPilotConfig): void {
 
   assertSection('healthCheck', config.healthCheck);
   assertPositiveNumber('healthCheck.timeoutMs', config.healthCheck.timeoutMs);
+
+  assertSection('extension', config.extension);
+  assertBoolean('extension.enabled', config.extension.enabled);
+  assertString('extension.killSwitchVersion', config.extension.killSwitchVersion);
 }
 
 // ─── Path resolution ─────────────────────────────────────────────────────────

@@ -81,7 +81,8 @@ private func makeTestDispatcher() -> CommandDispatcher {
     return CommandDispatcher(
         lineSource: { nil },
         outputSink: { _ in },
-        executor: StubExecutor()
+        executor: StubExecutor(),
+        healthStore: makeHealthStoreForTest()
     )
 }
 

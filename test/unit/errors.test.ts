@@ -17,11 +17,12 @@ import {
   CircuitBreakerOpenError,
   NavigationFailedError,
   InternalError,
+  ExtensionUncertainError,
   formatToolError,
 } from '../../src/errors.js';
 
 describe('ERROR_CODES', () => {
-  it('exports all 22 standard error codes', () => {
+  it('exports all 23 standard error codes', () => {
     const expected = [
       'ELEMENT_NOT_FOUND',
       'ELEMENT_NOT_VISIBLE',
@@ -45,9 +46,10 @@ describe('ERROR_CODES', () => {
       'FRAME_NOT_FOUND',
       'CIRCUIT_BREAKER_OPEN',
       'INTERNAL_ERROR',
+      'EXTENSION_UNCERTAIN',
     ];
 
-    expect(Object.keys(ERROR_CODES)).toHaveLength(22);
+    expect(Object.keys(ERROR_CODES)).toHaveLength(23);
     for (const code of expected) {
       expect(ERROR_CODES).toHaveProperty(code, code);
     }
@@ -133,5 +135,62 @@ describe('CircuitBreakerOpenError', () => {
     expect(err.hints.some((h) => /cooldown/i.test(h))).toBe(true);
     expect(err.message).toContain('flaky-site.com');
     expect(err.message).toContain('90');
+  });
+});
+
+describe('EXTENSION_UNCERTAIN error', () => {
+  it('ExtensionUncertainError code matches EXTENSION_UNCERTAIN', () => {
+    const err = new ExtensionUncertainError({
+      disconnectPhase: 'after_dispatch_before_ack',
+      likelyExecuted: true,
+      recommendation: 'probe_state',
+    });
+    expect(err.code).toBe('EXTENSION_UNCERTAIN');
+    expect(ERROR_CODES.EXTENSION_UNCERTAIN).toBe('EXTENSION_UNCERTAIN');
+  });
+
+  it('ExtensionUncertainError.retryable is false (non-auto-retry)', () => {
+    const err = new ExtensionUncertainError({
+      disconnectPhase: 'before_dispatch',
+      likelyExecuted: false,
+      recommendation: 'caller_decides',
+    });
+    expect(err.retryable).toBe(false);
+  });
+
+  it('formatToolError surfaces uncertainResult in the returned ToolError', () => {
+    const err = new ExtensionUncertainError(
+      {
+        disconnectPhase: 'after_dispatch_before_ack',
+        likelyExecuted: true,
+        recommendation: 'probe_state',
+      },
+      { url: 'https://example.com' },
+    );
+    const formatted = formatToolError(err, 'extension', 60000);
+    expect(formatted.code).toBe('EXTENSION_UNCERTAIN');
+    expect(formatted.retryable).toBe(false);
+    expect(formatted.uncertainResult).toEqual({
+      disconnectPhase: 'after_dispatch_before_ack',
+      likelyExecuted: true,
+      recommendation: 'probe_state',
+    });
+    expect(formatted.context.url).toBe('https://example.com');
+    expect(formatted.hints.length).toBeGreaterThan(0);
+    expect(formatted.hints.some((h) => h.includes('Probe page state'))).toBe(true);
+  });
+
+  it('recommendation "caller_decides" hint text differs from "probe_state"', () => {
+    const probe = new ExtensionUncertainError({
+      disconnectPhase: 'before_dispatch',
+      likelyExecuted: false,
+      recommendation: 'probe_state',
+    });
+    const caller = new ExtensionUncertainError({
+      disconnectPhase: 'before_dispatch',
+      likelyExecuted: false,
+      recommendation: 'caller_decides',
+    });
+    expect(probe.hints[0]).not.toBe(caller.hints[0]);
   });
 });

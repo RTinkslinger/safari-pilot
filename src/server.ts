@@ -23,6 +23,7 @@ import { WaitTools } from './tools/wait.js';
 import { CompoundTools } from './tools/compound.js';
 import { DownloadTools } from './tools/downloads.js';
 import { PdfTools } from './tools/pdf.js';
+import { ExtensionDiagnosticsTools } from './tools/extension-diagnostics.js';
 import { KillSwitch } from './security/kill-switch.js';
 import { TabOwnership } from './security/tab-ownership.js';
 import { AuditLog } from './security/audit-log.js';
@@ -106,6 +107,25 @@ const SKIP_OWNERSHIP_TOOLS = new Set([
   'safari_list_tabs',
   'safari_new_tab',
   'safari_health_check',
+]);
+
+/**
+ * Infrastructure message types that bypass the 9-layer security pipeline.
+ * These are daemon↔extension coordination messages (poll/drain/reconcile/log/result/
+ * connect/disconnect), not per-domain tool calls. Analogous to SKIP_OWNERSHIP_TOOLS
+ * for tab-management tools.
+ *
+ * Commits 1b (reconcile, drain) populate this set's real routing; commit 1a declares
+ * it so the bypass contract is documented and enforceable up-front.
+ */
+export const INFRA_MESSAGE_TYPES: ReadonlySet<string> = new Set([
+  'extension_poll',
+  'extension_drain',
+  'extension_reconcile',
+  'extension_connected',
+  'extension_disconnected',
+  'extension_log',
+  'extension_result',
 ]);
 
 export class SafariPilotServer {
@@ -198,7 +218,7 @@ export class SafariPilotServer {
           },
         },
       },
-      requirements: {},
+      requirements: { idempotent: true },
       handler: async (params) => this.handleHealthCheck(params),
     });
 
@@ -226,6 +246,9 @@ export class SafariPilotServer {
     const compoundTools = new CompoundTools(engine);
     const downloadTools = new DownloadTools(this);
     const pdfTools = new PdfTools(this);
+    const extensionDiagnosticsTools = new ExtensionDiagnosticsTools(
+      daemonAvailable ? daemonEngine : null,
+    );
 
     // Register all tools from all modules.
     // Each module may have getHandler returning Handler (NavigationTools) or Handler | undefined.
@@ -256,6 +279,7 @@ export class SafariPilotServer {
       compoundTools as unknown as ToolModule,
       downloadTools,
       pdfTools,
+      extensionDiagnosticsTools,
     ];
 
     for (const module of modules) {
@@ -282,7 +306,7 @@ export class SafariPilotServer {
           reason: { type: 'string', description: 'Reason for the emergency stop' },
         },
       },
-      requirements: {},
+      requirements: { idempotent: false },
       handler: async (params) => {
         const reason = (params['reason'] as string | undefined) ?? 'emergency_stop called';
         this.killSwitch.activate(reason);
@@ -441,7 +465,12 @@ export class SafariPilotServer {
     let selectedEngineName: Engine = 'applescript';
     if (toolDef) {
       try {
-        selectedEngineName = selectEngine(toolDef.requirements, this.engineAvailability);
+        selectedEngineName = selectEngine(
+          toolDef.requirements,
+          this.engineAvailability,
+          this.circuitBreaker,
+          this.config,
+        );
       } catch (err) {
         if (err instanceof EngineUnavailableError) {
           this.auditLog.record({
@@ -471,6 +500,57 @@ export class SafariPilotServer {
     if (this.engineProxy) {
       const selectedEngine = this.engines.get(selectedEngineName) || this._engine!;
       this.engineProxy.setDelegate(selectedEngine);
+    }
+
+    // 7.5 Engine-degradation re-run
+    // When the tool would have preferred the Extension engine (based on availability
+    // and breaker state) but engine-selector returned a different engine, re-invoke
+    // HumanApproval and IdpiScanner against the new engine's action surface. The
+    // invalidate* methods are no-ops at 1a but establish the contract for future
+    // engine-aware caching (commit 1c).
+    const extensionPreferred = this.engineAvailability.extension === true
+      && !this.circuitBreaker.isEngineTripped('extension');
+    const degradedFromExtension = extensionPreferred && selectedEngineName !== 'extension';
+
+    let degradationReason: string | undefined;
+    if (degradedFromExtension) {
+      this.humanApproval.invalidateForDegradation(name);
+      this.idpiScanner.invalidateForDegradation(name);
+      // Re-assert approval — stateless today, but establishes the pattern
+      try {
+        this.humanApproval.assertApproved(name, url, params);
+      } catch (err) {
+        if (err instanceof HumanApprovalRequiredError) {
+          this.auditLog.record({
+            tool: name,
+            tabUrl: url,
+            engine: selectedEngineName,
+            params,
+            result: 'error',
+            elapsed_ms: Date.now() - start,
+            session: this.sessionId,
+          });
+          return {
+            content: [{
+              type: 'text',
+              text: JSON.stringify({
+                error: err.code,
+                message: err.message,
+                hints: err.hints,
+                approvalRequired: true,
+              }),
+            }],
+            metadata: {
+              engine: selectedEngineName,
+              degraded: true,
+              degradedReason: `extension_degraded_approval_required: ${err.message}`,
+              latencyMs: Date.now() - start,
+            },
+          };
+        }
+        throw err;
+      }
+      degradationReason = 'extension_unavailable_fallback_to_' + selectedEngineName;
     }
 
     // 8. Execute the tool, record circuit breaker outcome, and audit
@@ -527,6 +607,13 @@ export class SafariPilotServer {
         result.metadata.engine = selectedEngineName;
       }
 
+      // Propagate engine-degradation reason set by step 7.5 into result metadata
+      // so callers can observe the fallback without inspecting server state.
+      if (degradationReason && result.metadata && !result.metadata.degradedReason) {
+        result.metadata.degradedReason = degradationReason;
+        result.metadata.degraded = true;
+      }
+
       // Embed engine in text content so benchmark tracking works even when
       // Claude CLI strips _meta from stream-json output
       if (result.content?.[0]?.type === 'text' && result.content[0].text) {
@@ -560,7 +647,12 @@ export class SafariPilotServer {
   }
 
   getSelectedEngine(requirements: ToolRequirements): Engine {
-    return selectEngine(requirements, this.engineAvailability);
+    return selectEngine(
+      requirements,
+      this.engineAvailability,
+      this.circuitBreaker,
+      this.config,
+    );
   }
 
   setEngineAvailability(availability: { daemon: boolean; extension: boolean }): void {
@@ -614,6 +706,14 @@ export class SafariPilotServer {
 
   getToolDefinition(name: string): ToolDefinition | undefined {
     return this.tools.get(name);
+  }
+
+  /**
+   * Returns every registered tool definition. Used by the MV3 enforcement test
+   * (Tasks 6+12) to verify every tool declares `requirements.idempotent`.
+   */
+  getAllToolDefinitions(): ToolDefinition[] {
+    return Array.from(this.tools.values());
   }
 
   async start(): Promise<void> {

@@ -62,7 +62,7 @@ export class PermissionTools {
           },
           required: ['tabUrl', 'permission'],
         },
-        requirements: {},
+        requirements: { idempotent: true },
       },
       {
         name: 'safari_permission_set',
@@ -87,7 +87,7 @@ export class PermissionTools {
           },
           required: ['tabUrl', 'permission', 'state'],
         },
-        requirements: {},
+        requirements: { idempotent: false },
       },
       {
         name: 'safari_override_geolocation',
@@ -104,7 +104,7 @@ export class PermissionTools {
           },
           required: ['tabUrl', 'latitude', 'longitude'],
         },
-        requirements: {},
+        requirements: { idempotent: false },
       },
       {
         name: 'safari_override_timezone',
@@ -123,7 +123,7 @@ export class PermissionTools {
           },
           required: ['tabUrl', 'timezone'],
         },
-        requirements: {},
+        requirements: { idempotent: false },
       },
       {
         name: 'safari_override_locale',
@@ -142,7 +142,7 @@ export class PermissionTools {
           },
           required: ['tabUrl', 'locale'],
         },
-        requirements: {},
+        requirements: { idempotent: false },
       },
       {
         name: 'safari_override_useragent',
@@ -161,7 +161,7 @@ export class PermissionTools {
           },
           required: ['tabUrl', 'userAgent'],
         },
-        requirements: {},
+        requirements: { idempotent: false },
       },
     ];
   }

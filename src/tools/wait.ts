@@ -127,7 +127,7 @@ export class WaitTools {
           },
           required: ['tabUrl', 'condition'],
         },
-        requirements: {} as ToolRequirements,
+        requirements: { idempotent: true } as ToolRequirements,
       },
     ];
   }

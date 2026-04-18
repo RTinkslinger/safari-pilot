@@ -43,7 +43,7 @@ export class ShadowTools {
           },
           required: ['tabUrl', 'hostSelector', 'shadowSelector'],
         },
-        requirements: { requiresShadowDom: true },
+        requirements: { idempotent: true, requiresShadowDom: true },
       },
       {
         name: 'safari_click_shadow',
@@ -59,7 +59,7 @@ export class ShadowTools {
           },
           required: ['tabUrl', 'hostSelector', 'shadowSelector'],
         },
-        requirements: { requiresShadowDom: true },
+        requirements: { idempotent: false, requiresShadowDom: true },
       },
     ];
   }

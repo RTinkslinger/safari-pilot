@@ -41,7 +41,7 @@ export class StructuredExtractionTools {
           },
           required: ['tabUrl', 'schema'],
         },
-        requirements: {},
+        requirements: { idempotent: true },
       },
       {
         name: 'safari_extract_tables',
@@ -60,7 +60,7 @@ export class StructuredExtractionTools {
           },
           required: ['tabUrl'],
         },
-        requirements: {},
+        requirements: { idempotent: true },
       },
       {
         name: 'safari_extract_links',
@@ -80,7 +80,7 @@ export class StructuredExtractionTools {
           },
           required: ['tabUrl'],
         },
-        requirements: {},
+        requirements: { idempotent: true },
       },
       {
         name: 'safari_extract_images',
@@ -104,7 +104,7 @@ export class StructuredExtractionTools {
           },
           required: ['tabUrl'],
         },
-        requirements: {},
+        requirements: { idempotent: true },
       },
       {
         name: 'safari_extract_metadata',
@@ -118,7 +118,7 @@ export class StructuredExtractionTools {
           },
           required: ['tabUrl'],
         },
-        requirements: {},
+        requirements: { idempotent: true },
       },
     ];
   }

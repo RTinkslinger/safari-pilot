@@ -48,6 +48,35 @@ else
   echo "WARNING: Custom handler not found at $CUSTOM_HANDLER — using generated stub"
 fi
 
+# ── Step 1c: Strip DEBUG_HARNESS blocks in release builds ──────────────────
+# When SAFARI_PILOT_TEST_MODE != "1", remove /*@DEBUG_HARNESS_BEGIN@*/...
+# /*@DEBUG_HARNESS_END@*/ blocks from background.js and content-*.js. This
+# keeps test-only hooks (e.g. __safariPilotTestForceUnload) out of shipped
+# builds. The markers are only added in Task 18+, so pre-1a builds no-op.
+
+RESOURCES_DIR="$XCODE_PROJECT_DIR/Safari Pilot Extension/Resources"
+
+if [[ "${SAFARI_PILOT_TEST_MODE:-0}" != "1" ]]; then
+  echo "Stripping DEBUG_HARNESS blocks (release build)..."
+  for js in "$RESOURCES_DIR/background.js" "$RESOURCES_DIR/content-main.js" "$RESOURCES_DIR/content-isolated.js"; do
+    [[ -f "$js" ]] || continue
+    python3 -c "
+import re, sys
+p = sys.argv[1]
+with open(p, 'r') as fh:
+    s = fh.read()
+# Non-greedy block removal between markers; DOTALL so . matches newlines
+stripped = re.sub(r'/\*@DEBUG_HARNESS_BEGIN@\*/.*?/\*@DEBUG_HARNESS_END@\*/', '', s, flags=re.DOTALL)
+if stripped != s:
+    with open(p, 'w') as fh:
+        fh.write(stripped)
+    print(f'Stripped DEBUG_HARNESS blocks from {p}')
+" "$js"
+  done
+else
+  echo "SAFARI_PILOT_TEST_MODE=1 — keeping DEBUG_HARNESS blocks (test build)"
+fi
+
 # ── Step 2: Patch Xcode project ─────────────────────────────────────────────
 
 PBXPROJ="$XCODE_PROJECT_DIR/Safari Pilot.xcodeproj/project.pbxproj"

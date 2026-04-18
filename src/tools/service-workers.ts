@@ -64,7 +64,7 @@ export class ServiceWorkerTools {
           },
           required: ['tabUrl'],
         },
-        requirements: {} as ToolRequirements,
+        requirements: { idempotent: true } as ToolRequirements,
       },
       {
         name: 'safari_sw_unregister',
@@ -77,7 +77,7 @@ export class ServiceWorkerTools {
           },
           required: ['tabUrl', 'scope'],
         },
-        requirements: {} as ToolRequirements,
+        requirements: { idempotent: false } as ToolRequirements,
       },
     ];
   }

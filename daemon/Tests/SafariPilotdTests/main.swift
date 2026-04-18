@@ -142,6 +142,14 @@ registerExtensionBridgeTests()
 
 registerExtensionSocketServerTests()
 
+// MARK: - HealthStore Tests
+
+registerHealthStoreTests()
+
+// MARK: - ExtensionHTTPServer Tests
+
+registerExtensionHTTPServerTests()
+
 // MARK: - Results
 
 print("-----------------")

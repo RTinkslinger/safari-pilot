@@ -1,6 +1,6 @@
 {
   "name": "safari-pilot",
-  "version": "0.1.4",
+  "version": "0.1.6",
   "description": "Native Safari browser automation for AI agents on macOS",
   "type": "module",
   "main": "dist/index.js",
@@ -18,6 +18,7 @@
     ".claude-plugin/",
     ".mcp.json",
     "safari-pilot.config.json",
+    "launchagents/",
     "daemon/com.safari-pilot.daemon.plist",
     "README.md",
     "LICENSE"
@@ -30,11 +31,14 @@
     "test:integration": "vitest run test/integration/",
     "test:e2e": "vitest run test/e2e/",
     "test:security": "vitest run test/security/",
+    "test:canary": "vitest run test/canary/",
     "benchmark": "node dist/benchmark/runner.js",
     "benchmark:dry": "node dist/benchmark/runner.js --dry-run",
     "lint": "tsc --noEmit",
     "postinstall": "bash scripts/postinstall.sh",
-    "prepublishOnly": "npm run build"
+    "verify:extension:smoke": "bash scripts/verify-extension-smoke.sh",
+    "verify:extension:full": "npm run verify:extension:smoke && npx vitest run test/e2e/",
+    "prepublishOnly": "bash hooks/pre-publish-verify.sh"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0"

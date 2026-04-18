@@ -16,6 +16,10 @@ if [ -f "$PLIST" ]; then
   echo "safari-pilot: LaunchAgent removed"
 fi
 
+# Unload health-check LaunchAgent
+launchctl bootout "gui/$(id -u)/com.safari-pilot.health-check" 2>/dev/null || true
+rm -f "$HOME/Library/LaunchAgents/com.safari-pilot.health-check.plist"
+
 # Clean up data directory
 DATA_DIR="$HOME/.safari-pilot"
 if [ -d "$DATA_DIR" ]; then

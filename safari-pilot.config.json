@@ -35,5 +35,10 @@
 
   "healthCheck": {
     "timeoutMs": 3000
+  },
+
+  "extension": {
+    "enabled": true,
+    "killSwitchVersion": "0.1.5"
   }
 }

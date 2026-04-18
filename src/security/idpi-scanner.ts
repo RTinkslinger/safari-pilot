@@ -133,4 +133,14 @@ export class IdpiScanner {
 
     return { safe, threats };
   }
+
+  /**
+   * Invalidate any memoized scan state for this tool.
+   *
+   * At commit 1a this is a no-op: IdpiScanner is stateless. Reserved for future
+   * engine-aware scan caching.
+   */
+  invalidateForDegradation(_toolName: string): void {
+    // Stateless at 1a; reserved for future caching semantics.
+  }
 }

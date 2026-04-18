@@ -37,6 +37,16 @@ func syncAwait<T>(_ body: @escaping () async -> T) -> T {
     return result
 }
 
+// MARK: - Test HealthStore helper
+
+/// Fresh HealthStore pointing at a unique tmp path — avoids persisted state
+/// leaking between tests and keeps each dispatcher instance isolated.
+func makeHealthStoreForTest() -> HealthStore {
+    let path = FileManager.default.temporaryDirectory
+        .appendingPathComponent("test-health-\(UUID().uuidString).json")
+    return HealthStore(persistPath: path)
+}
+
 // MARK: - Test registration
 // Called from NDJSONProtocolTests.swift (the executable entry point) to register
 // all CommandDispatcher tests into the shared test runner.
@@ -49,7 +59,8 @@ func registerCommandDispatcherTests() {
         let dispatcher = CommandDispatcher(
             lineSource: { nil },
             outputSink: { _ in },
-            executor: mock
+            executor: mock,
+            healthStore: makeHealthStoreForTest()
         )
         let response = syncAwait {
             await dispatcher.dispatch(line: #"{"id":"ping-test","method":"ping"}"#)
@@ -65,7 +76,8 @@ func registerCommandDispatcherTests() {
         let dispatcher = CommandDispatcher(
             lineSource: { nil },
             outputSink: { _ in },
-            executor: mock
+            executor: mock,
+            healthStore: makeHealthStoreForTest()
         )
         let response = syncAwait {
             await dispatcher.dispatch(line: #"{"id":"cmd-x","method":"doesNotExist"}"#)
@@ -82,7 +94,8 @@ func registerCommandDispatcherTests() {
         let dispatcher = CommandDispatcher(
             lineSource: { nil },
             outputSink: { _ in },
-            executor: mock
+            executor: mock,
+            healthStore: makeHealthStoreForTest()
         )
         let script = "tell application \"Safari\" to return name of current tab of window 1"
         let encoded = script.replacingOccurrences(of: "\"", with: "\\\"")
@@ -101,7 +114,8 @@ func registerCommandDispatcherTests() {
         let dispatcher = CommandDispatcher(
             lineSource: { nil },
             outputSink: { _ in },
-            executor: mock
+            executor: mock,
+            healthStore: makeHealthStoreForTest()
         )
         let response = syncAwait {
             await dispatcher.dispatch(line: #"{"id":"exec-bad","method":"execute","params":{}}"#)
@@ -152,7 +166,8 @@ func registerCommandDispatcherTests() {
         let dispatcher = CommandDispatcher(
             lineSource: { nil },
             outputSink: { _ in },
-            executor: mock
+            executor: mock,
+            healthStore: makeHealthStoreForTest()
         )
         let response = syncAwait {
             await dispatcher.dispatch(line: #"{"id":"stop-1","method":"shutdown"}"#)
@@ -167,7 +182,8 @@ func registerCommandDispatcherTests() {
         let dispatcher = CommandDispatcher(
             lineSource: { nil },
             outputSink: { _ in },
-            executor: mock
+            executor: mock,
+            healthStore: makeHealthStoreForTest()
         )
         let response = syncAwait {
             await dispatcher.dispatch(line: "{ not valid json !!! }")
@@ -183,7 +199,8 @@ func registerCommandDispatcherTests() {
         let dispatcher = CommandDispatcher(
             lineSource: { nil },
             outputSink: { captured.append($0) },
-            executor: mock
+            executor: mock,
+            healthStore: makeHealthStoreForTest()
         )
         let response = syncAwait {
             await dispatcher.dispatch(line: #"{"id":"out-1","method":"ping"}"#)

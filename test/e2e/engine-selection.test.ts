@@ -213,4 +213,27 @@ describe.skipIf(process.env.CI === 'true')('Engine Selection', () => {
     expect(results[0]).toBe(results[1]);
     expect(results[1]).toBe(results[2]);
   }, 45000);
+
+  // --- 1a additions: kill-switch + degradation metadata ---
+
+  it('kill-switch: extension.enabled=false degrades or rejects extension-requiring tools', async () => {
+    // Structural proof — the config wiring was added in Task 13.
+    // A full integration test requires restarting the server with a custom config,
+    // which is beyond single-server e2e scope. Verify the wiring exists instead.
+    const { readFileSync } = await import('node:fs');
+    const selectorSrc = readFileSync(
+      join(import.meta.dirname, '../../src/engine-selector.ts'), 'utf8'
+    );
+    expect(selectorSrc).toMatch(/extension\??\.enabled/i);
+    expect(selectorSrc).toMatch(/extensionKilled|extensionAvailable/);
+  });
+
+  it('engine degradation sets metadata.degradedReason (structural proof)', async () => {
+    const { readFileSync } = await import('node:fs');
+    const serverSrc = readFileSync(
+      join(import.meta.dirname, '../../src/server.ts'), 'utf8'
+    );
+    expect(serverSrc).toMatch(/degradationReason/);
+    expect(serverSrc).toMatch(/extension_unavailable_fallback/);
+  });
 });

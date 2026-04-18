@@ -119,4 +119,15 @@ else
   echo "safari-pilot: Safari extension already present"
 fi
 
+# Install hourly health-check LaunchAgent
+HC_TEMPLATE="$ROOT/launchagents/com.safari-pilot.health-check.plist"
+HC_INSTALL="$HOME/Library/LaunchAgents/com.safari-pilot.health-check.plist"
+HC_SCRIPT="$ROOT/scripts/health-check.sh"
+HC_LOG="$HOME/.safari-pilot/health-check.log"
+
+if [[ -f "$HC_TEMPLATE" ]]; then
+  sed -e "s|__SCRIPT_PATH__|$HC_SCRIPT|g" -e "s|__HEALTH_LOG_PATH__|$HC_LOG|g" "$HC_TEMPLATE" > "$HC_INSTALL"
+  launchctl bootstrap "gui/$(id -u)" "$HC_INSTALL" 2>/dev/null || true
+fi
+
 echo "safari-pilot: Postinstall complete"

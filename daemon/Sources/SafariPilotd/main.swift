@@ -7,7 +7,7 @@ import AppKit
 
 // MARK: - Version
 
-private let version = "0.1.4"
+private let version = "0.1.6"
 
 // MARK: - Signal handling
 
@@ -140,19 +140,59 @@ final class RecoveryExecutor: ScriptExecutorProtocol, @unchecked Sendable {
 
 let recoveryExecutor = RecoveryExecutor(inner: executor, recovery: recovery, watchdog: watchdog)
 
+// 5.5 HealthStore — observability counters + persisted alarm-fire timestamp.
+//     Single shared instance; dispatcher reads/writes via extension_log +
+//     extension_health routes.
+let healthPath = FileManager.default.homeDirectoryForCurrentUser
+    .appendingPathComponent(".safari-pilot/health.json")
+try? FileManager.default.createDirectory(
+    at: healthPath.deletingLastPathComponent(),
+    withIntermediateDirectories: true
+)
+let healthStore = HealthStore(persistPath: healthPath)
+
 // 6. Command dispatcher — reads NDJSON from stdin, routes commands, writes
 //    NDJSON responses to stdout.
-let dispatcher = CommandDispatcher(executor: recoveryExecutor)
+let dispatcher = CommandDispatcher(
+    lineSource: { readLine(strippingNewline: true) },
+    outputSink: { line in
+        print(line, terminator: "")
+        // Flush stdout immediately so the TypeScript host receives responses
+        // without buffering delay.
+        fflush(stdout)
+    },
+    executor: recoveryExecutor,
+    extensionBridge: ExtensionBridge(),
+    healthStore: healthStore
+)
 
 // 7. Extension socket server — listens on TCP localhost for connections from the
 //    Safari extension handler (which proxies native messages from background.js).
 let socketServer = ExtensionSocketServer(port: 19474, dispatcher: dispatcher)
 socketServer.start()
 
+// 8. Extension HTTP server — listens on HTTP localhost for fetch() polling from
+//    the Safari extension background.js (replaces sendNativeMessage path).
+if #available(macOS 14.0, *) {
+    let httpServer = ExtensionHTTPServer(
+        port: 19475,
+        bridge: dispatcher.extensionBridge,
+        healthStore: healthStore
+    )
+    // start() spawns internal Tasks — errors are logged inside, not thrown.
+    httpServer.start()
+} else {
+    Logger.warning("ExtensionHTTPServer requires macOS 14+. Extension HTTP polling unavailable on this OS version.")
+}
+
 // Install SIGTERM handler before entering the run loop.
 installSIGTERMHandler()
 
-Logger.info("SafariPilotd: entering run loop — listening on stdin + TCP:19474")
+if #available(macOS 14.0, *) {
+    Logger.info("SafariPilotd: entering run loop — listening on stdin + TCP:19474 + HTTP:19475")
+} else {
+    Logger.info("SafariPilotd: entering run loop — listening on stdin + TCP:19474 (HTTP:19475 unavailable on this OS)")
+}
 
 // Start the dispatcher on a background Task so it doesn't block the main thread.
 // The main thread runs RunLoop.main.run() which is required for:

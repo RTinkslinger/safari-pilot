@@ -43,7 +43,7 @@ export class NavigationTools {
           },
           required: ['url'],
         },
-        requirements: {},
+        requirements: { idempotent: false },
       },
       {
         name: 'safari_navigate_back',
@@ -55,7 +55,7 @@ export class NavigationTools {
           },
           required: ['tabUrl'],
         },
-        requirements: {},
+        requirements: { idempotent: false },
       },
       {
         name: 'safari_navigate_forward',
@@ -67,7 +67,7 @@ export class NavigationTools {
           },
           required: ['tabUrl'],
         },
-        requirements: {},
+        requirements: { idempotent: false },
       },
       {
         name: 'safari_reload',
@@ -84,7 +84,7 @@ export class NavigationTools {
           },
           required: ['tabUrl'],
         },
-        requirements: {},
+        requirements: { idempotent: false },
       },
       {
         name: 'safari_new_tab',
@@ -103,7 +103,7 @@ export class NavigationTools {
           },
           required: [],
         },
-        requirements: {},
+        requirements: { idempotent: true },
       },
       {
         name: 'safari_close_tab',
@@ -115,7 +115,7 @@ export class NavigationTools {
           },
           required: ['tabUrl'],
         },
-        requirements: {},
+        requirements: { idempotent: false },
       },
       {
         name: 'safari_list_tabs',
@@ -126,7 +126,7 @@ export class NavigationTools {
           properties: {},
           required: [],
         },
-        requirements: {},
+        requirements: { idempotent: true },
       },
     ];
   }

@@ -56,7 +56,7 @@ describe.skipIf(process.env.CI === 'true')('MCP Handshake', () => {
     const tools = result['tools'] as Array<Record<string, unknown>>;
 
     expect(tools).toBeInstanceOf(Array);
-    expect(tools.length).toBe(76);
+    expect(tools.length).toBe(78);
   }, 15000);
 
   it('all tool names start with safari_', async () => {

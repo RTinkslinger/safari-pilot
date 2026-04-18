@@ -42,7 +42,7 @@ export class FrameTools {
           },
           required: ['tabUrl'],
         },
-        requirements: {},
+        requirements: { idempotent: true },
       },
       {
         name: 'safari_switch_frame',
@@ -60,7 +60,7 @@ export class FrameTools {
           },
           required: ['tabUrl', 'frameSelector'],
         },
-        requirements: {},
+        requirements: { idempotent: false },
       },
       {
         name: 'safari_eval_in_frame',
@@ -76,7 +76,7 @@ export class FrameTools {
           },
           required: ['tabUrl', 'frameSelector', 'script'],
         },
-        requirements: { requiresFramesCrossOrigin: true },
+        requirements: { idempotent: false, requiresFramesCrossOrigin: true },
       },
     ];
   }

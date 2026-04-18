@@ -40,8 +40,14 @@ export const ENGINE_CAPS: Record<Engine, EngineCapabilities> = {
 
 export function selectEngine(
   tool: ToolRequirements,
-  available: { daemon: boolean; extension: boolean }
+  available: { daemon: boolean; extension: boolean },
+  breaker?: { isEngineTripped(engine: string): boolean },
+  config?: { extension?: { enabled?: boolean } }
 ): Engine {
+  const extensionKilled = config?.extension?.enabled === false;
+  const breakerTripped = breaker?.isEngineTripped('extension') === true;
+  const extensionAvailable = available.extension && !extensionKilled && !breakerTripped;
+
   const needsExtension =
     tool.requiresShadowDom ||
     tool.requiresCspBypass ||
@@ -51,13 +57,13 @@ export function selectEngine(
     tool.requiresFramesCrossOrigin;
 
   if (needsExtension) {
-    if (available.extension) return 'extension';
+    if (extensionAvailable) return 'extension';
     throw new EngineUnavailableError(
       'This operation requires the Safari Web Extension which is not available'
     );
   }
 
-  if (available.extension) return 'extension';
+  if (extensionAvailable) return 'extension';
   if (available.daemon) return 'daemon';
   return 'applescript';
 }

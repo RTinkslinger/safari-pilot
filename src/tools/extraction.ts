@@ -68,7 +68,7 @@ export class ExtractionTools {
           },
           required: ['tabUrl'],
         },
-        requirements: {},
+        requirements: { idempotent: true },
       },
       {
         name: 'safari_get_text',
@@ -90,7 +90,7 @@ export class ExtractionTools {
           },
           required: ['tabUrl'],
         },
-        requirements: {},
+        requirements: { idempotent: true },
       },
       {
         name: 'safari_get_html',
@@ -116,7 +116,7 @@ export class ExtractionTools {
           },
           required: ['tabUrl'],
         },
-        requirements: {},
+        requirements: { idempotent: true },
       },
       {
         name: 'safari_get_attribute',
@@ -138,7 +138,7 @@ export class ExtractionTools {
           },
           required: ['tabUrl', 'attribute'],
         },
-        requirements: {},
+        requirements: { idempotent: true },
       },
       {
         name: 'safari_evaluate',
@@ -154,7 +154,7 @@ export class ExtractionTools {
           },
           required: ['tabUrl', 'script'],
         },
-        requirements: {},
+        requirements: { idempotent: false },
       },
       {
         name: 'safari_take_screenshot',
@@ -179,7 +179,7 @@ export class ExtractionTools {
           },
           required: [],
         },
-        requirements: {},
+        requirements: { idempotent: true },
       },
       {
         name: 'safari_get_console_messages',
@@ -199,7 +199,7 @@ export class ExtractionTools {
           },
           required: ['tabUrl'],
         },
-        requirements: {},
+        requirements: { idempotent: true },
       },
     ];
   }

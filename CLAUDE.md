@@ -112,7 +112,7 @@ AppleScript (80ms p50) →  Always available fallback, basic navigation/forms
 
 `engine-selector.ts` picks the best available engine by matching `ToolRequirements` against `ENGINE_CAPS`. If a tool needs `requiresShadowDom`, only Extension qualifies — if unavailable, `EngineUnavailableError` is thrown (not a silent fallback).
 
-**Extension IPC:** The Safari extension handler (`SafariWebExtensionHandler.swift`) is a TCP proxy. `background.js` calls `sendNativeMessage` → handler connects to daemon at `localhost:19474` via NWConnection → forwards message → returns daemon response. The daemon's `ExtensionSocketServer` accepts TCP connections and dispatches through `CommandDispatcher`. Commands queued via `ExtensionBridge` (in-memory) are polled by `background.js` and executed via `browser.scripting.executeScript` in the MAIN world. The custom handler source lives at `extension/native/SafariWebExtensionHandler.swift` and is copied into the Xcode project by `build-extension.sh` (the project generator creates a stub that gets replaced).
+**Extension IPC (HTTP short-poll):** `background.js` communicates with the daemon via HTTP `fetch()` to `127.0.0.1:19475` (Hummingbird). Three routes: `POST /connect` (reconcile on wake), `GET /poll` (5s hold for pending commands), `POST /result` (deliver execution result). The daemon's `ExtensionHTTPServer` serves these routes and accesses `ExtensionBridge` directly. Commands queued via `ExtensionBridge` (in-memory) are delivered via `/poll` and executed by `background.js` via content script relay or `browser.scripting.executeScript` in the MAIN world. `SafariWebExtensionHandler.swift` is a Xcode-required stub (echo-only) — the extension never calls `sendNativeMessage`. TCP:19474 (`ExtensionSocketServer`) is preserved for DaemonEngine, health checks, and benchmarks.
 
 ### Security Pipeline
 
@@ -307,7 +307,7 @@ Read `ARCHITECTURE.md` at session start. Before claiming any component "works," 
 - **macOS only** — package.json enforces `"os": ["darwin"]`. Node 20+.
 - **Single production dependency** — `@modelcontextprotocol/sdk`. Everything else is stdlib.
 - **AppleScript escaping** — double-escape both backslashes and quotes to survive the shell → AppleScript → JavaScript round-trip. See `buildTabScript()` in `applescript.ts`.
-- **Daemon IPC is dual** — stdin/stdout NDJSON for MCP commands, TCP localhost:19474 for extension handler connections. The extension handler (sandboxed appex) cannot access filesystem paths, so TCP replaced the original file-based bridge at `~/.safari-pilot/bridge/`.
+- **Daemon IPC is triple** — stdin/stdout NDJSON for MCP commands, TCP localhost:19474 for DaemonEngine/health-checks/benchmarks, HTTP localhost:19475 for extension `fetch()` polling (Hummingbird, requires macOS 14+). TCP:19474 and HTTP:19475 serve different clients — they are NOT interchangeable.
 - **Safari prerequisite** — "Allow JavaScript from Apple Events" must be enabled in Safari > Develop menu for any JS execution to work. Health check detects this (error code `-1743`).
 - **No credential access** — never touches macOS Keychain. Auth happens via real browser interaction only.
 - **SKIP_OWNERSHIP_TOOLS** — `safari_list_tabs`, `safari_new_tab`, `safari_health_check` bypass tab ownership checks.

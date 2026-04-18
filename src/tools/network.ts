@@ -62,7 +62,7 @@ export class NetworkTools {
           },
           required: ['tabUrl'],
         },
-        requirements: {},
+        requirements: { idempotent: true },
       },
       {
         name: 'safari_get_network_request',
@@ -84,7 +84,7 @@ export class NetworkTools {
           },
           required: ['tabUrl', 'url'],
         },
-        requirements: {},
+        requirements: { idempotent: true },
       },
       {
         name: 'safari_intercept_requests',
@@ -115,7 +115,7 @@ export class NetworkTools {
           },
           required: ['tabUrl'],
         },
-        requirements: {},
+        requirements: { idempotent: false },
       },
       {
         name: 'safari_network_throttle',
@@ -139,7 +139,7 @@ export class NetworkTools {
           },
           required: ['tabUrl', 'latencyMs'],
         },
-        requirements: { requiresNetworkIntercept: true },
+        requirements: { idempotent: false, requiresNetworkIntercept: true },
       },
       {
         name: 'safari_network_offline',
@@ -155,7 +155,7 @@ export class NetworkTools {
           },
           required: ['tabUrl', 'offline'],
         },
-        requirements: {},
+        requirements: { idempotent: false },
       },
       {
         name: 'safari_mock_request',
@@ -185,7 +185,7 @@ export class NetworkTools {
           },
           required: ['tabUrl', 'urlPattern'],
         },
-        requirements: {},
+        requirements: { idempotent: false },
       },
       {
         name: 'safari_websocket_listen',
@@ -205,7 +205,7 @@ export class NetworkTools {
           },
           required: ['tabUrl'],
         },
-        requirements: { requiresNetworkIntercept: true },
+        requirements: { idempotent: false, requiresNetworkIntercept: true },
       },
       {
         name: 'safari_websocket_filter',
@@ -226,7 +226,7 @@ export class NetworkTools {
           },
           required: ['tabUrl'],
         },
-        requirements: {},
+        requirements: { idempotent: true },
       },
     ];
   }

@@ -354,7 +354,7 @@ export class PdfTools {
           },
           required: ['path'],
         },
-        requirements: {} as ToolRequirements,
+        requirements: { idempotent: true } as ToolRequirements,
       },
     ];
   }

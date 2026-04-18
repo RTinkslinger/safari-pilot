@@ -163,7 +163,7 @@ export class DownloadTools {
             },
           },
         },
-        requirements: {} as ToolRequirements,
+        requirements: { idempotent: true } as ToolRequirements,
       },
     ];
   }

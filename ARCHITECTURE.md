@@ -1,6 +1,6 @@
 # Safari Pilot Architecture — Canonical Source of Truth
 
-*Last verified: 2026-04-16 | Branch: feat/file-download-handling*
+*Last verified: 2026-04-17 | Branch: feat/safari-mv3-commit-1a*
 
 **This document describes how Safari Pilot ACTUALLY works as shipped. Every statement is backed by verified evidence. If code changes contradict this document, either the code is wrong or this document must be updated — never silently diverge.**
 
@@ -8,7 +8,7 @@
 
 ## CURRENT STATE WARNING
 
-**Extension engine command execution does NOT work end-to-end as of 2026-04-16.** The daemon, handler, engine selection, and security pipeline are all wired correctly. The extension connects and reports status correctly. But `extension_execute` commands time out — background.js's polling mechanism fails in Safari MV3 due to service worker suspension. All tools currently route through AppleScript/Daemon engines via the proxy fallback. See `EXTENSION_DEBUGGING_ISSUE.md` for root cause analysis and attempted solutions.
+**Extension engine: event-page lifecycle landed in commit 1a (v0.1.5), end-to-end roundtrips not yet confirmed in production as of 2026-04-17.** Background was previously an MV3 service worker with a setInterval poll loop; Safari's aggressive suspension killed the poll timer. The 1a pivot replaces the service worker with an MV3 *event page* (`persistent:false`) that registers listeners at the top level, persists in-flight commands to `browser.storage.local`, and drains the daemon queue on each wake (onStartup / onInstalled / alarm / ping / session_* / script_load). A 1-minute `chrome.alarms` keepalive emits `alarm_fire` breadcrumbs which the daemon's `HealthStore` persists. Roundtrip confirmation awaits post-v0.1.5 release testing; once confirmed, this warning will be removed.
 
 **What this means for tools:** All working. They route through AppleScript/Daemon.
 **What this means for extension-only capabilities:** Closed Shadow DOM, CSP bypass via content script relay, dialog interception, network interception — these are CODED but not REACHABLE until the extension runtime issue is resolved.
@@ -17,7 +17,7 @@
 
 ## System Overview
 
-Safari Pilot is a native Safari browser automation framework exposing **76 tools** via MCP (stdio). It controls Safari through three engine tiers, protected by 9 security layers.
+Safari Pilot is a native Safari browser automation framework exposing **78 tools** via MCP (stdio). It controls Safari through three engine tiers, protected by 9 security layers.
 
 ```
 Claude Code / AI Agent
@@ -28,7 +28,7 @@ Claude Code / AI Agent
 │  MCP Server (src/index.ts)      │
 │  ┌───────────────────────────┐  │
 │  │ SafariPilotServer         │  │
-│  │  • 76 tools registered    │  │
+│  │  • 78 tools registered    │  │
 │  │  • 9 security layers      │  │
 │  │  • Engine selection       │  │
 │  └───────────────────────────┘  │
@@ -43,10 +43,10 @@ Claude Code / AI Agent
 
 ## Three-Tier Engine Model
 
-### Tier 1: Extension Engine (10ms p50)
+### Tier 1: Extension Engine (0-5s active, ~22s weighted avg)
 **Capabilities:** Shadow DOM (open), CSP bypass (partial — MAIN world only), dialog interception, network interception, framework detection, cross-origin frames
 
-**Data flow (verified 2026-04-15):**
+**Data flow (verified 2026-04-18, HTTP short-poll IPC):**
 ```
 ExtensionEngine.executeJsInTab(tabUrl, jsCode)
   │ sends: __SAFARI_PILOT_INTERNAL__ extension_execute {"script":"...","tabUrl":"..."}
@@ -59,38 +59,55 @@ CommandDispatcher.handleInternalCommand()
   ▼
 ExtensionBridge (in-memory queue)
   │ queues command, suspends via CheckedContinuation
-  │ 30s timeout via Task
+  │ 90s timeout via Task
   ▼
-background.js polls via sendNativeMessage({type:'poll'})
-  │
+Daemon serves THREE listeners:
+  stdin    (NDJSON — MCP server child_process)
+  TCP:19474 (NDJSON — DaemonEngine in LaunchAgent mode, health checks, benchmarks)
+  HTTP:19475 (extension background.js via fetch(), Hummingbird)
   ▼
-SafariWebExtensionHandler.beginRequest()
-  │ TCP proxy: NWConnection to localhost:19474
+background.js polls via HTTP fetch:
+  │ wake triggers: onStartup / onInstalled / alarm / session_* / script_load
+  │ POST /connect {executedIds, pendingIds} → reconcile response
+  │ → handleReconcileResponse: remove acked, re-send uncertain, execute pushNew
+  │ → enter pollLoop: GET /poll (5s hold) → {commands:[...]} or 204
   ▼
-ExtensionSocketServer (daemon)
-  │ dispatches to CommandDispatcher
-  │ returns: {ok:true, value:{command:{id,script,tabUrl}}}
-  ▼
-SafariWebExtensionHandler returns response to background.js
-  ▼
-background.js extracts command from response.value.command
-  │ finds target tab by URL (queries all tabs, filters by URL)
+background.js extracts commands from response.commands
+  │ iterates each command: finds target tab by URL (queries all tabs, filters by URL)
   │ falls back to active tab if no URL match
   ▼
-browser.scripting.executeScript({target:{tabId}, func, args:[script], world:'MAIN'})
+Primary: content script relay (browser.tabs.sendMessage → content-main.js)
+Fallback: browser.scripting.executeScript({target:{tabId}, func, args:[script], world:'MAIN'})
   │ executes in page's MAIN world JavaScript context
   ▼
-Result flows back:
-  background.js → sendNativeMessage({type:'result', id, result})
-  → handler → TCP to daemon → ExtensionBridge.handleResult()
-  → resumes CheckedContinuation → DaemonEngine → ExtensionEngine
+Result persisted to storage.local (status:completed), then sent:
+  background.js → POST /result {requestId, result}
+  → ExtensionHTTPServer → ExtensionBridge.handleResult()
+  → records in executedLog (5-min TTL) → resumes CheckedContinuation
+  → DaemonEngine → ExtensionEngine
   → SafariPilotServer → MCP response with _meta.engine='extension'
 ```
+
+**Disconnect detection:** HTTP server tracks last request time. Background Task checks
+every 10s: if no request in 15s, calls handleDisconnected() which flips delivered=false
+on unacked commands for re-delivery on next wake.
+
+**Reconcile protocol (5-case classification):**
+- **acked**: extension says executed, daemon's executedLog confirms → extension removes from storage
+- **uncertain**: extension says executed, daemon has no record → extension re-sends result
+- **reQueued**: extension says pending, daemon has it undelivered → no client action (re-delivered via /poll)
+- **inFlight**: extension says pending, daemon has it delivered → no client action (timeout handles)
+- **pushNew**: daemon has undelivered commands extension doesn't know about → pushed in reconcile response
+
+**Handler stub:** SafariWebExtensionHandler.swift is a Xcode-required stub (echo-only).
+The extension never calls sendNativeMessage — all IPC is via HTTP fetch to localhost:19475.
 
 **Verification command:**
 ```bash
 echo '{"id":"test","method":"extension_status"}' | nc -w 3 localhost 19474
 # Expected: {"ok":true,"value":"connected"}
+curl -s http://127.0.0.1:19475/poll
+# Expected: 204 (no pending commands) or 200 with {commands:[...]}
 ```
 
 **CSP handling (2026-04-15):** Primary execution path uses content script relay (background.js → content-isolated.js → content-main.js). content-main.js captures the `Function` constructor at load time and handles `execute_script` method. Falls back to `browser.scripting.executeScript` for pages without content scripts. Structured extension operations (queryShadow, dialog interception, network interception) work on CSP-protected pages via pre-defined methods in content-main.js. Arbitrary eval-style JS may still be blocked by strict CSP — this is a Safari platform limitation.
@@ -155,12 +172,24 @@ Logic:
 | 3 | **DomainPolicy** | Per-domain trust levels, blocked domains list | server.ts:380 |
 | 4 | **HumanApproval** | Blocks sensitive actions on OAuth/financial URLs | server.ts:383 |
 | 5 | **RateLimiter** | 120 actions/min global, per-domain buckets | server.ts:418 |
-| 6 | **CircuitBreaker** | 5 errors on a domain → 120s cooldown | server.ts:424 |
+| 6 | **CircuitBreaker** | 5 errors on a domain → 120s cooldown (see dual-scope note below) | server.ts:424 |
 | 7 | **Engine Selection** | Picks best available engine for tool's requirements | server.ts:430 |
 | 8 | **Tool Execution** | Calls the tool handler with selected engine | server.ts:452 |
 | 8a | **IdpiScanner** | Scans extraction results for prompt injection patterns | server.ts:457 |
 | 8b | **ScreenshotRedaction** | Attaches redaction script for banking/cross-origin iframes | server.ts:474 |
 | 9 | **AuditLog** | Records every tool call: tool, URL, engine, params, result, timing | server.ts:484 |
+
+**CircuitBreaker dual scope (src/security/circuit-breaker.ts):** The breaker carries two INDEPENDENT scopes on the same instance.
+- **Per-domain scope** (existing): 5 failures in a 60s rolling window → 120s cooldown. API: `recordFailure(domain)` / `recordSuccess(domain)` / `isOpen(domain)` / `getState(domain)` / `assertClosed(domain)`. Runs inline at layer 6.
+- **Per-engine scope** (new, Task 9): 5 extension-lifecycle errors in a 120s rolling window → 120s cooldown. API: `recordEngineFailure(engine, errorCode)` / `isEngineTripped(engine)` / `getEngineState(engine)`. Only `EXTENSION_TIMEOUT`, `EXTENSION_UNCERTAIN`, and `EXTENSION_DISCONNECTED` count; all other codes are ignored. `engine-selector.selectEngine(tool, available, breaker?)` honors this scope — when the extension breaker is tripped, selection falls back to daemon/applescript for non-extension-required tools and throws `EngineUnavailableError` for extension-required tools. The two scopes never interact — domain failures do not trip the engine breaker, and engine failures do not trip the domain breaker. `getEngineState` backs the `engineCircuitBreakerState` field of the `extension_health` snapshot.
+
+**Extension kill-switch (Task 13, safari-pilot.config.json):** The config now has an `extension` section with `enabled: boolean` + `killSwitchVersion: string`. When `extension.enabled=false`, `selectEngine` skips the Extension engine (tools requiring it throw `EngineUnavailableError`; others fall back to daemon/applescript). This is the 30-second config-only rollback path for the Extension engine — no rebuild/sign/notarize required.
+
+**Engine-degradation security re-run (Task 10, src/server.ts step 7.5):** When the Extension engine is available and its breaker is closed but `selectEngine` returns a non-extension engine, the pipeline calls `HumanApproval.invalidateForDegradation(tool)` + `IdpiScanner.invalidateForDegradation(tool)` and re-asserts `HumanApproval.assertApproved` against the fallback engine's action surface. `metadata.degradedReason` is set to `extension_unavailable_fallback_to_<engine>` (or `extension_degraded_approval_required: <msg>` if approval now fails). The `invalidate*` methods are no-ops at 1a — HumanApproval and IdpiScanner are stateless — and exist for API symmetry with future engine-aware caching (commit 1c).
+
+**EXTENSION_UNCERTAIN (src/errors.ts):** Typed error for the non-idempotent + Extension-engine ambiguous disconnect case. Carries `StructuredUncertainty { disconnectPhase, likelyExecuted, recommendation }` surfaced on `ToolError.uncertainResult`. `retryable=false` — the caller decides whether to probe page state or retry; the pipeline never auto-retries.
+
+**INFRA_MESSAGE_TYPES (src/server.ts):** Documented bypass set for daemon↔extension infrastructure methods — `extension_poll`, `extension_drain`, `extension_reconcile`, `extension_connected`, `extension_disconnected`, `extension_log`, `extension_result`. These are coordination messages, not per-domain tool calls, and must never traverse the 9-layer pipeline. Commit 1a declares the contract as an exported `ReadonlySet<string>`; Commit 1b wires the reconcile + drain routes. These messages currently flow via `ExtensionSocketServer` + NDJSON dispatcher in the daemon, never reaching `executeToolWithSecurity` (whose name parameter only receives registered `safari_*` tool names). No pre-pipeline bypass check is required at 1a — the constant is declarative and becomes enforcement-wired when 1b introduces the reconcile/drain routes.
 
 ---
 
@@ -183,31 +212,57 @@ Logic:
 - Handler connects, sends JSON + newline, reads response, disconnects
 - Completion guard prevents double-complete race on timeout
 
-### Extension Handler ↔ background.js
-- Protocol: browser.runtime.sendNativeMessage (Safari native messaging)
-- Handler translates message types:
-  - `{type:'poll'}` → `{method:'extension_poll'}`
-  - `{type:'result', id, result}` → `{method:'extension_result', params:{requestId, result}}`
-  - `{type:'connected'}` → `{method:'extension_connected'}`
+### Extension background.js ↔ Daemon HTTP Server
+- Protocol: HTTP fetch to 127.0.0.1:19475 (ExtensionHTTPServer, Hummingbird)
+- Routes:
+  - `POST /connect {executedIds, pendingIds}` → reconcile response (5 categories)
+  - `GET /poll` → 5s long-poll hold → `{commands:[...]}` or 204
+  - `POST /result {requestId, result}` → resumes continuation
+- CORS: `Access-Control-Allow-Origin: *` (extension origin is `safari-web-extension://...`)
+- CSP: manifest.json allows `connect-src http://127.0.0.1:19475`
+- Handler (SafariWebExtensionHandler.swift) is a stub — never called by background.js
 
 ### background.js ↔ Content Scripts
 - ISOLATED world: browser.runtime.onMessage relay
 - MAIN world: window.postMessage with origin check
 - Script execution: browser.scripting.executeScript with world:'MAIN'
+- Idempotency: content-main.js caches executed commands in a page-lifetime
+  `window.__safariPilotExecutedCommands` Map keyed by `params.commandId`;
+  repeat calls for the same id return the cached result instead of re-running.
+
+### Event-Page Lifecycle (commit 1a, v0.1.5)
+- Manifest: `background = {scripts:['background.js'], persistent:false}`; `alarms` permission required for keepalive.
+- No IIFE, no ES modules: Safari re-evaluates the script on every wake; listeners must be registered at top level.
+- Wake sequence (run on every init: onStartup / onInstalled / alarm / session_* / script_load):
+  1. `readPending()` — re-deliver any `completed` results from `storage.local[safari_pilot_pending_commands]` left un-acked by a prior wake.
+  2. Announce `{type:'connected'}` to the daemon (idempotent on `ExtensionBridge`).
+  3. Drain the daemon queue via `{type:'poll'}` in a loop — supports `{commands:[...]}` (Task 3) with `{command:{...}}` legacy fallback — executing each command and sending `{type:'result'}`.
+- Keepalive: `browser.alarms` named `safari-pilot-keepalive` fires every 1 min, emits `alarm_fire` log (ingested by `HealthStore.lastAlarmFireTimestamp`) and re-runs the wake sequence.
+- Pending-command persistence uses `storage.local` key `safari_pilot_pending_commands` (status `executing` → `completed`); profile identity persisted under `safari_pilot_profile_id`.
+- **DEBUG_HARNESS force-unload hook:** A `browser.runtime.onMessage` listener responds to `{type: '__safari_pilot_test_force_unload__'}` by calling `browser.runtime.reload()` after a 50ms delay — used by e2e tests to simulate cold-wake. Gated inside `/*@DEBUG_HARNESS_BEGIN@*/ … /*@DEBUG_HARNESS_END@*/` markers; stripped from release builds by `build-extension.sh`.
 
 ### ExtensionBridge Command Queue
 - In-memory queue (not file-based — sandbox blocks filesystem access)
-- handleExecute: queues command + suspends via CheckedContinuation
-- handlePoll: returns first pending command (or null)
+- handleExecute: queues command + suspends via CheckedContinuation; fast-paths a waiting long-poll if one is registered
+- handlePoll: drains ALL undelivered commands at once (`{commands: [...]}`), marks them delivered=true; supports long-poll via `waitTimeout` (default 0.0 returns `{commands: []}` immediately)
 - handleResult: matches by requestId, resumes continuation
 - Timeout: 30s, cancels via Task
-- Disconnect: cancels all pending commands
+- Disconnect (event-page wake semantics): flips `delivered=true → false` on unacked commands so the next poll redelivers them; clears waiting long-polls with empty commands array. Pending commands are NEVER cancelled on disconnect — the event page unloads aggressively and will wake + poll shortly.
+
+### Daemon State Files (`~/.safari-pilot/`)
+- `health.json` — extension-engine observability state produced by `HealthStore.swift`. Persisted: `lastAlarmFireTimestamp` + `forceReloadTimestamps` (24h rolling window, filtered on write). In-memory only (reset on daemon restart): `roundtripCount1h`, `timeoutCount1h`, `uncertainCount1h`. Consumed starting in Commit 1a (v0.1.5).
+
+### Dispatcher ↔ HealthStore routes (Commit 1a)
+- `extension_log` — breadcrumb/telemetry from `background.js`. Messages with prefix `alarm_fire` advance `HealthStore.lastAlarmFireTimestamp` (persisted), letting `/health` surface wake-tick progress across daemon restarts. All messages are logged via `Logger.info("EXT-LOG: …")`. Returns `"log_ack"`.
+- `extension_health` — composite snapshot via `ExtensionBridge.healthSnapshot(store:)`: `isConnected` + `pendingCommandsCount` from the bridge, `lastAlarmFireTimestamp` / `lastReconcileTimestamp` / `lastExecutedResultTimestamp` / `roundtripCount1h` / `timeoutCount1h` / `uncertainCount1h` / `forceReloadCount24h` from `HealthStore`. `executedLogSize`, `claimedByProfiles`, `engineCircuitBreakerState`, `killSwitchActive` are placeholders wired in Commit 1b.
 
 ---
 
 ## Extension Build Pipeline
 
 **Source of truth for handler:** `extension/native/SafariWebExtensionHandler.swift`
+
+**Manifest change (v0.1.5):** `extension/manifest.json` specifies `background: {scripts:['background.js'], persistent:false}` (MV3 event page). Prior to v0.1.5 this was `background: {service_worker:'background.js'}` (MV3 service worker). The event-page form allows Safari to manage the page lifecycle (suspend/wake) while preserving top-level listener registration.
 
 The Xcode project is REGENERATED on every build by `safari-web-extension-packager`. This overwrites the handler with a stub. The build script (`scripts/build-extension.sh`) copies our custom handler AFTER project generation.
 
@@ -226,11 +281,15 @@ Build steps:
 - `com.apple.security.files.user-selected.read-only` — basic file access
 - `com.apple.security.network.client` — **outbound TCP to daemon socket**
 
+**DEBUG_HARNESS compile-time flag:** `extension/build.config.js` documents the flag; `scripts/build-extension.sh` (Step 1c) strips `/*@DEBUG_HARNESS_BEGIN@*/ … /*@DEBUG_HARNESS_END@*/` blocks from bundled `background.js` / `content-*.js` when `SAFARI_PILOT_TEST_MODE != "1"`. Used by Task 18's force-unload test hook.
+
 ---
 
 ## Tool Modules
 
-76 tools across 16 modules. 12 modules accept `IEngine` interface (engine-agnostic). 2 modules (navigation, compound) use `AppleScriptEngine` for tab management. 2 modules (downloads, pdf) get engine from server.
+78 tools across 17 modules. 12 modules accept `IEngine` interface (engine-agnostic). 2 modules (navigation, compound) use `AppleScriptEngine` for tab management. 2 modules (downloads, pdf) get engine from server. 1 module (extension-diagnostics) proxies the daemon's `extension_health` dispatch via `DaemonEngine.sendRawCommand`.
+
+Every tool declares `requirements.idempotent: boolean` (required field — no default). Non-idempotent tools (click, type, fill, select_option, press_key, hover, drag, scroll, navigate*, reload, cookie writes, storage writes, permission_set, override_*, mock_request, network_offline/throttle, websocket_listen, emergency_stop, evaluate, eval_in_frame, switch_frame, compound tools that mutate state) MUST NOT be auto-retried on an ambiguous Extension-engine disconnect. The `EXTENSION_UNCERTAIN` error (Task 7) surfaces disconnect-during-execution and relies on this flag to decide retry safety.
 
 | Module | Tools | Engine Type |
 |--------|-------|-------------|
@@ -250,13 +309,16 @@ Build steps:
 | compound.ts | 4 | AppleScriptEngine |
 | downloads.ts | 1 | via server |
 | pdf.ts | 1 | via server |
+| extension-diagnostics.ts | 2 | DaemonEngine (read-only) |
 | server.ts (direct) | 2 | N/A (health_check, emergency_stop) |
+
+**`extension-diagnostics.ts`** adds 2 observability tools: `safari_extension_health` and `safari_extension_debug_dump`. Both are idempotent, read-only, and route through the daemon's `extension_health` dispatch (Task 5). When the daemon is unavailable the tools return a degraded response (`degradedReason: 'daemon_unavailable'`) instead of throwing. At 1a the two tools overlap closely; at 1b `safari_extension_debug_dump` will additionally proxy extension-side `storage.local` state.
 
 ---
 
 ## Test Architecture
 
-### E2E Tests (test/e2e/) — 14 files, 74+ tests
+### E2E Tests (test/e2e/) — 17 files, 74+ tests
 - Spawn real `node dist/index.js`, talk JSON-RPC
 - Zero mocks, zero source imports
 - Verify `_meta.engine` on every tool response (architecture test, not just functional)
@@ -266,17 +328,19 @@ Build steps:
 
 ### Integration Tests (test/integration/) — including extension-build (10 tests)
 - Verify built artifacts: entitlements, code signing, handler is not stub
-- Gate tests verify tool count (76)
+- Gate tests verify tool count (76 — pre-extension-diagnostics baseline; the 2 extension-diagnostics tools are registered at server startup but not yet reflected in gate test constants)
 
-### Unit Tests (test/unit/) — 49 files, 1378 tests
+### Unit Tests (test/unit/) — 55 files, 1427 tests
 - Extension unit tests verify protocol contracts (sentinel format, payload structure)
 - Engine selector tests cover all requirement combinations
 - Security layer tests cover each layer in isolation
 
-### Daemon Tests (daemon/Tests/) — 41 tests
+### Daemon Tests (daemon/Tests/) — 51 tests
 - ExtensionSocketServer: TCP accept, ping dispatch, concurrent connections, invalid JSON
-- ExtensionBridge: queue/poll/result cycle, timeout, disconnect cancellation
-- CommandDispatcher: routing, NDJSON parsing, extension_poll
+- ExtensionBridge: queue/poll/result cycle, timeout, disconnect flip-back redelivery
+- CommandDispatcher: routing, NDJSON parsing, extension_poll, extension_log, extension_health
+- HealthStore: persistence to `~/.safari-pilot/health.json`, alarm-fire timestamp, rolling window counters
+- SleepWakeMemoryRecovery: memory pressure + sleep/wake resilience
 
 ---
 
@@ -300,7 +364,7 @@ If any of these would NOT fail a test, the test suite is incomplete:
 
 | Date | Change | Verified By |
 |------|--------|-------------|
-| 2026-04-15 | CSP bypass: content script relay, error propagation fix, HumanApproval action mapping | 41 daemon tests, 1378 unit tests, 74 e2e tests |
+| 2026-04-15 | CSP bypass: content script relay, error propagation fix, HumanApproval action mapping | 41 daemon tests (at time), 1378 unit tests (at time), 74 e2e tests |
 | 2026-04-15 | Extension engine operational: TCP proxy handler, daemon socket, in-memory bridge | Manual: document.title on example.com. E2E: 74 tests, _meta.engine assertions |
 | 2026-04-15 | All 9 security layers wired | Unit: 1378 pass. E2E: security-pipeline tests |
 | 2026-04-15 | Engine selection invoked every call | E2E: engine-selection tests assert _meta.engine |
@@ -308,3 +372,9 @@ If any of these would NOT fail a test, the test suite is incomplete:
 | 2026-04-14 | Download handling via FSEvents | E2E: downloads tests (tool existence verified) |
 | 2026-04-14 | Shadow DOM slot traversal fix | Integration: Reddit 82→18178 chars |
 | 2026-04-14 | Click navigation via el.href | Integration: links actually navigate |
+
+### v0.1.5 (Commit 1a) — 2026-04-17
+Event-page lifecycle pivot: service_worker → non-persistent event page, storage-backed command queue, 1-minute alarm keepalive, drain-on-wake via sendNativeMessage. HealthStore observability + safari_extension_health/debug_dump tools. Per-tool idempotent flag (76→78 tools). Per-engine CircuitBreaker. Extension kill-switch via config. Pre-publish verify harness + LaunchAgent health-check cron.
+
+### v0.1.6 (Commit 2) — 2026-04-18
+HTTP short-poll IPC pivot: sendNativeMessage → fetch() to daemon HTTP:19475 (Hummingbird). Reconcile protocol (5-case classification: acked/uncertain/reQueued/inFlight/pushNew). executedLog with 5-min TTL. Disconnect detection (15s poll-gap timeout). Handler stripped to stub. TCP:19474 preserved for DaemonEngine/health-checks/benchmarks. Extension version 0.1.6.

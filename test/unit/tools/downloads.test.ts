@@ -83,9 +83,9 @@ describe('DownloadTools - getDefinitions()', () => {
     expect(props).toHaveProperty('tabUrl');
   });
 
-  it('requirements is an empty object', () => {
+  it('requirements declares the idempotent flag', () => {
     const reqs = tools.getDefinitions()[0].requirements;
-    expect(reqs).toEqual({});
+    expect(reqs).toEqual({ idempotent: true });
   });
 
   it('all tools have the safari_ prefix', () => {
