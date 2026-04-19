@@ -223,9 +223,11 @@ Add to `registerExtensionBridgeTests()` in `daemon/Tests/SafariPilotdTests/Exten
 ```swift
 test("testHealthSnapshotIncludesHttpCounters") {
     let bridge = ExtensionBridge()
-    let tmpPath = FileManager.default.temporaryDirectory
-        .appendingPathComponent("test-health-\(UUID().uuidString).json")
-    let health = HealthStore(persistPath: tmpPath)
+    let tmpDir = FileManager.default.temporaryDirectory
+        .appendingPathComponent("safari-pilot-tests-\(UUID().uuidString)")
+    try? FileManager.default.createDirectory(at: tmpDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tmpDir) }
+    let health = HealthStore(persistPath: tmpDir.appendingPathComponent("health.json"))
 
     let snapshot = bridge.healthSnapshot(store: health)
     // Verify new HTTP counter fields exist with correct types
