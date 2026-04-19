@@ -45,30 +45,48 @@ Add to `registerHealthStoreTests()` in `daemon/Tests/SafariPilotdTests/HealthSto
 
 ```swift
 test("testHttpBindFailureCountStartsAtZero") {
-    let tmpPath = FileManager.default.temporaryDirectory
-        .appendingPathComponent("test-health-\(UUID().uuidString).json")
-    let store = HealthStore(persistPath: tmpPath)
+    let (dir, healthPath) = makeTempHealthPath()
+    defer { cleanup(dir) }
+    let store = HealthStore(persistPath: healthPath)
     try assertEqual(store.httpBindFailureCount, 0)
 }
 
 test("testHttpBindFailureCountIncrementsAndPersists") {
-    let tmpPath = FileManager.default.temporaryDirectory
-        .appendingPathComponent("test-health-\(UUID().uuidString).json")
-    let store = HealthStore(persistPath: tmpPath)
+    let (dir, healthPath) = makeTempHealthPath()
+    defer { cleanup(dir) }
+    let store = HealthStore(persistPath: healthPath)
     store.recordHttpBindFailure()
     store.recordHttpBindFailure()
     try assertEqual(store.httpBindFailureCount, 2)
 
     // Verify persistence: create new store from same path
-    let store2 = HealthStore(persistPath: tmpPath)
+    let store2 = HealthStore(persistPath: healthPath)
     try assertEqual(store2.httpBindFailureCount, 2,
                     "httpBindFailureCount should survive daemon restart")
 }
 
+test("testHttpBindFailureCountSurvivesUnrelatedPersist") {
+    // Critical: recordAlarmFire() and incrementForceReload() call persist().
+    // If persist() doesn't pass httpBindFailureCount explicitly, the counter
+    // resets to nil/0 because the Optional PersistedState field defaults to nil.
+    let (dir, healthPath) = makeTempHealthPath()
+    defer { cleanup(dir) }
+    let store = HealthStore(persistPath: healthPath)
+    store.recordHttpBindFailure()
+    try assertEqual(store.httpBindFailureCount, 1)
+
+    // This calls persist() internally — must preserve httpBindFailureCount
+    store.recordAlarmFire()
+
+    let store2 = HealthStore(persistPath: healthPath)
+    try assertEqual(store2.httpBindFailureCount, 1,
+                    "httpBindFailureCount must survive recordAlarmFire persist")
+}
+
 test("testHttpRequestErrorCount1hRollingWindow") {
-    let tmpPath = FileManager.default.temporaryDirectory
-        .appendingPathComponent("test-health-\(UUID().uuidString).json")
-    let store = HealthStore(persistPath: tmpPath)
+    let (dir, healthPath) = makeTempHealthPath()
+    defer { cleanup(dir) }
+    let store = HealthStore(persistPath: healthPath)
     store.recordHttpRequestError()
     store.recordHttpRequestError()
     try assertEqual(store.httpRequestErrorCount1h, 2)
@@ -198,19 +216,41 @@ if [[ "$HTTP_BIND_FAIL" -gt 0 ]]; then BREACH="$BREACH http-bind-failure"; fi
 if [[ "$HTTP_REQ_ERR" -gt 5 ]]; then BREACH="$BREACH http-request-errors"; fi
 ```
 
-- [ ] **Step 1.3: Run daemon tests to verify healthSnapshot includes new fields**
+- [ ] **Step 1.3: Add healthSnapshot field assertion test**
+
+Add to `registerExtensionBridgeTests()` in `daemon/Tests/SafariPilotdTests/ExtensionBridgeTests.swift`:
+
+```swift
+test("testHealthSnapshotIncludesHttpCounters") {
+    let bridge = ExtensionBridge()
+    let tmpPath = FileManager.default.temporaryDirectory
+        .appendingPathComponent("test-health-\(UUID().uuidString).json")
+    let health = HealthStore(persistPath: tmpPath)
+
+    let snapshot = bridge.healthSnapshot(store: health)
+    // Verify new HTTP counter fields exist with correct types
+    try assertTrue(snapshot["httpBindFailureCount"] is Int,
+                   "httpBindFailureCount should be Int, got \(type(of: snapshot["httpBindFailureCount"]))")
+    try assertTrue(snapshot["httpRequestErrorCount1h"] is Int,
+                   "httpRequestErrorCount1h should be Int, got \(type(of: snapshot["httpRequestErrorCount1h"]))")
+    try assertEqual(snapshot["httpBindFailureCount"] as? Int, 0)
+    try assertEqual(snapshot["httpRequestErrorCount1h"] as? Int, 0)
+}
+```
+
+- [ ] **Step 1.4: Run daemon tests to verify all pass**
 
 ```bash
 cd /Users/Aakash/Claude\ Projects/Skills\ Factory/safari-pilot
-swift build --package-path daemon && daemon/.build/debug/SafariPilotdTests 2>&1 | grep -E "testExtensionHealth|Results"
+swift build --package-path daemon && daemon/.build/debug/SafariPilotdTests 2>&1 | grep -E "testHealthSnapshot|testExtensionHealth|Results"
 ```
 
-The existing `testExtensionHealthReturnsComposite` test verifies the snapshot shape. After adding the new fields, verify it still passes (the test checks specific fields but the dictionary can contain extras).
+Expected: both existing `testExtensionHealthReturnsComposite` and new `testHealthSnapshotIncludesHttpCounters` pass.
 
-- [ ] **Step 1.4: Commit**
+- [ ] **Step 1.5: Commit**
 
 ```bash
-git add daemon/Sources/SafariPilotdCore/ExtensionBridge.swift scripts/health-check.sh
+git add daemon/Sources/SafariPilotdCore/ExtensionBridge.swift daemon/Tests/SafariPilotdTests/ExtensionBridgeTests.swift scripts/health-check.sh
 git commit -m "feat(health): wire httpBindFailureCount + httpRequestErrorCount1h into healthSnapshot and health-check.sh"
 ```
 
@@ -713,6 +753,8 @@ export default defineConfig({
       provider: 'v8',
       include: ['src/**/*.ts'],
     },
+    // E2E tests share Safari — multiple MCP servers creating tabs simultaneously
+    // causes tab URL matching failures. Run test files sequentially.
     fileParallelism: false,
   },
 });
