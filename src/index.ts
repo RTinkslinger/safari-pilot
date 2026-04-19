@@ -12,7 +12,7 @@ async function main(): Promise<void> {
   await safariPilot.start();
 
   const server = new Server(
-    { name: 'safari-pilot', version: '0.1.4' },
+    { name: 'safari-pilot', version: '0.1.6' },
     { capabilities: { tools: {} } },
   );
 

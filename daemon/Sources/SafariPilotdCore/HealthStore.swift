@@ -10,11 +10,13 @@ public final class HealthStore: @unchecked Sendable {
         queue.sync { _lastAlarmFireTimestamp }
     }
     private var forceReloadTimestamps: [Date] = []
+    private var _httpBindFailureCount: Int = 0
 
     // In-memory: resets on daemon restart
     private var roundtripTimestamps: [Date] = []
     private var timeoutTimestamps: [Date] = []
     private var uncertainTimestamps: [Date] = []
+    private var httpRequestErrorTimestamps: [Date] = []
     private var _lastReconcileTimestamp: Date? = nil
     public var lastReconcileTimestamp: Date? {
         queue.sync { _lastReconcileTimestamp }
@@ -32,6 +34,7 @@ public final class HealthStore: @unchecked Sendable {
            let decoded = try? JSONDecoder().decode(PersistedState.self, from: data) {
             self._lastAlarmFireTimestamp = decoded.lastAlarmFireTimestamp
             self.forceReloadTimestamps = decoded.forceReloadTimestamps
+            self._httpBindFailureCount = decoded.httpBindFailureCount ?? 0
         }
     }
 
@@ -39,6 +42,8 @@ public final class HealthStore: @unchecked Sendable {
     public var timeoutCount1h: Int { queue.sync { countInWindow(timeoutTimestamps, seconds: 3600) } }
     public var uncertainCount1h: Int { queue.sync { countInWindow(uncertainTimestamps, seconds: 3600) } }
     public var forceReloadCount24h: Int { queue.sync { countInWindow(forceReloadTimestamps, seconds: 86400) } }
+    public var httpBindFailureCount: Int { queue.sync { _httpBindFailureCount } }
+    public var httpRequestErrorCount1h: Int { queue.sync { countInWindow(httpRequestErrorTimestamps, seconds: 3600) } }
 
     public func recordAlarmFire(at date: Date = Date()) {
         queue.sync {
@@ -63,6 +68,17 @@ public final class HealthStore: @unchecked Sendable {
     public func markReconcile() { queue.sync { _lastReconcileTimestamp = Date() } }
     public func markExecutedResult() { queue.sync { _lastExecutedResultTimestamp = Date() } }
 
+    public func recordHttpBindFailure() {
+        queue.sync {
+            _httpBindFailureCount += 1
+            persist()
+        }
+    }
+
+    public func recordHttpRequestError() {
+        queue.sync { httpRequestErrorTimestamps.append(Date()) }
+    }
+
     private func countInWindow(_ ts: [Date], seconds: TimeInterval) -> Int {
         let cutoff = Date(timeIntervalSinceNow: -seconds)
         return ts.filter { $0 >= cutoff }.count
@@ -73,7 +89,8 @@ public final class HealthStore: @unchecked Sendable {
             lastAlarmFireTimestamp: _lastAlarmFireTimestamp,
             forceReloadTimestamps: forceReloadTimestamps.filter {
                 $0 >= Date(timeIntervalSinceNow: -86400)
-            }
+            },
+            httpBindFailureCount: _httpBindFailureCount
         )
         if let data = try? JSONEncoder().encode(state) {
             try? data.write(to: persistPath, options: .atomic)
@@ -83,5 +100,6 @@ public final class HealthStore: @unchecked Sendable {
     private struct PersistedState: Codable {
         let lastAlarmFireTimestamp: Date
         let forceReloadTimestamps: [Date]
+        var httpBindFailureCount: Int?
     }
 }

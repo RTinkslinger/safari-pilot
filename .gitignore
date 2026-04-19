@@ -17,3 +17,4 @@ test/e2e/reports/
 .last-rollback-commit
 .latest-stable
 .breached/
+test-results/

@@ -77,6 +77,54 @@ func registerHealthStoreTests() {
         try assertEqual(store2.forceReloadCount24h, 2, "force-reload count must persist across instances")
     }
 
+    test("testHttpBindFailureCountStartsAtZero") {
+        let (dir, healthPath) = makeTempHealthPath()
+        defer { cleanup(dir) }
+        let store = HealthStore(persistPath: healthPath)
+        try assertEqual(store.httpBindFailureCount, 0)
+    }
+
+    test("testHttpBindFailureCountIncrementsAndPersists") {
+        let (dir, healthPath) = makeTempHealthPath()
+        defer { cleanup(dir) }
+        let store = HealthStore(persistPath: healthPath)
+        store.recordHttpBindFailure()
+        store.recordHttpBindFailure()
+        try assertEqual(store.httpBindFailureCount, 2)
+
+        // Verify persistence: create new store from same path
+        let store2 = HealthStore(persistPath: healthPath)
+        try assertEqual(store2.httpBindFailureCount, 2,
+                        "httpBindFailureCount should survive daemon restart")
+    }
+
+    test("testHttpBindFailureCountSurvivesUnrelatedPersist") {
+        // Critical: recordAlarmFire() and incrementForceReload() call persist().
+        // If persist() doesn't pass httpBindFailureCount explicitly, the counter
+        // resets to nil/0 because the Optional PersistedState field defaults to nil.
+        let (dir, healthPath) = makeTempHealthPath()
+        defer { cleanup(dir) }
+        let store = HealthStore(persistPath: healthPath)
+        store.recordHttpBindFailure()
+        try assertEqual(store.httpBindFailureCount, 1)
+
+        // This calls persist() internally — must preserve httpBindFailureCount
+        store.recordAlarmFire()
+
+        let store2 = HealthStore(persistPath: healthPath)
+        try assertEqual(store2.httpBindFailureCount, 1,
+                        "httpBindFailureCount must survive recordAlarmFire persist")
+    }
+
+    test("testHttpRequestErrorCount1hRollingWindow") {
+        let (dir, healthPath) = makeTempHealthPath()
+        defer { cleanup(dir) }
+        let store = HealthStore(persistPath: healthPath)
+        store.recordHttpRequestError()
+        store.recordHttpRequestError()
+        try assertEqual(store.httpRequestErrorCount1h, 2)
+    }
+
     test("testCountersRollOffAfterWindow") {
         let (dir, healthPath) = makeTempHealthPath()
         defer { cleanup(dir) }

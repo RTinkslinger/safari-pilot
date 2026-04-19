@@ -437,6 +437,8 @@ public final class ExtensionBridge: @unchecked Sendable {
             "timeoutCount1h": store.timeoutCount1h,
             "uncertainCount1h": store.uncertainCount1h,
             "forceReloadCount24h": store.forceReloadCount24h,
+            "httpBindFailureCount": store.httpBindFailureCount,
+            "httpRequestErrorCount1h": store.httpRequestErrorCount1h,
             "pendingCommandsCount": pendingCount,
             "executedLogSize": logSize,
             "ipcMechanism": ipcMech,

@@ -5,6 +5,12 @@ export default defineConfig({
     globals: true,
     environment: 'node',
     include: ['test/**/*.test.ts'],
+    reporters: [
+      'default',
+      ['junit', { outputFile: `test-results/junit/${Date.now()}.xml` }],
+      ['json', { outputFile: `test-results/json/${Date.now()}.json` }],
+    ],
+    globalSetup: ['./test/setup-retention.ts'],
     coverage: {
       provider: 'v8',
       include: ['src/**/*.ts'],

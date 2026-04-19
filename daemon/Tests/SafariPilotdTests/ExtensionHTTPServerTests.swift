@@ -205,6 +205,34 @@ func registerExtensionHTTPServerTests() {
         try assertTrue(allowMethods!.contains("GET"), "Allow-Methods should include GET")
         try assertTrue(allowMethods!.contains("POST"), "Allow-Methods should include POST")
     }
+
+    test("testHTTPServerCallsOnReadyAfterStart") {
+        let bridge = ExtensionBridge()
+        let tmpPath = FileManager.default.temporaryDirectory
+            .appendingPathComponent("test-http-health-\(UUID().uuidString).json")
+        let health = HealthStore(persistPath: tmpPath)
+        let port = nextTestPort
+        nextTestPort += 1
+
+        let readyExpectation = DispatchSemaphore(value: 0)
+        nonisolated(unsafe) var readyCalled = false
+
+        let server = ExtensionHTTPServer(
+            port: port,
+            bridge: bridge,
+            healthStore: health,
+            onReady: {
+                readyCalled = true
+                readyExpectation.signal()
+            }
+        )
+        server.start()
+        defer { server.stop() }
+
+        let result = readyExpectation.wait(timeout: .now() + 5)
+        try assertTrue(result == .success, "onReady should fire within 5s")
+        try assertTrue(readyCalled, "onReady callback should have been called")
+    }
 }
 
 // MARK: - Test Helpers

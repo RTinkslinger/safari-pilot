@@ -5,6 +5,11 @@
 (() => {
   'use strict';
 
+  // Capture Function constructor before CSP can restrict eval/Function.
+  // Extension content scripts load before page CSP is enforced, so this
+  // reference remains usable even on strict-CSP pages like Reddit/GitHub.
+  const _Function = Function;
+
   // Namespace to minimize collision risk
   const SP = Object.create(null);
 
@@ -217,6 +222,16 @@
   // ─── Expose namespace ──────────────────────────────────────────────────────
   window.__safariPilot = SP;
 
+  // ─── Command idempotency cache ────────────────────────────────────────────
+  // Cache executed commands by commandId so the extension can wake, poll for a
+  // command the content script has already run, and return the cached result
+  // instead of re-executing (prevents double-side-effects on non-idempotent ops).
+  // Cache is page-lifetime; clears on navigation. Daemon's executedLog is the
+  // cross-page authoritative source (added in commit 1b).
+  if (!window.__safariPilotExecutedCommands) {
+    window.__safariPilotExecutedCommands = new Map(); // commandId → {result, timestamp}
+  }
+
   // ─── Message Channel from ISOLATED World ──────────────────────────────────
   // The ISOLATED world relay forwards background script commands here via
   // window.postMessage. We respond with results on the same channel.
@@ -296,6 +311,20 @@
           }
           case 'detectFramework': {
             result = SP.detectFramework();
+            break;
+          }
+          case 'execute_script': {
+            const commandId = params.commandId;
+            if (commandId && window.__safariPilotExecutedCommands.has(commandId)) {
+              const cached = window.__safariPilotExecutedCommands.get(commandId);
+              result = cached.result;
+              break;
+            }
+            const fn = new _Function(params.script);
+            result = fn();
+            if (commandId) {
+              window.__safariPilotExecutedCommands.set(commandId, { result, timestamp: Date.now() });
+            }
             break;
           }
           default:

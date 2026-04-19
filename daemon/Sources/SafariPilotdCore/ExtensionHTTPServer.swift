@@ -26,6 +26,8 @@ public final class ExtensionHTTPServer: @unchecked Sendable {
     private let port: UInt16
     private let bridge: ExtensionBridge
     private let healthStore: HealthStore
+    private let onReady: (@Sendable () async -> Void)?
+    private let onBindFailure: (@Sendable (Error) -> Void)?
 
     /// Tracks the last time any HTTP request was received.
     private let lock = DispatchQueue(label: "com.safari-pilot.http-server")
@@ -43,11 +45,15 @@ public final class ExtensionHTTPServer: @unchecked Sendable {
     public init(
         port: UInt16 = 19475,
         bridge: ExtensionBridge,
-        healthStore: HealthStore
+        healthStore: HealthStore,
+        onReady: (@Sendable () async -> Void)? = nil,
+        onBindFailure: (@Sendable (Error) -> Void)? = nil
     ) {
         self.port = port
         self.bridge = bridge
         self.healthStore = healthStore
+        self.onReady = onReady
+        self.onBindFailure = onBindFailure
     }
 
     // MARK: - Lifecycle
@@ -62,12 +68,17 @@ public final class ExtensionHTTPServer: @unchecked Sendable {
                     configuration: ApplicationConfiguration(
                         address: .hostname("127.0.0.1", port: Int(port)),
                         serverName: "SafariPilot-ExtHTTP"
-                    )
+                    ),
+                    onServerRunning: { [self] _ in
+                        Logger.info("HTTP_READY port=\(self.port)")
+                        await self.onReady?()
+                    }
                 )
                 Logger.info("ExtensionHTTPServer starting on 127.0.0.1:\(port)")
                 try await app.runService()
             } catch {
-                Logger.error("ExtensionHTTPServer error: \(error)")
+                Logger.error("HTTP_BIND_FAILED port=\(port) error=\(error)")
+                self.onBindFailure?(error)
             }
         }
 
@@ -232,6 +243,7 @@ public final class ExtensionHTTPServer: @unchecked Sendable {
         status: HTTPTypes.HTTPResponse.Status = .ok
     ) -> HBResponse {
         guard let data = try? JSONSerialization.data(withJSONObject: dict, options: []) else {
+            healthStore.recordHttpRequestError()
             let fallback = ByteBuffer(string: "{\"error\":\"serialization_failed\"}")
             var headers = HTTPFields()
             headers.append(HTTPField(name: .contentType, value: "application/json"))
@@ -240,6 +252,9 @@ public final class ExtensionHTTPServer: @unchecked Sendable {
                 headers: headers,
                 body: .init(byteBuffer: fallback)
             )
+        }
+        if status.code >= 500 {
+            healthStore.recordHttpRequestError()
         }
         let buffer = ByteBuffer(data: data)
         var headers = HTTPFields()

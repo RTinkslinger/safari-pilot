@@ -84,7 +84,7 @@ npm run build          # TypeScript → dist/
 npm run dev            # tsc --watch
 npm run lint           # tsc --noEmit (type-check only)
 npm test               # all tests via vitest
-npm run test:unit      # 700+ unit tests (no Safari needed)
+npm run test:unit      # 1427 unit tests (no Safari needed)
 npm run test:integration
 npm run test:e2e       # needs Safari running + JS from Apple Events enabled
 npm run test:security

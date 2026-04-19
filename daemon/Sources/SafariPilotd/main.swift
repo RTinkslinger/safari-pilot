@@ -177,9 +177,35 @@ if #available(macOS 14.0, *) {
     let httpServer = ExtensionHTTPServer(
         port: 19475,
         bridge: dispatcher.extensionBridge,
-        healthStore: healthStore
+        healthStore: healthStore,
+        onReady: {
+            // Self-test: verify HTTP server is actually serving
+            // Uses POST /connect (instant) instead of GET /poll (5s long-hold)
+            do {
+                let url = URL(string: "http://127.0.0.1:19475/connect")!
+                var request = URLRequest(url: url)
+                request.httpMethod = "POST"
+                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                request.httpBody = try JSONSerialization.data(withJSONObject: [
+                    "executedIds": [] as [String],
+                    "pendingIds": [] as [String],
+                ])
+                let (_, response) = try await URLSession.shared.data(for: request)
+                let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+                if status == 200 {
+                    Logger.info("HTTP_SELF_TEST pass status=\(status)")
+                } else {
+                    Logger.warning("HTTP_SELF_TEST unexpected status=\(status)")
+                }
+            } catch {
+                Logger.error("HTTP_SELF_TEST fail error=\(error)")
+                healthStore.recordHttpRequestError()
+            }
+        },
+        onBindFailure: { error in
+            healthStore.recordHttpBindFailure()
+        }
     )
-    // start() spawns internal Tasks — errors are logged inside, not thrown.
     httpServer.start()
 } else {
     Logger.warning("ExtensionHTTPServer requires macOS 14+. Extension HTTP polling unavailable on this OS version.")

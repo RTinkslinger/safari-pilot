@@ -56,4 +56,30 @@ if [[ "$LAST_VERSION" != "0.0.0" ]]; then
   fi
 fi
 
+# 7. HTTP IPC: background.js has fetch(), not sendNativeMessage
+BG_PATH="$APPEX/Contents/Resources/background.js"
+if [ ! -f "$BG_PATH" ]; then
+  echo "FAIL: background.js not found in appex" >&2
+  exit 1
+fi
+if ! grep -q 'fetch(' "$BG_PATH"; then
+  echo "FAIL: background.js missing fetch() — HTTP IPC not present" >&2
+  exit 1
+fi
+if ! grep -q '127.0.0.1:19475' "$BG_PATH"; then
+  echo "FAIL: background.js missing HTTP URL 127.0.0.1:19475" >&2
+  exit 1
+fi
+if grep -q 'sendNativeMessage' "$BG_PATH"; then
+  echo "FAIL: background.js still contains sendNativeMessage — should use HTTP" >&2
+  exit 1
+fi
+
+# 8. HTTP IPC: manifest.json has CSP connect-src for localhost:19475
+MANIFEST_PATH="$APPEX/Contents/Resources/manifest.json"
+if ! grep -q 'connect-src' "$MANIFEST_PATH"; then
+  echo "FAIL: manifest.json missing CSP connect-src for HTTP" >&2
+  exit 1
+fi
+
 echo "Artifact integrity: PASS (v${PKG_VERSION}, appex build ${APPEX_VERSION})"

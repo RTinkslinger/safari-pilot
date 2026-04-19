@@ -711,4 +711,22 @@ func registerExtensionBridgeTests() {
         try assertTrue(health.lastReconcileTimestamp != nil,
                        "lastReconcileTimestamp should be set after reconcile dispatch")
     }
+
+    test("testHealthSnapshotIncludesHttpCounters") {
+        let bridge = ExtensionBridge()
+        let tmpDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("safari-pilot-tests-\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: tmpDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tmpDir) }
+        let health = HealthStore(persistPath: tmpDir.appendingPathComponent("health.json"))
+
+        let snapshot = bridge.healthSnapshot(store: health)
+        // Verify new HTTP counter fields exist with correct types
+        try assertTrue(snapshot["httpBindFailureCount"] is Int,
+                       "httpBindFailureCount should be Int, got \(type(of: snapshot["httpBindFailureCount"]))")
+        try assertTrue(snapshot["httpRequestErrorCount1h"] is Int,
+                       "httpRequestErrorCount1h should be Int, got \(type(of: snapshot["httpRequestErrorCount1h"]))")
+        try assertEqual(snapshot["httpBindFailureCount"] as? Int, 0)
+        try assertEqual(snapshot["httpRequestErrorCount1h"] as? Int, 0)
+    }
 }
