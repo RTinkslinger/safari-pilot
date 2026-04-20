@@ -209,7 +209,8 @@ Logic:
 - Uses `assertClosed(domain)` (not `isOpen()` + manual throw) — correctly handles half-open probe logic
 
 **Escaping contract:**
-- All user-provided strings embedded in JS use `escapeForJsSingleQuote()` from `src/escape.ts`
+- **Quote-only sites (35, all migrated):** Previously `.replace(/'/g, "\\'")` — now use `escapeForJsSingleQuote()` from `src/escape.ts`. Files: extraction.ts (4), storage.ts (18), network.ts (8), structured-extraction.ts (2), permissions.ts (1), interaction.ts (2)
+- **Two-pass sites (21, NOT migrated — deferred consistency refactor):** Already use `.replace(/\\/g, '\\\\').replace(/'/g, "\\'")` which handles the critical backslash-quote breakout. Located in interaction.ts (17 sites) and shadow.ts (4 sites). The extra chars (`\n`, `\r`, `\0`, U+2028, U+2029) are defense-in-depth, not active breakout vectors for two-pass patterns.
 - All JSON embedded in template literals uses `escapeForTemplateLiteral()` from `src/escape.ts`
 - Characters escaped: `\`, `'`, `\n`, `\r`, `\0`, U+2028, U+2029 (single-quote context); `\`, `` ` ``, `${` (template context)
 

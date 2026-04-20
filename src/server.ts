@@ -33,7 +33,7 @@ import { CircuitBreaker } from './security/circuit-breaker.js';
 import { IdpiScanner } from './security/idpi-scanner.js';
 import { HumanApproval } from './security/human-approval.js';
 import { ScreenshotRedaction } from './security/screenshot-redaction.js';
-import { RateLimitedError, CircuitBreakerOpenError, HumanApprovalRequiredError, TabUrlNotRecognizedError } from './errors.js';
+import { RateLimitedError, HumanApprovalRequiredError, TabUrlNotRecognizedError } from './errors.js';
 import { loadConfig, DEFAULT_CONFIG, type SafariPilotConfig } from './config.js';
 
 const execFileAsync = promisify(execFile);
