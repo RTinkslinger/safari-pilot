@@ -198,6 +198,21 @@ Logic:
 
 **INFRA_MESSAGE_TYPES (src/server.ts):** Documented bypass set for daemon↔extension infrastructure methods — `extension_poll`, `extension_drain`, `extension_reconcile`, `extension_connected`, `extension_disconnected`, `extension_log`, `extension_result`. These are coordination messages, not per-domain tool calls, and must never traverse the 9-layer pipeline. Commit 1a declares the contract as an exported `ReadonlySet<string>`; Commit 1b wires the reconcile + drain routes. These messages currently flow via `ExtensionSocketServer` + NDJSON dispatcher in the daemon, never reaching `executeToolWithSecurity` (whose name parameter only receives registered `safari_*` tool names). No pre-pipeline bypass check is required at 1a — the constant is declarative and becomes enforcement-wired when 1b introduces the reconcile/drain routes.
 
+**Tab ownership enforcement (2026-04-20 security hardening):**
+- Fails CLOSED: if `findByUrl(tabUrl)` returns undefined, `TabUrlNotRecognizedError` is thrown
+- Navigation URL tracking: after `safari_navigate` succeeds, `updateUrl()` is called on the ownership registry with the new URL from the response
+- `safari_navigate_back` and `safari_navigate_forward` added to `SKIP_OWNERSHIP_TOOLS` — their handlers query the tab by stale URL after history.back()/forward(), making ownership enforcement unreliable for them
+- Tab IDs use monotonic counter (`_nextTabIndex++`) instead of `getOwnedCount()+1`
+- **Known limitation:** `safari_click` (link navigation) does NOT update the registry. The URL changes without server awareness. A future PR should refactor navigation handlers to use tab-index-based queries.
+
+**Circuit breaker pipeline usage:**
+- Uses `assertClosed(domain)` (not `isOpen()` + manual throw) — correctly handles half-open probe logic
+
+**Escaping contract:**
+- All user-provided strings embedded in JS use `escapeForJsSingleQuote()` from `src/escape.ts`
+- All JSON embedded in template literals uses `escapeForTemplateLiteral()` from `src/escape.ts`
+- Characters escaped: `\`, `'`, `\n`, `\r`, `\0`, U+2028, U+2029 (single-quote context); `\`, `` ` ``, `${` (template context)
+
 ---
 
 ## IPC Architecture
