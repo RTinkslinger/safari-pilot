@@ -1,6 +1,6 @@
 {
   "name": "safari-pilot",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Native Safari browser automation for AI agents on macOS",
   "type": "module",
   "main": "dist/index.js",
@@ -51,7 +51,9 @@
   "engines": {
     "node": ">=20.0.0"
   },
-  "os": ["darwin"],
+  "os": [
+    "darwin"
+  ],
   "license": "MIT",
   "author": "Aakash Kumar"
 }

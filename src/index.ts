@@ -6,13 +6,19 @@ import {
   CallToolRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 import { createServer } from './server.js';
+import { readFileSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const PKG_VERSION = JSON.parse(readFileSync(join(__dirname, '..', 'package.json'), 'utf-8')).version;
 
 async function main(): Promise<void> {
   const safariPilot = await createServer();
   await safariPilot.start();
 
   const server = new Server(
-    { name: 'safari-pilot', version: '0.1.6' },
+    { name: 'safari-pilot', version: PKG_VERSION },
     { capabilities: { tools: {} } },
   );
 

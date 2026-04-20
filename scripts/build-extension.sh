@@ -16,6 +16,19 @@ BUILD_NUMBER=$(date +%Y%m%d%H%M)
 echo "=== Safari Pilot Extension Build ==="
 echo "Version: $VERSION (build $BUILD_NUMBER)"
 
+# ── Step 0: Sync manifest.json version from package.json ──────────────────
+# Safari uses manifest.json "version" as the extension identity version.
+# If this doesn't change between rebuilds, Safari serves cached old code.
+# This MUST happen before Xcode project generation (packager copies manifest.json).
+MANIFEST="$EXT_DIR/manifest.json"
+MANIFEST_VERSION=$(python3 -c "import json; print(json.load(open('$MANIFEST'))['version'])")
+if [ "$MANIFEST_VERSION" != "$VERSION" ]; then
+  echo "Syncing manifest.json version: $MANIFEST_VERSION → $VERSION"
+  sed -i '' "s/\"version\": \"$MANIFEST_VERSION\"/\"version\": \"$VERSION\"/" "$MANIFEST"
+else
+  echo "manifest.json version already $VERSION"
+fi
+
 # ── Step 1: Generate Xcode project ──────────────────────────────────────────
 
 echo "Generating Xcode project..."
