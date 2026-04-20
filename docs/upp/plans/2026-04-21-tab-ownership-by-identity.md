@@ -666,6 +666,26 @@ At line 168: `const tab = await findTargetTab(cmd.tabUrl);`
 At line 169: null-check and early return if no tab.
 By line 226, `tab` is guaranteed non-null and has `tab.id` (number) and `tab.url` (string).
 
+### Rebuild Extension
+
+**CRITICAL:** Modifying `background.js` requires rebuilding the extension `.app`:
+
+```bash
+bash scripts/build-extension.sh
+```
+
+After the build completes, install the new extension:
+```bash
+open "bin/Safari Pilot.app"
+```
+
+Then verify in Safari > Settings > Extensions that "Safari Pilot" is enabled. Without this rebuild, the e2e tests will use the OLD background.js (without `_meta` enrichment) and ALL deferred ownership tests will fail.
+
+**Verify entitlements exist:**
+```bash
+codesign -d --entitlements - "bin/Safari Pilot.app"  # must show app-sandbox
+```
+
 ### Verify
 
 No automated test for extension JS in isolation — verified via e2e in Task 8.
@@ -678,6 +698,8 @@ feat(extension): enrich command results with _meta tab identity
 Every successful executeCommand() result now includes _meta.tabId (stable
 Safari tab ID) and _meta.tabUrl (tab's current URL at execution time).
 This enables the server to track tab identity through URL changes.
+
+Includes extension rebuild (build-extension.sh).
 ```
 
 ---
@@ -1153,21 +1175,89 @@ describe('TabOwnership', () => {
       const empty = new TabOwnership();
       expect(empty.domainMatches('https://example.com')).toBe(false);
     });
+
+    it('matches localhost against localhost', () => {
+      const local = new TabOwnership();
+      local.registerTab(2001, 'http://localhost:3000/page');
+      expect(local.domainMatches('http://localhost:3000/other')).toBe(true);
+    });
+
+    it('matches IP address against same IP', () => {
+      const ipOwner = new TabOwnership();
+      ipOwner.registerTab(3001, 'http://192.168.1.100:8080/app');
+      expect(ipOwner.domainMatches('http://192.168.1.100:8080/other')).toBe(true);
+    });
   });
 });
 ```
 
-### 8B: Verify e2e tests pass
+### 8B: Add deferred-path e2e test
+
+The existing `interaction-tools.test.ts` manually discovers the new URL via `safari_list_tabs` after click-navigation. This bypasses the deferred ownership path. Add a test that directly exercises it:
+
+Create or add to `test/e2e/security-enforcement.test.ts` a new test in the TabOwnership describe block:
+
+```typescript
+    it('deferred ownership: tool succeeds on click-navigated URL without manual URL discovery', async () => {
+      // Navigate to a page that will redirect
+      const targetUrl = 'https://example.com/?e2e=deferred-' + Date.now();
+      await rawCallTool(
+        client, 'safari_navigate',
+        { tabUrl: ownedTabUrl, url: targetUrl },
+        nextId++, 30_000,
+      );
+      // Update ownedTabUrl to the new URL (server refreshes via _meta)
+      ownedTabUrl = targetUrl;
+
+      // Now click a link that navigates the tab to iana.org
+      // (This changes the URL — but the server gets _meta.tabId from the result
+      //  and updates the registry. The NEXT call with the iana URL should pass
+      //  via the deferred path since the URL isn't registered yet but the domain
+      //  would need to match... actually iana.org != example.com domain.)
+
+      // Better test: navigate to a different path on same domain
+      const navUrl = 'https://example.com/?e2e=deferred-nav-' + Date.now();
+      const { payload: navPayload } = await rawCallTool(
+        client, 'safari_navigate',
+        { tabUrl: ownedTabUrl, url: navUrl },
+        nextId++, 30_000,
+      );
+      // Server's _meta refresh updates ownedUrl. But let's use a DIFFERENT
+      // query param that the server hasn't seen:
+      const freshUrl = 'https://example.com/?e2e=deferred-fresh-' + Date.now();
+      await rawCallTool(
+        client, 'safari_navigate',
+        { tabUrl: navPayload['url'] as string, url: freshUrl },
+        nextId++, 30_000,
+      );
+
+      // Now the server's registry has the PREVIOUS url (from the last _meta refresh).
+      // This next call with freshUrl should work via deferred path:
+      // - findByUrl(freshUrl) → miss
+      // - domainMatches(freshUrl) → true (example.com matches)
+      // - extension engine selected → defer
+      // - tool executes → post-verify with _meta.tabId → passes
+      const { payload } = await rawCallTool(
+        client, 'safari_get_text',
+        { tabUrl: freshUrl },
+        nextId++, 20_000,
+      );
+      expect(payload['text']).toBeDefined();
+      ownedTabUrl = freshUrl;
+    }, 120_000);
+```
+
+### 8C: Run full test suite
 
 ```bash
 npm run build
 npm run test:unit
-npm run test:e2e  # requires Safari running + extension connected
+SAFARI_PILOT_E2E=1 npx vitest run test/e2e/
 ```
 
 Expected: all unit tests pass, e2e tests pass including:
 - `test/e2e/interaction-tools.test.ts` (click → navigate → fill → evaluate)
-- `test/e2e/security-enforcement.test.ts` (ownership rejection for non-owned URLs)
+- `test/e2e/security-enforcement.test.ts` (ownership rejection + deferred path)
 
 ### Commit
 
