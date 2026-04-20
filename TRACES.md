@@ -80,6 +80,12 @@
 **Context:** Three-audit synthesis → brainstorming → spec → plan pipeline. pollLoop deleted entirely; event-page form + storage-backed drain-on-wake. Observability in 1a so the change is measurable. Per-tool idempotent flag blocks auto-retry on side-effect tools. Kill-switch enables <30min config-only rollback. LaunchAgent hourly health check. Next: 1b reconcile + executedLog (v0.1.6) after 72h observation.
 ---
 
+### Iteration 17 - 2026-04-20
+**What:** Security hardening — 35 injection sites fixed, tab ownership fail-closed, enforcement e2e tests
+**Changes:** `src/escape.ts` (new — shared escaping utility), `src/server.ts` (ownership fail-closed + navigate_back/forward skip + circuit breaker assertClosed + navigation URL tracking + monotonic tab IDs), `src/errors.ts` (TabUrlNotRecognizedError), `src/tools/{extraction,storage,network,structured-extraction,permissions,interaction,frames}.ts` (escaping), `src/security/{rate-limiter,circuit-breaker}.ts` (eviction), `test/e2e/security-enforcement.test.ts` (new), `test/e2e/{security-pipeline,setup-production,mcp-handshake}.test.ts` (fixes), `ARCHITECTURE.md` (security docs)
+**Context:** Four-agent code review found 22 issues. Three adversarial audits refined the plan to v3. Key decisions: navigate_back/forward added to SKIP_OWNERSHIP_TOOLS (pre-existing handler limitation — can't determine post-navigation URL). Engine routing change (daemon-first) deferred (44 test cascade). escapeForJsSingleQuote handles \, ', \n, \r, \0, U+2028, U+2029. escapeForTemplateLiteral handles \, `, ${. IDPI test learned: innerText excludes display:none content.
+---
+
 <!-- Iterations 5-6 archived to traces/archive/milestone-2.md -->
 
 <!-- Iterations 7-9 archived to traces/archive/milestone-3.md -->
