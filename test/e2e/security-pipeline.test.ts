@@ -288,12 +288,14 @@ describe('Security Pipeline — MCP E2E', () => {
 
       // If IDPI found threats, they'd be in meta.idpiThreats / meta.idpiSafe
       // For a clean page, these should either be absent (no threats) or idpiSafe=true
+      // For a clean page (example.com), the scanner should not flag threats.
+      // If idpiSafe is undefined, no threats found (scanner ran, nothing suspicious).
+      // If idpiSafe is defined, it must be true (not just "not false").
       if (meta!['idpiSafe'] !== undefined) {
-        // Scanner ran and reported — should be safe for example.com
-        expect(meta!['idpiSafe']).not.toBe(false);
+        expect(meta!['idpiSafe']).toBe(true);
       }
-      // If idpiSafe is absent, that means no threats were found (the default path)
-      // which also proves the scanner ran without finding anything suspicious.
+      // The positive detection case (scanner flags real injection) is tested
+      // in security-enforcement.test.ts
     }, 120_000);
   });
 
@@ -321,13 +323,7 @@ describe('TabOwnership — MCP E2E', () => {
     }
   });
 
-  it('accessing a tab URL not opened by this session does not crash', async () => {
-    // Tab ownership check passes silently (registerTab is never called in production
-    // code — roadmap item to wire up). This test verifies the security pipeline
-    // doesn't crash on unknown URLs. Three valid outcomes:
-    // 1. TAB_NOT_OWNED error — ownership layer caught it (ideal, not yet wired)
-    // 2. Tool handler error — URL not found in any tab
-    // 3. Tool returns data from active tab (AppleScript fallback — URL doesn't match)
+  it('rejects tool call with non-owned tab URL', async () => {
     const resp = await rawSend(
       client,
       'safari_get_text',
@@ -335,10 +331,11 @@ describe('TabOwnership — MCP E2E', () => {
       nextId++,
       60_000,
     );
-
-    // Any response (error or result) proves the pipeline executed without crashing
-    expect(resp).toBeDefined();
-    expect(resp['jsonrpc']).toBe('2.0');
+    // Must be an error — tab ownership now fails closed
+    expect(resp['error']).toBeDefined();
+    const err = resp['error'] as Record<string, unknown>;
+    const message = (err['message'] as string) || '';
+    expect(message.toLowerCase()).toMatch(/tab.*not.*recognized|tab.*not.*owned/);
   }, 120_000);
 
   it('safari_new_tab creates an agent-owned tab with engine metadata', async () => {
