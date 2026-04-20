@@ -261,6 +261,9 @@ The `EngineResult` type needs a new optional field:
 meta?: { tabId?: number; tabUrl?: string };
 ```
 
+**DaemonEngine NDJSON handling (verified at `daemon.ts:179`):** When the Swift bridge returns `value` as a JSON object (the `{"value": innerValue, "_meta": {...}}` wrapper), DaemonEngine handles it via the existing branch: `typeof response.value === 'object' ? JSON.stringify(response.value)`. This produces a stringified wrapper that ExtensionEngine can `JSON.parse` and detect. **No DaemonEngine changes needed** — the middle link already works.
+```
+
 ### 4. `src/security/tab-ownership.ts` — Dual-key registry
 
 ```typescript
@@ -315,14 +318,24 @@ domainMatches(url: string): boolean {
 }
 ```
 
-### 4b. `src/engines/engine-proxy.ts` — Add getLastMeta()
+### 4b. `src/engines/engine-proxy.ts` — Add getLastMeta() with reset
+
+**Assumption:** MCP stdio transport is sequential (one request at a time). `_lastMeta` relies on this — if MCP ever adds batched/concurrent execution, replace with a per-request correlation mechanism (e.g., pass a request ID through the engine call and return meta keyed by it).
 
 ```typescript
 private _lastMeta: { tabId?: number; tabUrl?: string } | undefined;
 
-executeJsInTab(tabUrl: string, jsCode: string, timeout?: number): Promise<EngineResult> {
+// Reset at start of each tool call to prevent stale reads from tools
+// that use execute() instead of executeJsInTab() (e.g., navigation tools
+// that run AppleScript directly).
+resetMeta(): void {
+  this._lastMeta = undefined;
+}
+
+async executeJsInTab(tabUrl: string, jsCode: string, timeout?: number): Promise<EngineResult> {
+  // Note: method becomes async (was passthrough return) to capture meta
   const result = await this.delegate.executeJsInTab(tabUrl, jsCode, timeout);
-  this._lastMeta = result.meta;  // capture from extension engine
+  this._lastMeta = result.meta;
   return result;
 }
 
@@ -331,22 +344,32 @@ getLastMeta(): { tabId?: number; tabUrl?: string } | undefined {
 }
 ```
 
+**Server.ts must call `this.engineProxy.resetMeta()` at the start of `executeToolWithSecurity()` before any tool execution.** This prevents a stale `_lastMeta` from a previous call being misread if the current tool doesn't go through `executeJsInTab`.
+
 ### 5. `src/server.ts` — Revised ownership check + post-execution verify
 
-**Pre-execution (line ~414):**
+**Pre-execution (after engine selection, before tool execution):**
 ```typescript
+// Declare at top of executeToolWithSecurity:
+let deferredOwnershipCheck = false;
+
+// Reset engine meta to prevent stale reads from previous calls:
+this.engineProxy?.resetMeta();
+
+// ... (killswitch, domain policy, human approval, rate limiter, circuit breaker, engine selection above) ...
+
+// Ownership check (now has selectedEngineName available):
 if (params['tabUrl'] && !SKIP_OWNERSHIP_TOOLS.has(name)) {
   const tabUrl = params['tabUrl'] as string;
   const tabId = this.tabOwnership.findByUrl(tabUrl);
   if (tabId === undefined) {
-    // URL not in registry. If extension engine is selected, DEFER check
-    // to post-execution (extension will tell us which tab.id it used).
-    // If AppleScript/daemon: fail immediately (no tab.id available).
-    if (selectedEngineName !== 'extension') {
+    // URL not in registry. If extension engine selected AND domain matches
+    // an owned tab, DEFER to post-execution. Otherwise fail immediately.
+    if (selectedEngineName === 'extension' && this.tabOwnership.domainMatches(tabUrl)) {
+      deferredOwnershipCheck = true;
+    } else {
       throw new TabUrlNotRecognizedError(tabUrl);
     }
-    // Mark as deferred — post-execution will verify
-    deferredOwnershipCheck = true;
   } else {
     this.tabOwnership.assertOwnership(tabId);
   }
