@@ -35,6 +35,7 @@ export interface EngineResult {
   value?: string;
   error?: EngineError;
   elapsed_ms: number;
+  meta?: { tabId?: number; tabUrl?: string };
 }
 
 export interface EngineError {
