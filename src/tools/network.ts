@@ -1,4 +1,5 @@
 import type { IEngine } from '../engines/engine.js';
+import { escapeForJsSingleQuote, escapeForTemplateLiteral } from '../escape.js';
 import type { Engine, ToolResponse, ToolRequirements } from '../types.js';
 
 export interface ToolDefinition {
@@ -276,9 +277,9 @@ export class NetworkTools {
       });
 
       // Apply filters
-      var filterType = ${filterType ? `'${filterType.replace(/'/g, "\\'")}'` : 'null'};
+      var filterType = ${filterType ? `'${escapeForJsSingleQuote(filterType)}'` : 'null'};
       var filterStatus = ${filterStatus != null ? filterStatus : 'null'};
-      var filterUrlPattern = ${filterUrlPattern ? `'${filterUrlPattern.replace(/'/g, "\\'")}'` : 'null'};
+      var filterUrlPattern = ${filterUrlPattern ? `'${escapeForJsSingleQuote(filterUrlPattern)}'` : 'null'};
       var limit = ${limit};
 
       var filtered = merged.filter(function(e) {
@@ -304,7 +305,7 @@ export class NetworkTools {
     const url = params['url'] as string;
     const matchMode = (params['matchMode'] as string | undefined) ?? 'contains';
 
-    const escapedUrl = url.replace(/'/g, "\\'");
+    const escapedUrl = escapeForJsSingleQuote(url);
 
     const js = `
       var targetUrl = '${escapedUrl}';
@@ -372,7 +373,7 @@ export class NetworkTools {
     const captureBody = params['captureBody'] === true;
     const maxEntries = typeof params['maxEntries'] === 'number' ? params['maxEntries'] : 200;
 
-    const escapedPattern = urlPattern ? urlPattern.replace(/'/g, "\\'") : '';
+    const escapedPattern = urlPattern ? escapeForJsSingleQuote(urlPattern) : '';
 
     const js = `
       var urlPattern = ${urlPattern ? `'${escapedPattern}'` : 'null'};
@@ -596,8 +597,8 @@ export class NetworkTools {
     const urlPattern = params['urlPattern'] as string;
     const response = params['response'] as Record<string, unknown> | undefined;
 
-    const escapedPattern = urlPattern.replace(/'/g, "\\'");
-    const responseJson = response ? JSON.stringify(response).replace(/\\/g, '\\\\').replace(/`/g, '\\`') : 'null';
+    const escapedPattern = escapeForJsSingleQuote(urlPattern);
+    const responseJson = response ? escapeForTemplateLiteral(JSON.stringify(response)) : 'null';
 
     const js = `
       var urlPattern = '${escapedPattern}';
@@ -673,7 +674,7 @@ export class NetworkTools {
     const tabUrl = params['tabUrl'] as string;
     const urlPattern = params['urlPattern'] as string | undefined;
 
-    const escapedPattern = urlPattern ? urlPattern.replace(/'/g, "\\'") : '';
+    const escapedPattern = urlPattern ? escapeForJsSingleQuote(urlPattern) : '';
 
     const js = `
       var urlPattern = ${urlPattern ? `'${escapedPattern}'` : 'null'};
@@ -737,7 +738,7 @@ export class NetworkTools {
     const pattern = params['pattern'] as string | undefined;
     const direction = (params['direction'] as string | undefined) ?? 'both';
 
-    const escapedPattern = pattern ? pattern.replace(/'/g, "\\'") : '';
+    const escapedPattern = pattern ? escapeForJsSingleQuote(pattern) : '';
 
     const js = `
       var filterPattern = ${pattern ? `'${escapedPattern}'` : 'null'};
