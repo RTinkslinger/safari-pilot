@@ -46,13 +46,20 @@ private ownedTabs: Map<TabId, OwnedTab>  // TabId = synthetic monotonic counter
 
 ### Registration (safari_new_tab)
 
-When `safari_new_tab` executes:
-1. The extension creates the tab and has `tab.id`
-2. `background.js` enriches the result: `{ ok: true, value: <jsResult>, _meta: { tabId: tab.id, tabUrl: tab.url } }`
-3. `ExtensionBridge.handleResult()` extracts `_meta` alongside `value` (new code — see Changes)
-4. Daemon includes `_meta` in the NDJSON response to the MCP server
-5. `ExtensionEngine` surfaces `_meta.tabId` in its result
-6. `server.ts` registers: `{ currentUrl: tabUrl, extensionTabId: meta.tabId }`
+**IMPORTANT:** `safari_new_tab` uses `AppleScriptEngine` directly (NavigationTools is constructed with AppleScriptEngine, not the EngineProxy). It does NOT route through the extension. Therefore, background.js never sees tab creation and cannot enrich the result with `tab.id`.
+
+**Registration is URL-only initially:**
+1. `safari_new_tab` executes via AppleScript → returns URL
+2. `server.ts` registers: `{ currentUrl: tabUrl, extensionTabId: null }`
+
+**extensionTabId is backfilled on FIRST extension-engine tool call:**
+1. Agent calls any tool (e.g., `safari_get_text`) on the new tab
+2. Extension engine routes through `background.js` → `findTargetTab(tabUrl)` finds the tab (it appeared in `tabCacheMap` via `tabs.onCreated` listener after the AppleScript created it)
+3. `background.js` executes the command, returns result with `_meta: { tabId: tab.id, tabUrl: tab.url }`
+4. Server receives `_meta.tabId`, finds the owned tab by URL (URL still matches at this point — no redirect yet), stores `extensionTabId`
+5. From this point forward, the dual-key lookup works
+
+**Why this is safe:** The FIRST tool call after `safari_new_tab` uses the SAME URL that was just registered. `findByUrl` succeeds on the fast path. The backfill piggybacks on this first call. The deferred ownership path only activates AFTER the URL has drifted — by which point `extensionTabId` is already backfilled.
 
 ### Ownership Check (every tool call)
 
@@ -62,20 +69,25 @@ Tool call arrives with params.tabUrl
   ├─ findByUrl(tabUrl)  →  found? → assertOwnership → PASS
   │
   └─ not found:
-       ├─ Extension available?
-       │    YES → findByExtensionTabIdFromUrl(tabUrl)
-       │          (synchronous scan of ownedTabs where extensionTabId matches
-       │           what the extension's tab cache reports for this URL)
-       │          
-       │          WAIT — this requires asking the extension. That's async.
-       │          
-       │          INSTEAD: just let the tool execute. If the extension's 
-       │          findTargetTab can locate the tab, the command succeeds.
-       │          The result brings back { _meta: { tabId, tabUrl } }.
-       │          We verify AFTER: is that tabId one we own?
        │
-       └─ NO (AppleScript only) → throw TabUrlNotRecognizedError
+       ├─ Domain check: does tabUrl's hostname match ANY owned tab's hostname?
+       │    NO  → throw TabUrlNotRecognizedError immediately (DoS protection)
+       │
+       ├─ Extension engine selected?
+       │    YES → DEFER to post-execution
+       │          (extension's findTargetTab has a fresher cache via tabs.onUpdated
+       │           which fires on server-side redirects. The server's URL only updates
+       │           from extension result metadata — so on first call after redirect,
+       │           the extension IS fresher.)
+       │          Tool executes. Result includes _meta.tabId.
+       │          Post-verify: is that tabId owned? YES → pass. NO → throw + discard result.
+       │
+       └─ NO (AppleScript/daemon engine) → throw TabUrlNotRecognizedError
 ```
+
+**DoS mitigation (domain check):** Before deferring, verify the URL's hostname matches at least one owned tab's current hostname. This catches the attack scenario (random URLs to non-owned tabs) while allowing the legitimate scenario (same-domain redirect/path change). A non-owned URL on a domain the agent never opened cannot trigger deferred execution.
+
+**Why extension is fresher than server:** The extension's `tabCacheMap` updates via `tabs.onUpdated` which fires immediately on server-side redirects. The server's `currentUrl` field only updates from extension result `_meta` — meaning it's one call behind the extension. On the FIRST call after a redirect, the extension has the new URL (from `onUpdated`) but the server doesn't (hasn't received a result yet). This is the precise window where deferral is valuable.
 
 **The key insight:** We cannot do an async extension query in the ownership check (hot path, pre-execution). But we CAN verify ownership AFTER the extension executes — because the result tells us WHICH tab.id ran the command. If that tab.id is in our registry, the tab is ours.
 
@@ -103,6 +115,17 @@ AFTER (proposed):
 **Side-effect concern:** `safari_fill`, `safari_click`, etc. have side effects. If we execute then reject, the side effect already happened. This is a tradeoff:
 - **Option 1 (strict):** Block pre-execution for non-extension engines. Defer ONLY for extension engine (which provides tab.id for post-verification).
 - **Option 2 (pragmatic, chosen):** Accept that the extension's `findTargetTab` is itself a URL-based authority. If the extension found a tab at that URL and executed the command, the tab IS at that URL. The post-check just confirms we opened it.
+- **Domain-check mitigation:** The DoS/side-effect risk is bounded by the pre-deferral domain check. An attacker cannot trigger side effects on a domain the agent never opened a tab on.
+
+### Error Paths
+
+| Scenario | Behavior |
+|----------|----------|
+| Tool executes successfully, post-verify passes | Normal flow — result returned to agent |
+| Tool executes successfully, post-verify FAILS (tab.id not owned) | Result DISCARDED, `TabUrlNotRecognizedError` thrown. Side effect occurred but data doesn't leak. |
+| Tool THROWS (handler error, timeout, network failure) | Post-verify is SKIPPED. Tool error propagates normally. No data leaked (tool failed). `deferredOwnershipCheck` is irrelevant — nothing to verify. |
+| Extension returns result WITHOUT `_meta` (old extension, or extension crashed mid-execution) | If `deferredOwnershipCheck` is true and no `_meta` in result: throw `TabUrlNotRecognizedError`. Cannot confirm ownership without tab.id. |
+| `EngineUnavailableError` during engine selection | Ownership check never runs (engine selection is before ownership in proposed order). Error returned to agent. No tool executes. Safe. |
 
 ### URL Refresh (keeps findByUrl working for subsequent calls)
 
