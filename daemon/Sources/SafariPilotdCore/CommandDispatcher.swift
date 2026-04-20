@@ -93,6 +93,10 @@ public final class CommandDispatcher: @unchecked Sendable {
     // MARK: - Routing
 
     private func handle(command: Command) async -> Response {
+        Trace.emit(command.id, layer: "daemon-dispatcher", event: "command_received", data: [
+            "method": command.method,
+        ])
+
         switch command.method {
 
         case "ping":

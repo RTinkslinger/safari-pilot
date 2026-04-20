@@ -145,7 +145,8 @@ public final class ExtensionBridge: @unchecked Sendable {
             // Append the command; if a poll is already waiting, fast-path by marking
             // the command delivered and preparing to wake the poll. All mutations
             // under the queue; continuations resumed outside.
-            let fastPath: (waitingPoll: WaitingPoll, commandDict: [String: Any])? = queue.sync {
+            typealias FastPathResult = (waitingPoll: WaitingPoll, commandDict: [String: Any])
+            let (fastPath, queuedCount): (FastPathResult?, Int) = queue.sync {
                 pendingCommands.append(PendingCommand(
                     id: commandID,
                     params: params,
@@ -154,7 +155,9 @@ public final class ExtensionBridge: @unchecked Sendable {
                     delivered: false
                 ))
 
-                guard !waitingPolls.isEmpty else { return nil }
+                let count = pendingCommands.count
+
+                guard !waitingPolls.isEmpty else { return (nil, count) }
 
                 let wp = waitingPolls.removeFirst()
 
@@ -167,8 +170,12 @@ public final class ExtensionBridge: @unchecked Sendable {
                 for (key, val) in params {
                     commandDict[key] = val.value
                 }
-                return (waitingPoll: wp, commandDict: commandDict)
+                return ((waitingPoll: wp, commandDict: commandDict), count)
             }
+
+            Trace.emit(commandID, layer: "daemon-bridge", event: "bridge_queued", data: [
+                "pendingCount": queuedCount,
+            ])
 
             if let fp = fastPath {
                 fp.waitingPoll.timeoutTask.cancel()
@@ -203,6 +210,9 @@ public final class ExtensionBridge: @unchecked Sendable {
         }
 
         if !collected.isEmpty {
+            Trace.emit(collected.first?["id"] as? String ?? "poll", layer: "daemon-bridge", event: "extension_polled", data: [
+                "deliveredCount": collected.count,
+            ])
             return Response.success(id: commandID, value: AnyCodable(["commands": collected]))
         }
 
@@ -242,6 +252,19 @@ public final class ExtensionBridge: @unchecked Sendable {
     }
 
     public func handleResult(commandID: String, params: [String: AnyCodable]) -> Response {
+        // Handle extension trace events — route to daemon-trace.ndjson, not to a continuation
+        if let requestId = params["requestId"]?.value as? String, requestId == "__trace__" {
+            if let result = params["result"]?.value as? [String: Any],
+               let traceType = result["type"] as? String, traceType == "trace",
+               let traceId = result["id"] as? String,
+               let layer = result["layer"] as? String,
+               let event = result["event"] as? String {
+                let data = result["data"] as? [String: Any] ?? [:]
+                Trace.emit(traceId, layer: layer, event: event, data: data)
+            }
+            return Response.success(id: commandID, value: AnyCodable("ok"))
+        }
+
         guard let reqIDValue = params["requestId"],
               let reqID = reqIDValue.value as? String else {
             return Response.failure(
@@ -325,6 +348,12 @@ public final class ExtensionBridge: @unchecked Sendable {
             }
             callerResponse = Response.success(id: cmd.id, value: resultValue)
         }
+
+        let hasMeta = (params["result"]?.value as? [String: Any])?["_meta"] != nil
+        Trace.emit(cmd.id, layer: "daemon-bridge", event: "bridge_result", data: [
+            "ok": callerResponse.ok,
+            "hasMeta": hasMeta,
+        ])
 
         cmd.continuation.resume(returning: callerResponse)
 
