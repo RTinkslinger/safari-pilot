@@ -297,14 +297,25 @@ public final class ExtensionBridge: @unchecked Sendable {
                 )
             )
         }
-        // Unwrap success: background.js sends {result: {ok:true, value:<jsResult>}}
-        // Extract the inner value so the caller gets the raw JS result, not the wrapper.
+        // Unwrap success: background.js sends {result: {ok:true, value:<jsResult>, _meta:{...}}}
+        // Extract the inner value. If _meta is present (tab identity), wrap as
+        // {"value": innerValue, "_meta": meta} so ExtensionEngine can extract it.
+        // If _meta is absent (old extension), return innerValue directly (backward compat).
         else if let resultParam = params["result"],
                 let resultDict = resultParam.value as? [String: Any],
                 let ok = resultDict["ok"] as? Bool, ok {
             // Preserve null/nil faithfully — don't convert to empty string
             let innerValue = resultDict["value"] as Any? ?? NSNull()
-            callerResponse = Response.success(id: cmd.id, value: AnyCodable(innerValue))
+            if let meta = resultDict["_meta"] as? [String: Any] {
+                // Pass through _meta alongside the value in a wrapper object.
+                // ExtensionEngine detects this wrapper via the "_meta" key presence.
+                callerResponse = Response.success(
+                    id: cmd.id,
+                    value: AnyCodable(["value": innerValue, "_meta": meta])
+                )
+            } else {
+                callerResponse = Response.success(id: cmd.id, value: AnyCodable(innerValue))
+            }
         } else {
             let resultValue: AnyCodable
             if let resultParam = params["result"] {
