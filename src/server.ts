@@ -103,21 +103,13 @@ async function checkScreenRecording(timeoutMs: number): Promise<HealthCheck> {
 }
 
 // ── Tool names that skip ownership enforcement ──────────────────────────────
+// Tab identity tracking now handles back/forward via extension tab.id — no
+// need to skip ownership for those tools. They go through the deferred path.
 const SKIP_OWNERSHIP_TOOLS = new Set([
   'safari_list_tabs',
   'safari_new_tab',
   'safari_health_check',
-  'safari_navigate_back',    // handler queries tab by stale URL after history.back() — can't enforce ownership reliably
-  'safari_navigate_forward', // same — handler returns stale URL, subsequent calls would be stranded
 ]);
-
-// Tools whose successful execution updates the tab's URL in the ownership registry.
-// EXCLUDES safari_navigate_back/forward: those handlers query the tab by OLD URL after
-// history.back()/forward(), which fails because Safari can't re-locate the tab by a URL
-// it no longer has. The handlers fall back to returning the old URL, making tracking
-// impossible. This is a pre-existing handler-level limitation — fixing it requires
-// tab-index-based queries in the navigation handlers (separate PR).
-const NAVIGATION_URL_TRACKING_TOOLS = new Set(['safari_navigate']);
 
 /**
  * Infrastructure message types that bypass the 9-layer security pipeline.
@@ -410,15 +402,7 @@ export class SafariPilotServer {
       domain = '';
     }
 
-    // 3. Tab ownership check — skip for tools that operate without a specific tab
-    if (params['tabUrl'] && !SKIP_OWNERSHIP_TOOLS.has(name)) {
-      const tabUrl = params['tabUrl'] as string;
-      const tabId = this.tabOwnership.findByUrl(tabUrl);
-      if (tabId === undefined) {
-        throw new TabUrlNotRecognizedError(tabUrl);
-      }
-      this.tabOwnership.assertOwnership(tabId);
-    }
+    // 3. (Ownership check moved to after engine selection — needs selectedEngineName for deferral)
 
     // 4. Domain policy evaluation
     const policy = this.domainPolicy.evaluate(url);
@@ -520,6 +504,30 @@ export class SafariPilotServer {
       this.engineProxy.setDelegate(selectedEngine);
     }
 
+    // 7c. Reset engine meta to prevent stale reads from previous tool calls
+    if (this.engineProxy) {
+      this.engineProxy.resetMeta();
+    }
+
+    // 7d. Tab ownership check (moved here from step 3 — needs selectedEngineName)
+    let deferredOwnershipCheck = false;
+    if (params['tabUrl'] && !SKIP_OWNERSHIP_TOOLS.has(name)) {
+      const tabUrl = params['tabUrl'] as string;
+      const tabId = this.tabOwnership.findByUrl(tabUrl);
+      if (tabId === undefined) {
+        // URL not found. If extension engine selected AND domain matches an owned tab,
+        // defer verification to post-execution (extension result includes tab.id).
+        // Otherwise fail immediately (AppleScript has no stable identity to verify).
+        if (selectedEngineName === 'extension' && this.tabOwnership.domainMatches(tabUrl)) {
+          deferredOwnershipCheck = true;
+        } else {
+          throw new TabUrlNotRecognizedError(tabUrl);
+        }
+      } else {
+        this.tabOwnership.assertOwnership(tabId);
+      }
+    }
+
     // 7.5 Engine-degradation re-run
     // When the tool would have preferred the Extension engine (based on availability
     // and breaker state) but engine-selector returned a different engine, re-invoke
@@ -591,20 +599,40 @@ export class SafariPilotServer {
         } catch { /* tab registration is best-effort — don't fail the tool call */ }
       }
 
-      // 8.post2: Update ownership URL after navigation succeeds.
-      // Only safari_navigate is tracked — see NAVIGATION_URL_TRACKING_TOOLS comment for why.
-      if (NAVIGATION_URL_TRACKING_TOOLS.has(name) && result.content?.[0]?.type === 'text') {
-        try {
-          const navData = JSON.parse((result.content[0] as { type: 'text'; text: string }).text);
-          const oldUrl = params['tabUrl'] as string | undefined;
-          const newUrl = navData.url as string | undefined;
-          if (oldUrl && newUrl && oldUrl !== newUrl) {
-            const tabId = this.tabOwnership.findByUrl(oldUrl);
-            if (tabId !== undefined) {
-              this.tabOwnership.updateUrl(tabId, newUrl);
-            }
+      // 8.post2: Post-execution ownership — read engine meta for tab identity.
+      // Extension results include _meta.tabId (stable) + _meta.tabUrl (current URL).
+      // Use this to: (a) backfill extensionTabId, (b) refresh URL, (c) verify deferred ownership.
+      const engineMeta = this.engineProxy?.getLastMeta();
+      if (engineMeta?.tabId !== undefined) {
+        const extTabId = engineMeta.tabId;
+        const extTabUrl = engineMeta.tabUrl;
+
+        // Backfill extensionTabId on first extension call for this tab
+        const tabUrl = params['tabUrl'] as string | undefined;
+        if (tabUrl) {
+          const ownedByUrl = this.tabOwnership.findByUrl(tabUrl);
+          if (ownedByUrl !== undefined) {
+            this.tabOwnership.setExtensionTabId(ownedByUrl, extTabId);
           }
-        } catch { /* URL update is best-effort */ }
+        }
+
+        // Refresh URL in registry (keeps findByUrl working for subsequent calls)
+        const ownedByExtId = this.tabOwnership.findByExtensionTabId(extTabId);
+        if (ownedByExtId !== undefined && extTabUrl) {
+          this.tabOwnership.updateUrl(ownedByExtId, extTabUrl);
+        }
+
+        // Deferred ownership verification — was the tab actually ours?
+        if (deferredOwnershipCheck) {
+          if (ownedByExtId === undefined) {
+            // Extension executed on a tab we don't own — block the result from reaching agent
+            throw new TabUrlNotRecognizedError(params['tabUrl'] as string);
+          }
+          // Tab is owned — result is safe to return
+        }
+      } else if (deferredOwnershipCheck) {
+        // Extension didn't return _meta — cannot confirm ownership, fail closed
+        throw new TabUrlNotRecognizedError(params['tabUrl'] as string);
       }
 
       // 8a. IDPI scan — check extraction tool results for prompt injection attempts
