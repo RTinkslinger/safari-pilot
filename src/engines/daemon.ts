@@ -49,6 +49,7 @@ export class DaemonEngine extends BaseEngine {
   private reconnectAttempted = false;
   private shuttingDown = false;
   private useTcp = false;
+  private _traceId: string | undefined;
 
   constructor(options?: DaemonEngineOptions | string) {
     super();
@@ -66,6 +67,18 @@ export class DaemonEngine extends BaseEngine {
   }
 
   // ── Public interface ────────────────────────────────────────────────────────
+
+  setTraceId(id: string): void {
+    this._traceId = id;
+  }
+
+  getLastTraceId(): string | undefined {
+    return this._traceId;
+  }
+
+  clearTraceId(): void {
+    this._traceId = undefined;
+  }
 
   /**
    * Send an arbitrary command to the daemon.
@@ -356,7 +369,8 @@ export class DaemonEngine extends BaseEngine {
     }
 
     const effectiveTimeout = timeout ?? this.defaultTimeoutMs;
-    const id = nextId();
+    const id = this._traceId ?? nextId();
+    this._traceId = undefined;
     const payload = JSON.stringify({ id, method, params }) + '\n';
 
     return new Promise<DaemonResponse>((resolve, reject) => {
@@ -384,7 +398,8 @@ export class DaemonEngine extends BaseEngine {
     timeout?: number,
   ): Promise<DaemonResponse> {
     const effectiveTimeout = timeout ?? this.defaultTimeoutMs;
-    const id = nextId();
+    const id = this._traceId ?? nextId();
+    this._traceId = undefined;
     const payload = JSON.stringify({ id, method, params }) + '\n';
 
     return new Promise<DaemonResponse>((resolve, reject) => {
