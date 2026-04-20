@@ -3,11 +3,6 @@
 // No ES module syntax (event pages do not support modules).
 'use strict';
 
-// Emergency one-time storage reset: previous debugging sessions overflowed the
-// quota (~5MB). Remove this block after the first successful wake cycle.
-// TODO: Remove after confirming storage bus works.
-browser.storage.local.clear().catch(() => {});
-
 // ─── Constants ────────────────────────────────────────────────────────────────
 const APP_BUNDLE_ID = 'com.safari-pilot.app';
 const KEEPALIVE_ALARM_NAME = 'safari-pilot-keepalive';
@@ -171,7 +166,6 @@ async function executeCommand(cmd) {
   }
 
   const tab = await findTargetTab(cmd.tabUrl);
-  console.log('[SP-BUS] findTargetTab result:', tab ? `id=${tab.id} url=${tab.url}` : 'null');
   if (!tab || tab.id == null) {
     const result = { ok: false, error: { message: `No target tab for url="${cmd.tabUrl}"` } };
     await updatePendingEntry(commandId, { status: 'completed', result });
@@ -215,10 +209,8 @@ async function executeCommand(cmd) {
   }, 30000);
 
   function resultListener(changes, area) {
-    console.log('[SP-BUS] onChanged fired:', Object.keys(changes).join(','), 'area:', area);
     if (area !== 'local' || !changes.sp_result?.newValue) return;
     const reply = changes.sp_result.newValue;
-    console.log('[SP-BUS] sp_result received:', JSON.stringify(reply).slice(0, 200));
     if (reply.commandId !== commandId) return;
     clearInterval(keepAlive);
     clearTimeout(resultTimeout);
@@ -228,18 +220,24 @@ async function executeCommand(cmd) {
   browser.storage.onChanged.addListener(resultListener);
 
   // Step 2: THEN write the command (listener is already waiting)
-  console.log('[SP-BUS] Writing sp_cmd:', JSON.stringify({commandId, tabId: tab.id, method: 'execute_script'}));
   await browser.storage.local.set({ sp_cmd: storageCmd });
-  console.log('[SP-BUS] sp_cmd written successfully');
 
   // Step 3: Wait for result
   const result = await resultPromise;
 
+  // Enrich result with tab identity metadata.
+  // `tab` is from findTargetTab (line 168) — has the stable tab.id and current URL.
+  // _meta is a sideband channel: ExtensionBridge passes it through alongside the value,
+  // and ExtensionEngine extracts it into EngineResult.meta on the TypeScript side.
+  const enrichedResult = result && typeof result === 'object'
+    ? { ...result, _meta: { tabId: tab.id, tabUrl: tab.url } }
+    : result;
+
   // Cleanup storage keys (safe — result already captured in `result` variable)
   try { await browser.storage.local.remove(['sp_cmd', 'sp_result']); } catch { /* ignore cleanup errors */ }
 
-  await updatePendingEntry(commandId, { status: 'completed', result });
-  return result;
+  await updatePendingEntry(commandId, { status: 'completed', result: enrichedResult });
+  return enrichedResult;
 }
 
 // Results are sent via postResult() in the poll loop and reconcile handler.

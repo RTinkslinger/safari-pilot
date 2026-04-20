@@ -24,11 +24,9 @@
   // Content scripts need their tabId to filter commands meant for them.
   let myTabId = null;
   let pendingStorageCmd = null;
-  console.log('[SP-CONTENT] content-isolated.js loaded, registering tabId...');
 
   function processStorageCommand(cmd) {
-    console.log('[SP-CONTENT] processStorageCommand: cmd.tabId=', cmd.tabId, 'myTabId=', myTabId);
-    if (cmd.tabId !== myTabId) { console.log('[SP-CONTENT] tabId mismatch, ignoring'); return; }
+    if (cmd.tabId !== myTabId) return;
     if (cmd.deadline && cmd.deadline < Date.now()) return;
 
     const requestId = `sp_${++nextRequestId}_${Date.now()}`;
@@ -80,7 +78,6 @@
     try {
       const response = await browser.runtime.sendMessage({ action: 'sp_getTabId' });
       myTabId = response?.tabId ?? null;
-      console.log('[SP-CONTENT] tabId registered:', myTabId);
       // Process any command that arrived before registration completed
       if (myTabId !== null && pendingStorageCmd) {
         const cmd = pendingStorageCmd;
@@ -112,11 +109,9 @@
   // Forwards to MAIN world via the existing window.postMessage relay.
   // Writes results to storage key 'sp_result'.
   browser.storage.onChanged.addListener((changes, area) => {
-    console.log('[SP-CONTENT] storage.onChanged fired:', Object.keys(changes).join(','), 'area:', area);
     if (area !== 'local' || !changes.sp_cmd?.newValue) return;
 
     const cmd = changes.sp_cmd.newValue;
-    console.log('[SP-CONTENT] sp_cmd received: tabId=', cmd.tabId, 'myTabId=', myTabId);
 
     if (myTabId === null) {
       // TabId not registered yet — buffer the command and process after registration

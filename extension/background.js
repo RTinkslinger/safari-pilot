@@ -225,11 +225,19 @@ async function executeCommand(cmd) {
   // Step 3: Wait for result
   const result = await resultPromise;
 
+  // Enrich result with tab identity metadata.
+  // `tab` is from findTargetTab (line 168) — has the stable tab.id and current URL.
+  // _meta is a sideband channel: ExtensionBridge passes it through alongside the value,
+  // and ExtensionEngine extracts it into EngineResult.meta on the TypeScript side.
+  const enrichedResult = result && typeof result === 'object'
+    ? { ...result, _meta: { tabId: tab.id, tabUrl: tab.url } }
+    : result;
+
   // Cleanup storage keys (safe — result already captured in `result` variable)
   try { await browser.storage.local.remove(['sp_cmd', 'sp_result']); } catch { /* ignore cleanup errors */ }
 
-  await updatePendingEntry(commandId, { status: 'completed', result });
-  return result;
+  await updatePendingEntry(commandId, { status: 'completed', result: enrichedResult });
+  return enrichedResult;
 }
 
 // Results are sent via postResult() in the poll loop and reconcile handler.
