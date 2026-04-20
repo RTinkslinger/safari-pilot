@@ -3,6 +3,7 @@ import { readFile, unlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { generateSnapshotJs, buildRefSelector } from '../aria.js';
+import { escapeForJsSingleQuote } from '../escape.js';
 import { hasLocatorParams, extractLocatorFromParams, generateLocatorJs } from '../locator.js';
 import type { IEngine } from '../engines/engine.js';
 import type { Engine, ToolResponse, ToolRequirements } from '../types.js';
@@ -256,7 +257,7 @@ export class ExtractionTools {
       }
     }
 
-    const escapedSelector = selector ? selector.replace(/'/g, "\\'") : '';
+    const escapedSelector = selector ? escapeForJsSingleQuote(selector) : '';
     const js = `
       var el = ${selector ? `document.querySelector('${escapedSelector}')` : 'document.body'};
       if (!el) throw Object.assign(new Error('Element not found'), { name: 'ELEMENT_NOT_FOUND' });
@@ -296,7 +297,7 @@ export class ExtractionTools {
       }
     }
 
-    const escapedSelector = selector ? selector.replace(/'/g, "\\'") : '';
+    const escapedSelector = selector ? escapeForJsSingleQuote(selector) : '';
     const js = `
       var el = ${selector ? `document.querySelector('${escapedSelector}')` : 'document.documentElement'};
       if (!el) throw Object.assign(new Error('Element not found'), { name: 'ELEMENT_NOT_FOUND' });
@@ -338,8 +339,8 @@ export class ExtractionTools {
       throw new Error('safari_get_attribute requires a target element: provide selector, ref, or a locator (role, text, label, testId, placeholder)');
     }
 
-    const escapedSelector = selector.replace(/'/g, "\\'");
-    const escapedAttribute = attribute.replace(/'/g, "\\'");
+    const escapedSelector = escapeForJsSingleQuote(selector);
+    const escapedAttribute = escapeForJsSingleQuote(attribute);
     const js = `
       var el = document.querySelector('${escapedSelector}');
       if (!el) throw Object.assign(new Error('Element not found'), { name: 'ELEMENT_NOT_FOUND' });
