@@ -101,6 +101,13 @@ function postResult(commandId, result) {
     .catch((e) => console.warn('[safari-pilot] postResult failed:', e.message));
 }
 
+function emitTrace(commandId, event, data) {
+  httpPost('/result', {
+    requestId: '__trace__',
+    result: { type: 'trace', id: commandId, layer: 'extension-bg', event, data }
+  }).catch(() => {});
+}
+
 // ─── Storage-backed pending queue ────────────────────────────────────────────
 async function readPending() {
   const s = await browser.storage.local.get(STORAGE_KEY_PENDING);
@@ -215,12 +222,14 @@ async function executeCommand(cmd) {
     clearInterval(keepAlive);
     clearTimeout(resultTimeout);
     browser.storage.onChanged.removeListener(resultListener);
+    emitTrace(commandId, 'result_received', { ok: reply.result?.ok ?? null, hasValue: reply.result?.value !== undefined });
     resultResolver(reply.result);
   }
   browser.storage.onChanged.addListener(resultListener);
 
   // Step 2: THEN write the command (listener is already waiting)
   await browser.storage.local.set({ sp_cmd: storageCmd });
+  emitTrace(commandId, 'cmd_dispatched', { tabId: tab.id, tabUrl: cmd.tabUrl });
 
   // Step 3: Wait for result
   const result = await resultPromise;
@@ -232,6 +241,7 @@ async function executeCommand(cmd) {
   const enrichedResult = result && typeof result === 'object'
     ? { ...result, _meta: { tabId: tab.id, tabUrl: tab.url } }
     : result;
+  emitTrace(commandId, 'result_enriched', { tabId: tab.id, tabUrl: tab.url, enriched: typeof enrichedResult === 'object' && '_meta' in enrichedResult });
 
   // Cleanup storage keys (safe — result already captured in `result` variable)
   try { await browser.storage.local.remove(['sp_cmd', 'sp_result']); } catch { /* ignore cleanup errors */ }
