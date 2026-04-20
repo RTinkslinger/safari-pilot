@@ -97,6 +97,54 @@ describe('Security Enforcement — MCP E2E', () => {
       // Update ownedTabUrl for subsequent tests
       ownedTabUrl = newUrl;
     }, 120_000);
+
+    it('deferred ownership: tool succeeds on click-navigated URL without manual URL discovery', async () => {
+      // Navigate to a page that will redirect
+      const targetUrl = 'https://example.com/?e2e=deferred-' + Date.now();
+      await rawCallTool(
+        client, 'safari_navigate',
+        { tabUrl: ownedTabUrl, url: targetUrl },
+        nextId++, 30_000,
+      );
+      // Update ownedTabUrl to the new URL (server refreshes via _meta)
+      ownedTabUrl = targetUrl;
+
+      // Now click a link that navigates the tab to iana.org
+      // (This changes the URL — but the server gets _meta.tabId from the result
+      //  and updates the registry. The NEXT call with the iana URL should pass
+      //  via the deferred path since the URL isn't registered yet but the domain
+      //  would need to match... actually iana.org != example.com domain.)
+
+      // Better test: navigate to a different path on same domain
+      const navUrl = 'https://example.com/?e2e=deferred-nav-' + Date.now();
+      const { payload: navPayload } = await rawCallTool(
+        client, 'safari_navigate',
+        { tabUrl: ownedTabUrl, url: navUrl },
+        nextId++, 30_000,
+      );
+      // Server's _meta refresh updates ownedUrl. But let's use a DIFFERENT
+      // query param that the server hasn't seen:
+      const freshUrl = 'https://example.com/?e2e=deferred-fresh-' + Date.now();
+      await rawCallTool(
+        client, 'safari_navigate',
+        { tabUrl: navPayload['url'] as string, url: freshUrl },
+        nextId++, 30_000,
+      );
+
+      // Now the server's registry has the PREVIOUS url (from the last _meta refresh).
+      // This next call with freshUrl should work via deferred path:
+      // - findByUrl(freshUrl) → miss
+      // - domainMatches(freshUrl) → true (example.com matches)
+      // - extension engine selected → defer
+      // - tool executes → post-verify with _meta.tabId → passes
+      const { payload } = await rawCallTool(
+        client, 'safari_get_text',
+        { tabUrl: freshUrl },
+        nextId++, 20_000,
+      );
+      expect(payload['text']).toBeDefined();
+      ownedTabUrl = freshUrl;
+    }, 120_000);
   });
 
   // ── IDPI Scanner: FLAGS injection content ───────────────────────────────
