@@ -510,6 +510,10 @@ export class SafariPilotServer {
     }
 
     // 7d. Tab ownership check (moved here from step 3 — needs selectedEngineName)
+    // NOTE: Deferred path requires extensionTabId to be already backfilled (from a prior
+    // extension call on a known URL). First-contact on an unknown URL will fail closed.
+    // This is by design — the normal flow (safari_new_tab → first call on returned URL)
+    // always backfills extensionTabId before any URL change can trigger deferral.
     let deferredOwnershipCheck = false;
     if (params['tabUrl'] && !SKIP_OWNERSHIP_TOOLS.has(name)) {
       const tabUrl = params['tabUrl'] as string;
