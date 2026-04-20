@@ -124,6 +124,21 @@ export class TabNotOwnedError extends SafariPilotError {
   }
 }
 
+export class TabUrlNotRecognizedError extends SafariPilotError {
+  readonly code = ERROR_CODES.TAB_NOT_OWNED;
+  readonly retryable = false;
+  readonly hints: string[];
+
+  constructor(url: string) {
+    super(`Tab URL not recognized as agent-owned: ${url}`);
+    this.hints = [
+      'This URL does not match any tab opened by this agent session',
+      'If the tab was navigated, the URL may have changed — use the URL from the last navigation response',
+      'Only tabs opened via safari_new_tab can be controlled',
+    ];
+  }
+}
+
 export class DomainNotAllowedError extends SafariPilotError {
   readonly code = ERROR_CODES.DOMAIN_NOT_ALLOWED;
   readonly retryable = false;

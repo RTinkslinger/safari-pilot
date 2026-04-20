@@ -33,7 +33,7 @@ import { CircuitBreaker } from './security/circuit-breaker.js';
 import { IdpiScanner } from './security/idpi-scanner.js';
 import { HumanApproval } from './security/human-approval.js';
 import { ScreenshotRedaction } from './security/screenshot-redaction.js';
-import { RateLimitedError, CircuitBreakerOpenError, HumanApprovalRequiredError } from './errors.js';
+import { RateLimitedError, CircuitBreakerOpenError, HumanApprovalRequiredError, TabUrlNotRecognizedError } from './errors.js';
 import { loadConfig, DEFAULT_CONFIG, type SafariPilotConfig } from './config.js';
 
 const execFileAsync = promisify(execFile);
@@ -107,7 +107,17 @@ const SKIP_OWNERSHIP_TOOLS = new Set([
   'safari_list_tabs',
   'safari_new_tab',
   'safari_health_check',
+  'safari_navigate_back',    // handler queries tab by stale URL after history.back() — can't enforce ownership reliably
+  'safari_navigate_forward', // same — handler returns stale URL, subsequent calls would be stranded
 ]);
+
+// Tools whose successful execution updates the tab's URL in the ownership registry.
+// EXCLUDES safari_navigate_back/forward: those handlers query the tab by OLD URL after
+// history.back()/forward(), which fails because Safari can't re-locate the tab by a URL
+// it no longer has. The handlers fall back to returning the old URL, making tracking
+// impossible. This is a pre-existing handler-level limitation — fixing it requires
+// tab-index-based queries in the navigation handlers (separate PR).
+const NAVIGATION_URL_TRACKING_TOOLS = new Set(['safari_navigate']);
 
 /**
  * Infrastructure message types that bypass the 9-layer security pipeline.
@@ -150,6 +160,7 @@ export class SafariPilotServer {
   private engineProxy: EngineProxy | null = null;
   private clickContexts: Map<string, ClickContext> = new Map();
   private clickContextTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
+  private _nextTabIndex = 1;
 
   constructor(config?: SafariPilotConfig) {
     this.config = config ?? DEFAULT_CONFIG;
@@ -403,11 +414,10 @@ export class SafariPilotServer {
     if (params['tabUrl'] && !SKIP_OWNERSHIP_TOOLS.has(name)) {
       const tabUrl = params['tabUrl'] as string;
       const tabId = this.tabOwnership.findByUrl(tabUrl);
-      if (tabId !== undefined) {
-        this.tabOwnership.assertOwnership(tabId);
+      if (tabId === undefined) {
+        throw new TabUrlNotRecognizedError(tabUrl);
       }
-      // If tabId is undefined the tool handler will surface its own error;
-      // ownership enforcement only applies to tabs we know about.
+      this.tabOwnership.assertOwnership(tabId);
     }
 
     // 4. Domain policy evaluation
@@ -575,11 +585,27 @@ export class SafariPilotServer {
           if (tabData.tabUrl) {
             const syntheticId = TabOwnership.makeTabId(
               tabData.windowId ?? 1,
-              this.tabOwnership.getOwnedCount() + 1,
+              this._nextTabIndex++,
             );
             this.tabOwnership.registerTab(syntheticId, tabData.tabUrl);
           }
         } catch { /* tab registration is best-effort — don't fail the tool call */ }
+      }
+
+      // 8.post2: Update ownership URL after navigation succeeds.
+      // Only safari_navigate is tracked — see NAVIGATION_URL_TRACKING_TOOLS comment for why.
+      if (NAVIGATION_URL_TRACKING_TOOLS.has(name) && result.content?.[0]?.type === 'text') {
+        try {
+          const navData = JSON.parse((result.content[0] as { type: 'text'; text: string }).text);
+          const oldUrl = params['tabUrl'] as string | undefined;
+          const newUrl = navData.url as string | undefined;
+          if (oldUrl && newUrl && oldUrl !== newUrl) {
+            const tabId = this.tabOwnership.findByUrl(oldUrl);
+            if (tabId !== undefined) {
+              this.tabOwnership.updateUrl(tabId, newUrl);
+            }
+          }
+        } catch { /* URL update is best-effort */ }
       }
 
       // 8a. IDPI scan — check extraction tool results for prompt injection attempts
