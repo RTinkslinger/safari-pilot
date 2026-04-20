@@ -75,11 +75,38 @@ export class ExtensionEngine extends BaseEngine {
     const start = Date.now();
     try {
       const payload = JSON.stringify({ script: jsCode, tabUrl });
-      const result = await this.daemon.execute(
+      const daemonResult = await this.daemon.execute(
         `${INTERNAL_PREFIX} extension_execute ${payload}`,
         Math.max(timeout ?? EXTENSION_TIMEOUT_MS, EXTENSION_TIMEOUT_MS),
       );
-      return { ...result, elapsed_ms: Date.now() - start };
+      const elapsed_ms = Date.now() - start;
+
+      if (!daemonResult.ok) {
+        return { ...daemonResult, elapsed_ms };
+      }
+
+      // Check if the daemon result contains a _meta wrapper from ExtensionBridge.
+      // When present, the value is JSON: {"value": <innerValue>, "_meta": {tabId, tabUrl}}
+      // Extract _meta into EngineResult.meta and return the inner value unwrapped.
+      try {
+        const parsed = JSON.parse(daemonResult.value ?? '');
+        if (typeof parsed === 'object' && parsed !== null && '_meta' in parsed) {
+          const innerValue = parsed.value;
+          const meta = parsed._meta as { tabId?: number; tabUrl?: string };
+          return {
+            ok: true,
+            value: typeof innerValue === 'string'
+              ? innerValue
+              : innerValue === null || innerValue === undefined
+                ? undefined
+                : JSON.stringify(innerValue),
+            elapsed_ms,
+            meta,
+          };
+        }
+      } catch { /* not JSON or not a _meta wrapper — fall through */ }
+
+      return { ...daemonResult, elapsed_ms };
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
       return {
