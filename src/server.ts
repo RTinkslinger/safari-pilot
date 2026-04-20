@@ -474,10 +474,9 @@ export class SafariPilotServer {
     }
     this.rateLimiter.recordAction(domain);
 
-    // 6. Circuit breaker check
-    if (this.circuitBreaker.isOpen(domain)) {
-      throw new CircuitBreakerOpenError(domain, 120);
-    }
+    // 6. Circuit breaker check — assertClosed handles half-open probe logic and
+    // reports actual remaining cooldown time (not hardcoded 120s)
+    this.circuitBreaker.assertClosed(domain);
 
     // 7. Engine selection — pick the best available engine for this tool
     const toolDef = this.tools.get(name);
