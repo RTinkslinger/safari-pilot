@@ -14,10 +14,11 @@ import { fileURLToPath } from 'node:url';
 const __dir = fileURLToPath(new URL('.', import.meta.url));
 
 export async function setup() {
-  const testFilter = process.env['VITEST_INCLUDE'] ?? process.argv.join(' ');
-  const isE2eRun = testFilter.includes('test/e2e') || testFilter.includes('test:e2e')
-    || (!testFilter.includes('test/unit') && !testFilter.includes('test:unit')
-       && !testFilter.includes('test/integration'));
+  const isE2eRun = process.env['SAFARI_PILOT_E2E'] === '1'
+    || (() => {
+      const filter = process.env['VITEST_INCLUDE'] ?? process.argv.join(' ');
+      return filter.includes('test/e2e') || filter.includes('test:e2e');
+    })();
 
   const daemonUp = await checkTcp(19474);
   if (!daemonUp) {
