@@ -85,7 +85,11 @@ Tool call arrives with params.tabUrl
        └─ NO (AppleScript/daemon engine) → throw TabUrlNotRecognizedError
 ```
 
-**DoS mitigation (domain check):** Before deferring, verify the URL's hostname matches at least one owned tab's current hostname. This catches the attack scenario (random URLs to non-owned tabs) while allowing the legitimate scenario (same-domain redirect/path change). A non-owned URL on a domain the agent never opened cannot trigger deferred execution.
+**DoS mitigation (domain check):** Before deferring, verify the URL's registrable domain (eTLD+1) matches at least one owned tab's registrable domain. Use hostname comparison with subdomain stripping: extract the last two segments (or last three for known two-part TLDs like `.co.uk`). For simplicity, compare the last two dot-separated segments of the hostname (e.g., `auth.example.com` → `example.com`, `app.example.com` → `example.com` — these match).
+
+This catches the attack scenario (random URLs to non-owned tabs) while allowing legitimate scenarios (OAuth flows: `app.example.com` → `auth.example.com`, CDN subdomains, API subdomains).
+
+**Known limitation:** Two-part TLDs (`.co.uk`, `.com.au`) would incorrectly match `evil.co.uk` against `bank.co.uk`. Acceptable for v1 — the primary threat model is cross-DOMAIN attacks, not cross-subdomain within the same TLD.
 
 **Why extension is fresher than server:** The extension's `tabCacheMap` updates via `tabs.onUpdated` which fires immediately on server-side redirects. The server's `currentUrl` field only updates from extension result `_meta` — meaning it's one call behind the extension. On the FIRST call after a redirect, the extension has the new URL (from `onUpdated`) but the server doesn't (hasn't received a result yet). This is the precise window where deferral is valuable.
 
@@ -95,17 +99,23 @@ Tool call arrives with params.tabUrl
 
 ```
 BEFORE (current):
-  1. Ownership check by URL → PASS or THROW
-  2. Engine selection
-  3. Tool execution
-  4. Post-execution (audit, IDPI, etc.)
+  1. KillSwitch
+  2. URL/domain extraction
+  3. TabOwnership check by URL → PASS or THROW
+  4. DomainPolicy, HumanApproval, RateLimiter, CircuitBreaker
+  5. Engine selection
+  6. Tool execution
+  7. Post-execution (audit, IDPI, etc.)
 
 AFTER (proposed):
-  1. Ownership check by URL → PASS or DEFER
-  2. Engine selection
-  3. Tool execution (extension includes _meta.tabId in result)
-  4. IF deferred: verify result._meta.tabId is owned → PASS or THROW
-  5. Post-execution (audit, IDPI, etc.)
+  1. KillSwitch
+  2. URL/domain extraction
+  3. DomainPolicy, HumanApproval, RateLimiter, CircuitBreaker
+  4. Engine selection
+  5. TabOwnership check by URL → PASS or DEFER (uses selectedEngineName)
+  6. Tool execution (extension includes _meta in result)
+  7. IF deferred: verify _meta.tabId is owned → PASS or THROW (discard result)
+  8. Post-execution (audit, IDPI, etc.)
 ```
 
 **Security guarantee preserved:** No unowned tab's data reaches the agent. If step 4 fails (tab.id not owned), the result is discarded and an error is thrown — same as if step 1 had thrown. The tool DID execute in Safari (side effect occurred), but the RESULT is blocked. This is acceptable because:
@@ -182,18 +192,74 @@ This preserves backward compatibility: if `_meta` is absent (old extension), res
 
 ### 3. `src/engines/extension.ts` — Extract `_meta` from result
 
-In the result parsing after daemon response, detect the wrapped format:
+**Complete _meta propagation path (end-to-end):**
 
-```typescript
-// When result comes back as { value: <actual>, _meta: { tabId, tabUrl } }:
-// Extract _meta and put it in EngineResult metadata
-if (typeof parsed === 'object' && parsed !== null && '_meta' in parsed) {
-  const meta = parsed._meta as { tabId?: number; tabUrl?: string };
-  return { ok: true, value: JSON.stringify(parsed.value), elapsed_ms, meta };
-}
+```
+background.js executeCommand()
+  returns: { ok: true, value: "jsResult", _meta: { tabId: 42, tabUrl: "https://..." } }
+       ↓ (via HTTP POST /result → ExtensionBridge.handleResult)
+ExtensionBridge.swift
+  extracts _meta, wraps: Response.success(value: AnyCodable(["value": innerValue, "_meta": meta]))
+       ↓ (NDJSON stdout from daemon)
+DaemonEngine.execute() / tryTcpConnection()
+  parses NDJSON response: { id, ok: true, value: {"value": "jsResult", "_meta": {...}} }
+  returns EngineResult: { ok: true, value: '{"value":"jsResult","_meta":{...}}', elapsed_ms }
+       ↓
+ExtensionEngine.executeJsInTab()
+  receives EngineResult from DaemonEngine
+  PARSES result.value as JSON
+  DETECTS the wrapper: if parsed has "_meta" key → extract separately
+  returns: { ok: true, value: JSON.stringify(parsed.value), elapsed_ms, meta: parsed._meta }
+       ↓
+server.ts callTool() → tool handler (receives EngineResult via proxy)
+  tool handler builds ToolResponse: { content: [...], metadata: { engine, ... } }
+       ↓
+server.ts executeToolWithSecurity() receives ToolResponse
+  READS meta FROM the EngineResult (not from ToolResponse.metadata)
 ```
 
-The `EngineResult` type needs a new optional `meta?: { tabId?: number; tabUrl?: string }` field.
+**The key detail:** `meta` lives on the `EngineResult` returned by `ExtensionEngine`, NOT inside `ToolResponse.metadata` (which is set by the tool handler). The server must read it from the engine result directly. This means the `callTool()` method (or the EngineProxy) must expose the engine's `meta` field alongside the tool's response.
+
+**Implementation in ExtensionEngine (exact location):**
+
+In `src/engines/extension.ts`, in `executeJsInTab()`, after receiving the result from `DaemonEngine.execute()`:
+
+```typescript
+// Current: returns the daemon result directly
+// NEW: parse value, detect wrapper, extract _meta
+
+const daemonResult = await this.daemonEngine.execute(sentinel, timeout);
+if (!daemonResult.ok) return daemonResult;
+
+// Check if the value is a _meta wrapper from the bridge
+try {
+  const parsed = JSON.parse(daemonResult.value ?? '');
+  if (typeof parsed === 'object' && parsed !== null && '_meta' in parsed) {
+    return {
+      ok: true,
+      value: typeof parsed.value === 'string' ? parsed.value : JSON.stringify(parsed.value),
+      elapsed_ms: daemonResult.elapsed_ms,
+      meta: parsed._meta as { tabId?: number; tabUrl?: string },
+    };
+  }
+} catch { /* not JSON or not wrapped — fall through */ }
+
+return daemonResult;
+```
+
+**Server-side access:** `server.ts` needs access to `EngineResult.meta` AFTER tool execution. Currently `callTool()` returns `ToolResponse` (from the handler), losing the engine result. The fix: the EngineProxy stores the last result's `meta` field, and the server reads it after `callTool()`:
+
+```typescript
+// In server.ts, after const result = await this.callTool(name, params):
+const engineMeta = this.engineProxy?.getLastMeta();  // { tabId?, tabUrl? } or undefined
+```
+
+This requires adding `getLastMeta()` to EngineProxy that returns the `meta` from the most recent `executeJsInTab` call.
+
+The `EngineResult` type needs a new optional field:
+```typescript
+meta?: { tabId?: number; tabUrl?: string };
+```
 
 ### 4. `src/security/tab-ownership.ts` — Dual-key registry
 
@@ -228,6 +294,41 @@ updateUrl(tabId: TabId, newUrl: string): void {
   const entry = this.ownedTabs.get(tabId);
   if (entry) entry.currentUrl = newUrl;
 }
+
+setExtensionTabId(tabId: TabId, extTabId: number): void {
+  const entry = this.ownedTabs.get(tabId);
+  if (entry && entry.extensionTabId === null) {
+    entry.extensionTabId = extTabId;
+  }
+}
+
+domainMatches(url: string): boolean {
+  // Extract registrable domain (last 2 segments of hostname)
+  try {
+    const target = new URL(url).hostname.split('.').slice(-2).join('.');
+    for (const [, data] of this.ownedTabs) {
+      const owned = new URL(data.currentUrl).hostname.split('.').slice(-2).join('.');
+      if (owned === target) return true;
+    }
+  } catch { /* malformed URL */ }
+  return false;
+}
+```
+
+### 4b. `src/engines/engine-proxy.ts` — Add getLastMeta()
+
+```typescript
+private _lastMeta: { tabId?: number; tabUrl?: string } | undefined;
+
+executeJsInTab(tabUrl: string, jsCode: string, timeout?: number): Promise<EngineResult> {
+  const result = await this.delegate.executeJsInTab(tabUrl, jsCode, timeout);
+  this._lastMeta = result.meta;  // capture from extension engine
+  return result;
+}
+
+getLastMeta(): { tabId?: number; tabUrl?: string } | undefined {
+  return this._lastMeta;
+}
 ```
 
 ### 5. `src/server.ts` — Revised ownership check + post-execution verify
@@ -256,14 +357,22 @@ Note: This requires engine selection to happen BEFORE the ownership check for th
 
 **Post-execution (after tool result):**
 ```typescript
-// After successful tool execution, if extension engine returned _meta:
-if (result.metadata?.meta?.tabId !== undefined) {
-  const extTabId = result.metadata.meta.tabId as number;
-  const extTabUrl = result.metadata.meta.tabUrl as string;
+// After successful tool execution, read engine meta from the proxy:
+const engineMeta = this.engineProxy?.getLastMeta(); // { tabId?, tabUrl? } | undefined
 
-  // Refresh URL in registry
+if (engineMeta?.tabId !== undefined) {
+  const extTabId = engineMeta.tabId;
+  const extTabUrl = engineMeta.tabUrl;
+
+  // Backfill extensionTabId if this is the first extension call for this tab
+  const ownedByUrl = this.tabOwnership.findByUrl(params['tabUrl'] as string);
+  if (ownedByUrl !== undefined) {
+    this.tabOwnership.setExtensionTabId(ownedByUrl, extTabId);
+  }
+
+  // Refresh URL in registry (keeps findByUrl working for next call)
   const ownedTabId = this.tabOwnership.findByExtensionTabId(extTabId);
-  if (ownedTabId !== undefined) {
+  if (ownedTabId !== undefined && extTabUrl) {
     this.tabOwnership.updateUrl(ownedTabId, extTabUrl);
   }
 
@@ -371,5 +480,5 @@ DomainPolicy, HumanApproval, RateLimiter, CircuitBreaker don't depend on tab own
 
 - Fixing AppleScript-only ownership beyond URL match (no stable identity available)
 - Tab closure propagation (orphaned entries are harmless)
-- SPA `pushState` detection (handled on next call — extension cache updates via `tabs.onUpdated` for full navigations; pushState is invisible but the next tool call refreshes the URL from the live tab)
+- SPA `pushState` detection — `pushState` does NOT fire `tabs.onUpdated`. The FIRST call after a pushState route change will fail (extension's `findTargetTab` also uses the stale URL and won't find the tab). The SECOND call succeeds IF the first call somehow refreshed the URL. In practice: SPA routing breaks the first tool call after route change. This is a known limitation requiring either (a) extension content script detecting pushState and reporting URL changes, or (b) the agent using `safari_evaluate` with `return location.href` to discover the current URL before other calls. Deferred to future work.
 - Multiple tabs at same URL disambiguation (use unique query params; same limitation as today)
