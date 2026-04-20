@@ -60,9 +60,9 @@ describe('FrameTools - tool definitions', () => {
     }
   });
 
-  it('safari_eval_in_frame has requiresFramesCrossOrigin requirement', () => {
+  it('safari_eval_in_frame has no special engine requirements', () => {
     const def = tools.getDefinitions().find((d) => d.name === 'safari_eval_in_frame')!;
-    expect(def.requirements.requiresFramesCrossOrigin).toBe(true);
+    expect(def.requirements).toEqual({});
   });
 });
 

@@ -76,7 +76,7 @@ export class FrameTools {
           },
           required: ['tabUrl', 'frameSelector', 'script'],
         },
-        requirements: { idempotent: false, requiresFramesCrossOrigin: true },
+        requirements: {},
       },
     ];
   }
@@ -172,6 +172,9 @@ export class FrameTools {
       try {
         result = win.eval(userScript);
       } catch (e) {
+        if (e instanceof DOMException && e.name === 'SecurityError') {
+          throw new Error('Cross-origin frame eval blocked by browser security policy. Use safari_get_text with the frame URL directly instead.');
+        }
         return { ok: false, error: e.message };
       }
 
