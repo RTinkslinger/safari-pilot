@@ -35,8 +35,14 @@ import { HumanApproval } from './security/human-approval.js';
 import { ScreenshotRedaction } from './security/screenshot-redaction.js';
 import { RateLimitedError, HumanApprovalRequiredError, TabUrlNotRecognizedError } from './errors.js';
 import { loadConfig, DEFAULT_CONFIG, type SafariPilotConfig } from './config.js';
+import { trace } from './trace.js';
 
 const execFileAsync = promisify(execFile);
+
+let _traceCounter = 0;
+function nextTraceId(): string {
+  return `req-${Date.now()}-${++_traceCounter}`;
+}
 
 interface ToolDefinition {
   name: string;
@@ -389,6 +395,12 @@ export class SafariPilotServer {
     params: Record<string, unknown>,
   ): Promise<ToolResponse> {
     const start = Date.now();
+    const traceId = nextTraceId();
+    trace(traceId, 'server', 'tool_received', {
+      tool: name,
+      tabUrl: ((params['tabUrl'] ?? params['url'] ?? '') as string),
+      paramKeys: Object.keys(params),
+    });
 
     // 1. Kill switch check — blocks all automation when active
     this.killSwitch.checkBeforeAction();
@@ -406,6 +418,11 @@ export class SafariPilotServer {
 
     // 4. Domain policy evaluation
     const policy = this.domainPolicy.evaluate(url);
+    trace(traceId, 'server', 'domain_policy', {
+      domain,
+      trustLevel: policy.trust,
+      blocked: !!policy.blocked,
+    });
 
     // 4a. Blocked domain enforcement — operator-configured blocked list
     if (policy.blocked && domain) {
@@ -457,6 +474,7 @@ export class SafariPilotServer {
       throw new RateLimitedError(domain, policy.maxActionsPerMinute);
     }
     this.rateLimiter.recordAction(domain);
+    trace(traceId, 'server', 'rate_limit_check', { domain });
 
     // 6. Circuit breaker check — assertClosed handles half-open probe logic and
     // reports actual remaining cooldown time (not hardcoded 120s)
@@ -504,6 +522,11 @@ export class SafariPilotServer {
       this.engineProxy.setDelegate(selectedEngine);
     }
 
+    trace(traceId, 'server', 'engine_selected', {
+      engine: selectedEngineName,
+      degraded: false,
+    });
+
     // 7c. Reset engine meta to prevent stale reads from previous tool calls
     if (this.engineProxy) {
       this.engineProxy.resetMeta();
@@ -531,6 +554,12 @@ export class SafariPilotServer {
         this.tabOwnership.assertOwnership(tabId);
       }
     }
+    trace(traceId, 'server', 'ownership_check', {
+      tabUrl: (params['tabUrl'] as string) ?? null,
+      found: params['tabUrl'] ? !!this.tabOwnership.findByUrl(params['tabUrl'] as string) : null,
+      deferred: deferredOwnershipCheck,
+      skipped: !params['tabUrl'] || SKIP_OWNERSHIP_TOOLS.has(name),
+    });
 
     // 7.5 Engine-degradation re-run
     // When the tool would have preferred the Extension engine (based on availability
@@ -583,10 +612,26 @@ export class SafariPilotServer {
       degradationReason = 'extension_unavailable_fallback_to_' + selectedEngineName;
     }
 
+    // 8. Inject traceId into DaemonEngine for cross-process correlation
+    const daemonEngine = this.getDaemonEngine();
+    if (daemonEngine) {
+      daemonEngine.setTraceId(traceId);
+    }
+    trace(traceId, 'server', 'engine_dispatch', {
+      engine: selectedEngineName,
+      tabUrl: ((params['tabUrl'] ?? '') as string),
+    });
+
     // 8. Execute the tool, record circuit breaker outcome, and audit
     try {
       const result = await this.callTool(name, params);
       this.circuitBreaker.recordSuccess(domain);
+      trace(traceId, 'server', 'tool_result', {
+        ok: true,
+        engine: selectedEngineName,
+        metaTabId: this.engineProxy?.getLastMeta()?.tabId ?? null,
+        metaTabUrl: this.engineProxy?.getLastMeta()?.tabUrl ?? null,
+      }, 'event', Date.now() - start);
 
       // 8.post: Tab ownership registration — after safari_new_tab succeeds,
       // register the new tab URL so subsequent tool calls pass ownership checks.
@@ -638,6 +683,10 @@ export class SafariPilotServer {
         // Extension didn't return _meta — cannot confirm ownership, fail closed
         throw new TabUrlNotRecognizedError(params['tabUrl'] as string);
       }
+      trace(traceId, 'server', 'post_verify', {
+        deferredVerified: deferredOwnershipCheck,
+        metaPresent: !!this.engineProxy?.getLastMeta()?.tabId,
+      });
 
       // 8a. IDPI scan — check extraction tool results for prompt injection attempts
       const EXTRACTION_TOOLS = new Set([
@@ -710,6 +759,11 @@ export class SafariPilotServer {
 
       return result;
     } catch (error) {
+      trace(traceId, 'server', 'tool_error', {
+        tool: name,
+        error: error instanceof Error ? error.message : String(error),
+        code: (error as Record<string, unknown>)?.code ?? 'UNKNOWN',
+      }, 'error', Date.now() - start);
       this.circuitBreaker.recordFailure(domain);
 
       // 9. Audit log — error path
