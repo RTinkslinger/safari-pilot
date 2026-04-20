@@ -9,7 +9,7 @@ import { McpTestClient, initClient, callTool } from '../helpers/mcp-client.js';
 
 const SERVER_PATH = join(import.meta.dirname, '../../dist/index.js');
 
-describe.skipIf(process.env.CI === 'true')('safari_extension_health (e2e)', () => {
+describe('safari_extension_health (e2e)', () => {
   let client: McpTestClient;
   let nextId: number;
 

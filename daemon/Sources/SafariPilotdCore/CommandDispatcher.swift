@@ -198,7 +198,7 @@ public final class CommandDispatcher: @unchecked Sendable {
     // MARK: - Internal command routing (for ExtensionEngine sentinel protocol)
 
     /// Parse and route a "__SAFARI_PILOT_INTERNAL__ <method> [jsonParams]" string.
-    /// Supported methods: extension_status, extension_execute.
+    /// Supported methods: extension_status, extension_execute, extension_health.
     private func handleInternalCommand(commandID: String, raw: String) async -> Response {
         // Split on first space: "<method>" or "<method> <jsonParams>"
         let parts = raw.split(separator: " ", maxSplits: 1).map(String.init)
@@ -217,6 +217,9 @@ public final class CommandDispatcher: @unchecked Sendable {
             return extensionBridge.handleStatus(commandID: commandID)
         case "extension_execute":
             return await extensionBridge.handleExecute(commandID: commandID, params: params)
+        case "extension_health":
+            let snapshot = extensionBridge.healthSnapshot(store: healthStore)
+            return Response.success(id: commandID, value: AnyCodable(snapshot))
         default:
             return Response.failure(
                 id: commandID,

@@ -30,24 +30,35 @@ export class ExtensionEngine extends BaseEngine {
   }
 
   /**
-   * Returns true when the daemon is running and can queue commands for the extension.
+   * Returns true when the daemon is running AND the extension has connected at
+   * least once via HTTP polling (ipcMechanism is "http").
    *
-   * With event-page semantics (commit 1a), the extension TCP connection is ephemeral —
-   * the event page wakes on a 1-minute alarm, drains queued commands, and unloads.
-   * Checking "is the extension CURRENTLY connected" would return false most of the
-   * time. Instead, we check that the daemon is reachable (it queues commands) and
-   * the extension kill-switch is not active. The alarm-driven wake cycle ensures
-   * queued commands are drained within ~60s.
+   * Prior to commit 2 (HTTP IPC), we checked only daemon reachability because
+   * the extension connection was ephemeral. With HTTP polling, the extension
+   * sets ipcMechanism="http" on first POST /connect — this persists even when
+   * the event page is killed between alarm cycles. A daemon where no extension
+   * has EVER connected (e.g., a test daemon that can't bind port 19475) will
+   * have ipcMechanism="none" and should NOT report as available — commands
+   * queued to its bridge will never be picked up.
    */
   async isAvailable(): Promise<boolean> {
     try {
       const result = await this.daemon.execute(
-        `${INTERNAL_PREFIX} extension_status`,
+        `${INTERNAL_PREFIX} extension_health`,
       );
-      // Daemon reachable = extension engine functionally available (daemon queues,
-      // extension drains on wake). Both 'connected' and 'disconnected' mean the
-      // daemon is up; only a failed call means truly unavailable.
-      return result.ok;
+      if (!result.ok) return false;
+      // Check that the extension has connected at least once to this daemon.
+      // ipcMechanism="http" means the extension called POST /connect at least once.
+      // ipcMechanism="none" means no extension has ever connected — commands would rot.
+      // result.value is a JSON string from daemon.execute() — parse it.
+      let parsed: Record<string, unknown> | undefined;
+      if (typeof result.value === 'string') {
+        try { parsed = JSON.parse(result.value) as Record<string, unknown>; } catch { /* not JSON */ }
+      } else if (typeof result.value === 'object') {
+        parsed = result.value as Record<string, unknown>;
+      }
+      const mechanism = parsed?.ipcMechanism;
+      return mechanism === 'http' || mechanism === 'tcp';
     } catch {
       return false;
     }

@@ -296,6 +296,15 @@ public final class ExtensionBridge: @unchecked Sendable {
                     retryable: true
                 )
             )
+        }
+        // Unwrap success: background.js sends {result: {ok:true, value:<jsResult>}}
+        // Extract the inner value so the caller gets the raw JS result, not the wrapper.
+        else if let resultParam = params["result"],
+                let resultDict = resultParam.value as? [String: Any],
+                let ok = resultDict["ok"] as? Bool, ok {
+            // Preserve null/nil faithfully — don't convert to empty string
+            let innerValue = resultDict["value"] as Any? ?? NSNull()
+            callerResponse = Response.success(id: cmd.id, value: AnyCodable(innerValue))
         } else {
             let resultValue: AnyCodable
             if let resultParam = params["result"] {

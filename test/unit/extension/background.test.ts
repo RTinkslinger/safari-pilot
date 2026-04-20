@@ -63,9 +63,9 @@ describe('Extension background.js — event-page form', () => {
     expect(BG).toMatch(/handleReconcileResponse/);
   });
 
-  it('line count within <=390 target (HTTP poll rewrite + audit fixes)', () => {
+  it('line count within <=500 target (storage bus IPC + tab cache)', () => {
     const lines = BG.split('\n').length;
-    expect(lines).toBeLessThanOrEqual(390);
+    expect(lines).toBeLessThanOrEqual(500);
   });
 
   it('uses HTTP fetch for daemon communication (commit 2)', () => {
@@ -99,9 +99,10 @@ describe('background.js — preserved protocol invariants', () => {
     expect(BG).toMatch(/\/result/);
   });
 
-  it('uses browser.scripting.executeScript with MAIN world as fallback', () => {
-    expect(BG).toContain('browser.scripting.executeScript');
-    expect(BG).toContain("world: 'MAIN'");
+  it('uses storage bus for content script communication', () => {
+    expect(BG).toContain('sp_cmd');
+    expect(BG).toContain('sp_result');
+    expect(BG).toContain('storage.onChanged');
   });
 
   it('queries all tabs + normalizes trailing slash for URL match', () => {

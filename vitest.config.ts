@@ -10,7 +10,9 @@ export default defineConfig({
       ['junit', { outputFile: `test-results/junit/${Date.now()}.xml` }],
       ['json', { outputFile: `test-results/json/${Date.now()}.json` }],
     ],
-    globalSetup: ['./test/setup-retention.ts'],
+    globalSetup: ['./test/setup-retention.ts', './test/e2e/setup-production.ts'],
+    testTimeout: 120_000,
+    hookTimeout: 180_000,
     coverage: {
       provider: 'v8',
       include: ['src/**/*.ts'],

@@ -15,7 +15,7 @@ import { McpTestClient, initClient, callTool } from '../helpers/mcp-client.js';
 const ROOT = join(import.meta.dirname, '../..');
 const SERVER_PATH = join(ROOT, 'dist/index.js');
 
-describe.skipIf(process.env.CI === 'true')('Shippability gate (commit 2)', () => {
+describe('Shippability gate (commit 2)', () => {
   describe('commit 2 reconcile + HTTP code present', () => {
     it('extension/background.js contains reconcile protocol and HTTP fetch', () => {
       const bg = readFileSync(join(ROOT, 'extension/background.js'), 'utf8');

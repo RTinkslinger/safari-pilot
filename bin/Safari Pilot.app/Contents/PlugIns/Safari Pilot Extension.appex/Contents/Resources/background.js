@@ -3,6 +3,11 @@
 // No ES module syntax (event pages do not support modules).
 'use strict';
 
+// Emergency one-time storage reset: previous debugging sessions overflowed the
+// quota (~5MB). Remove this block after the first successful wake cycle.
+// TODO: Remove after confirming storage bus works.
+browser.storage.local.clear().catch(() => {});
+
 // ─── Constants ────────────────────────────────────────────────────────────────
 const APP_BUNDLE_ID = 'com.safari-pilot.app';
 const KEEPALIVE_ALARM_NAME = 'safari-pilot-keepalive';
@@ -14,6 +19,65 @@ const EXTENSION_VERSION = '0.1.6';
 let listenersAttached = false;
 let isWakeRunning = false;  // serializes concurrent wake triggers
 let wakePending = false;
+
+// ─── Tab Cache ──────────────────────────────────────────────────────────────
+// Safari's browser.tabs.query({}) returns [] when called from alarm-triggered
+// event page context. Maintain a persistent tab index via lifecycle events.
+// Cache is loaded from storage on wake and updated in real-time via listeners.
+const STORAGE_KEY_TAB_CACHE = 'safari_pilot_tab_cache';
+let tabCacheMap = new Map(); // tabId → {url, title}
+
+async function loadTabCache() {
+  try {
+    const stored = await browser.storage.local.get(STORAGE_KEY_TAB_CACHE);
+    const entries = stored[STORAGE_KEY_TAB_CACHE];
+    if (Array.isArray(entries)) {
+      tabCacheMap = new Map(entries);
+    }
+  } catch { /* ignore */ }
+}
+
+async function saveTabCache() {
+  try {
+    // Limit cache to 50 most recent tabs to prevent storage quota overflow
+    const entries = Array.from(tabCacheMap.entries());
+    const limited = entries.slice(-50);
+    await browser.storage.local.set({
+      [STORAGE_KEY_TAB_CACHE]: limited,
+    });
+  } catch (e) {
+    if (e?.message?.includes?.('quota')) {
+      // Storage full — clear stale data and retry
+      await browser.storage.local.remove([STORAGE_KEY_TAB_CACHE, STORAGE_KEY_PENDING]).catch(() => {});
+      tabCacheMap.clear();
+    }
+  }
+}
+
+// Top-level tab lifecycle listeners — MUST be registered synchronously at script
+// load time so Safari wakes the event page when tabs change.
+browser.tabs.onCreated.addListener((tab) => {
+  if (tab.id != null) {
+    tabCacheMap.set(tab.id, { url: tab.url || '', title: tab.title || '' });
+    saveTabCache();
+  }
+});
+
+browser.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  const entry = tabCacheMap.get(tabId) || { url: '', title: '' };
+  if (changeInfo.url !== undefined) entry.url = changeInfo.url;
+  if (changeInfo.title !== undefined) entry.title = changeInfo.title;
+  // Also pick up from the full tab object if changeInfo is sparse
+  if (tab.url && !entry.url) entry.url = tab.url;
+  if (tab.title && !entry.title) entry.title = tab.title;
+  tabCacheMap.set(tabId, entry);
+  saveTabCache();
+});
+
+browser.tabs.onRemoved.addListener((tabId) => {
+  tabCacheMap.delete(tabId);
+  saveTabCache();
+});
 
 // ─── HTTP IPC to daemon ─────────────────────────────────────────────────────
 const HTTP_URL = 'http://127.0.0.1:19475';
@@ -67,10 +131,25 @@ async function removePendingEntry(commandId) {
 // ─── Command execution ───────────────────────────────────────────────────────
 async function findTargetTab(tabUrl) {
   if (tabUrl) {
-    const all = await browser.tabs.query({});
     const target = tabUrl.replace(/\/$/, '');
-    const match = all.find((t) => (t.url || '').replace(/\/$/, '') === target);
-    if (match) return match;
+
+    // Primary: browser.tabs.query (works when event page is fully active)
+    const all = await browser.tabs.query({});
+    if (all.length > 0) {
+      const match = all.find((t) => (t.url || '').replace(/\/$/, '') === target);
+      if (match) return match;
+    }
+
+    // Fallback: persistent tab cache (works when tabs.query returns [] in
+    // alarm-triggered wake context — Safari event page lifecycle limitation).
+    if (tabCacheMap.size > 0) {
+      for (const [tabId, info] of tabCacheMap) {
+        if ((info.url || '').replace(/\/$/, '') === target) {
+          // Return a minimal tab-like object with the id for scripting API
+          return { id: tabId, url: info.url, title: info.title };
+        }
+      }
+    }
   }
   const actives = await browser.tabs.query({ active: true, currentWindow: true });
   return actives[0];
@@ -92,43 +171,72 @@ async function executeCommand(cmd) {
   }
 
   const tab = await findTargetTab(cmd.tabUrl);
+  console.log('[SP-BUS] findTargetTab result:', tab ? `id=${tab.id} url=${tab.url}` : 'null');
   if (!tab || tab.id == null) {
-    const result = { ok: false, error: { message: 'No target tab' } };
+    const result = { ok: false, error: { message: `No target tab for url="${cmd.tabUrl}"` } };
     await updatePendingEntry(commandId, { status: 'completed', result });
     return result;
   }
 
-  let result;
-  try {
-    // Primary: content script relay (bypasses CSP via pre-captured Function ref).
-    // commandId rides inside params so content-main.js can dedupe via
-    // __safariPilotExecutedCommands (content-isolated.js only forwards method+params).
-    result = await browser.tabs.sendMessage(tab.id, {
-      type: 'SAFARI_PILOT_COMMAND',
-      method: 'execute_script',
-      params: { script: cmd.script, commandId },
-    });
-  } catch (relayErr) {
-    // Fallback: browser.scripting.executeScript (works when no content script is present)
-    try {
-      const execResults = await browser.scripting.executeScript({
-        target: { tabId: tab.id },
-        func: (scriptBody) => {
-          try {
-            const fn = new Function(scriptBody);
-            return { ok: true, value: fn() };
-          } catch (e) {
-            return { ok: false, error: { message: e.message, name: e.name } };
-          }
-        },
-        args: [cmd.script],
-        world: 'MAIN',
-      });
-      result = execResults[0]?.result ?? { ok: true, value: null };
-    } catch (scriptErr) {
-      result = { ok: false, error: { message: scriptErr.message, name: scriptErr.name } };
-    }
+  // ── Storage bus: write command, wait for result ──────────────────────────
+  // Safari's tabs.sendMessage and scripting.executeScript return undefined/null
+  // in alarm-woken event page context. Use browser.storage.local as the message
+  // transport instead. Content-isolated.js picks up commands via onChanged.
+  //
+  // IMPORTANT: Attach the result listener BEFORE writing the command.
+  // If the write triggers onChanged synchronously before the listener is
+  // attached, the result event would be missed and we'd wait 30s for nothing.
+  const storageCmd = {
+    commandId,
+    tabId: tab.id,
+    method: 'execute_script',
+    params: { script: cmd.script, commandId },
+    timestamp: Date.now(),
+    deadline: Date.now() + 30000,
+  };
+
+  // Step 1: Attach result listener FIRST
+  let resultResolver;
+  const resultPromise = new Promise((resolve) => {
+    resultResolver = resolve;
+  });
+
+  // Keep-alive: Safari kills event pages after ~30s of inactivity. setTimeout
+  // and storage reads don't count as "active work." Periodic HTTP fetch to the
+  // daemon keeps the event page alive so the timeout and onChanged listener fire.
+  const keepAlive = setInterval(() => {
+    fetch(`${HTTP_URL}/poll`, { signal: AbortSignal.timeout(1000) }).catch(() => {});
+  }, 10000);
+
+  const resultTimeout = setTimeout(() => {
+    clearInterval(keepAlive);
+    browser.storage.onChanged.removeListener(resultListener);
+    resultResolver({ ok: false, error: { message: 'Storage bus timeout (30s) — content script may not be loaded on target tab' } });
+  }, 30000);
+
+  function resultListener(changes, area) {
+    console.log('[SP-BUS] onChanged fired:', Object.keys(changes).join(','), 'area:', area);
+    if (area !== 'local' || !changes.sp_result?.newValue) return;
+    const reply = changes.sp_result.newValue;
+    console.log('[SP-BUS] sp_result received:', JSON.stringify(reply).slice(0, 200));
+    if (reply.commandId !== commandId) return;
+    clearInterval(keepAlive);
+    clearTimeout(resultTimeout);
+    browser.storage.onChanged.removeListener(resultListener);
+    resultResolver(reply.result);
   }
+  browser.storage.onChanged.addListener(resultListener);
+
+  // Step 2: THEN write the command (listener is already waiting)
+  console.log('[SP-BUS] Writing sp_cmd:', JSON.stringify({commandId, tabId: tab.id, method: 'execute_script'}));
+  await browser.storage.local.set({ sp_cmd: storageCmd });
+  console.log('[SP-BUS] sp_cmd written successfully');
+
+  // Step 3: Wait for result
+  const result = await resultPromise;
+
+  // Cleanup storage keys (safe — result already captured in `result` variable)
+  try { await browser.storage.local.remove(['sp_cmd', 'sp_result']); } catch { /* ignore cleanup errors */ }
 
   await updatePendingEntry(commandId, { status: 'completed', result });
   return result;
@@ -301,6 +409,7 @@ async function pollLoop() {
 // ─── Wake sequence (HTTP) ───────────────────────────────────────────────────
 async function wakeSequence(reason) {
   try {
+    await loadTabCache();
     await gcPendingStorage();
     await connectAndReconcile();
     await pollLoop();
@@ -341,6 +450,13 @@ if (!listenersAttached) {
   });
 
   browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    // Storage bus: content scripts request their own tabId on load.
+    // sender.tab.id is provided by Safari's extension API — does NOT
+    // depend on the broken tabs.query IPC.
+    if (message?.action === 'sp_getTabId') {
+      sendResponse({ tabId: sender.tab?.id ?? null });
+      return false;
+    }
     if (message?.type === 'ping') {
       sendResponse({ ok: true, type: 'pong', extensionVersion: EXTENSION_VERSION });
       return false;

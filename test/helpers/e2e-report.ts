@@ -42,31 +42,29 @@ const EXTENSION_REQUIRED_TOOLS = new Set([
   'safari_click_shadow',
 ]);
 
-const EXTENSION_PREFERRED_TOOLS = new Set([
-  'safari_eval_in_frame',
-]);
-
-const TOOLS_WITH_NO_ENGINE = new Set([
+const SELECTOR_ONLY_TOOLS = new Set([
   'safari_health_check',
   'safari_emergency_stop',
   'safari_list_tabs',
   'safari_new_tab',
   'safari_close_tab',
+  'safari_navigate',
+  'safari_navigate_back',
+  'safari_navigate_forward',
+  'safari_reload',
+  'safari_export_pdf',
+  'safari_wait_for_download',
 ]);
 
 function expectedEngineFor(
   tool: string,
   extensionConnected: boolean,
 ): string {
-  if (TOOLS_WITH_NO_ENGINE.has(tool)) return 'any';
-  if (EXTENSION_REQUIRED_TOOLS.has(tool)) {
-    return extensionConnected ? 'extension' : 'rejected';
+  if (!extensionConnected) {
+    if (EXTENSION_REQUIRED_TOOLS.has(tool)) return 'rejected';
+    return 'daemon';
   }
-  if (EXTENSION_PREFERRED_TOOLS.has(tool)) {
-    return extensionConnected ? 'extension' : 'daemon';
-  }
-  if (extensionConnected) return 'extension';
-  return 'daemon';
+  return 'extension';
 }
 
 function checkCompliance(
@@ -75,9 +73,6 @@ function checkCompliance(
   expected: string,
   degraded: boolean,
 ): { compliant: boolean; note: string } {
-  if (expected === 'any') {
-    return { compliant: true, note: 'System tool — no engine routing' };
-  }
   if (expected === 'rejected') {
     if (degraded) {
       return { compliant: true, note: 'Extension required but unavailable — correctly rejected' };
@@ -111,7 +106,7 @@ function checkCompliance(
 export class E2EReportCollector {
   private calls: ToolCallRecord[] = [];
   private suiteName: string;
-  private extensionConnected = false;
+  private extensionConnected = true;
 
   constructor(suiteName: string) {
     this.suiteName = suiteName;

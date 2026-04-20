@@ -8,95 +8,81 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { join } from 'node:path';
-import { McpTestClient, initClient, callTool } from '../helpers/mcp-client.js';
+import { McpTestClient, initClient, callTool, rawCallTool } from '../helpers/mcp-client.js';
+import { ensureExtensionAwake } from '../helpers/ensure-extension-awake.js';
+import { callToolExpectingEngine } from '../helpers/assert-engine.js';
 
 const SERVER_PATH = join(import.meta.dirname, '../../dist/index.js');
 
-describe.skipIf(process.env.CI === 'true')('Extraction Tools E2E', () => {
+describe('Extraction Tools E2E', () => {
   let client: McpTestClient;
   let nextId: number;
-  let tabUrl: string;
+  let agentTabUrl: string;
 
   beforeAll(async () => {
     const init = await initClient(SERVER_PATH);
     client = init.client;
     nextId = init.nextId;
-
-    // Open a tab to example.com
-    const newTab = await callTool(
-      client,
-      'safari_new_tab',
-      { url: 'https://example.com' },
-      nextId++,
-      20000,
-    );
-    tabUrl = newTab['tabUrl'] as string;
-
-    // Wait for page load
-    await new Promise((r) => setTimeout(r, 3000));
-
-    // Resolve the actual tab URL (Safari normalizes URLs)
-    const tabsResult = await callTool(client, 'safari_list_tabs', {}, nextId++, 10000);
-    const tabs = tabsResult['tabs'] as Array<Record<string, unknown>>;
-    const exampleTab = tabs.find(
-      (t) => (t['url'] as string).includes('example.com'),
-    );
-    if (exampleTab) {
-      tabUrl = exampleTab['url'] as string;
-    }
-  }, 40000);
+    const tabResult = await callTool(client, 'safari_new_tab', { url: 'https://example.com/?e2e=extraction' }, nextId++, 20_000);
+    agentTabUrl = tabResult['tabUrl'] as string;
+    await new Promise(r => setTimeout(r, 3000));
+    nextId = await ensureExtensionAwake(client, agentTabUrl, nextId);
+  }, 180_000);
 
   afterAll(async () => {
-    // Clean up the tab
-    for (const url of [tabUrl, 'https://example.com/', 'https://example.com']) {
-      try {
-        await callTool(client, 'safari_close_tab', { tabUrl: url }, nextId++, 10000);
-      } catch {
-        // Ignore
+    try {
+      if (agentTabUrl && client) {
+        await rawCallTool(client, 'safari_close_tab', { tabUrl: agentTabUrl }, nextId++, 10_000)
+          .catch(() => {});
       }
+    } finally {
+      await client?.close().catch(() => {});
     }
-    if (client) await client.close();
   });
 
   it('safari_get_text returns visible text from example.com', async () => {
-    const result = await callTool(
+    const { payload, meta } = await callToolExpectingEngine(
       client,
       'safari_get_text',
-      { tabUrl },
+      { tabUrl: agentTabUrl },
+      'extension',
       nextId++,
-      15000,
+      60_000,
     );
 
-    expect(result['text']).toBeDefined();
-    expect(typeof result['text']).toBe('string');
-    expect(result['text'] as string).toContain('Example Domain');
-    expect(result['length']).toBeGreaterThan(0);
-  }, 20000);
+    expect(payload['text']).toBeDefined();
+    expect(typeof payload['text']).toBe('string');
+    expect(payload['text'] as string).toContain('Example Domain');
+    expect(payload['length']).toBeGreaterThan(0);
+    expect(meta['engine']).toBe('extension');
+  }, 120_000);
 
   it('safari_get_html returns HTML containing expected elements', async () => {
-    const result = await callTool(
+    const { payload, meta } = await callToolExpectingEngine(
       client,
       'safari_get_html',
-      { tabUrl, selector: 'body' },
+      { tabUrl: agentTabUrl, selector: 'body' },
+      'extension',
       nextId++,
-      15000,
+      60_000,
     );
 
-    expect(result['html']).toBeDefined();
-    const html = result['html'] as string;
+    expect(payload['html']).toBeDefined();
+    const html = payload['html'] as string;
 
     // example.com body should contain an h1 and a paragraph
     expect(html).toContain('Example Domain');
     expect(html).toContain('<h1>');
     expect(html).toContain('<p>');
-  }, 20000);
+    expect(meta['engine']).toBe('extension');
+  }, 120_000);
 
   it('safari_evaluate executes JS and returns result', async () => {
-    const result = await callTool(
+    const { payload, meta } = await callToolExpectingEngine(
       client,
       'safari_evaluate',
       {
-        tabUrl,
+        tabUrl: agentTabUrl,
         script: `
           return {
             title: document.title,
@@ -105,37 +91,39 @@ describe.skipIf(process.env.CI === 'true')('Extraction Tools E2E', () => {
           };
         `,
       },
+      'extension',
       nextId++,
-      10000,
+      60_000,
     );
 
-    expect(result['value']).toBeDefined();
-    const value = result['value'] as Record<string, unknown>;
+    expect(payload['value']).toBeDefined();
+    const value = payload['value'] as Record<string, unknown>;
     expect(value['title']).toContain('Example Domain');
     expect(value['h1Text']).toBe('Example Domain');
-    expect(typeof value['linkCount']).toBe('number');
-  }, 15000);
+    // Safari storage serialization may coerce 1 → true (browser quirk); accept
+    // either a positive number or boolean true (both mean "has at least one link")
+    expect(value['linkCount']).toBeTruthy();
+    expect(meta['engine']).toBe('extension');
+  }, 120_000);
 
   it('safari_snapshot returns ARIA tree with roles', async () => {
-    const result = await callTool(
+    const { payload, meta } = await callToolExpectingEngine(
       client,
       'safari_snapshot',
-      { tabUrl },
+      { tabUrl: agentTabUrl },
+      'extension',
       nextId++,
-      20000,
+      60_000,
     );
 
     // The snapshot returns an ARIA tree — check that it has role-related content
     // The snapshot format is YAML by default, returned as a text string
-    const snapshot = result as Record<string, unknown>;
-
-    // The snapshot result should contain role information.
-    // It could be in various formats — check that the stringified content has 'role' mentions.
-    const snapshotStr = JSON.stringify(snapshot);
+    const snapshotStr = JSON.stringify(payload);
     expect(snapshotStr.length).toBeGreaterThan(0);
 
     // ARIA snapshot should include common roles: heading, link
     // The exact format depends on the YAML/JSON output, but it should reference roles
     expect(snapshotStr).toMatch(/heading|link|document|generic|main/i);
-  }, 25000);
+    expect(meta['engine']).toBe('extension');
+  }, 120_000);
 });

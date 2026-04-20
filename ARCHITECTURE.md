@@ -1,23 +1,16 @@
 # Safari Pilot Architecture — Canonical Source of Truth
 
-*Last verified: 2026-04-17 | Branch: feat/safari-mv3-commit-1a*
+*Last verified: 2026-04-20 | Branch: fix/e2e-test-tab-ownership*
 
 **This document describes how Safari Pilot ACTUALLY works as shipped. Every statement is backed by verified evidence. If code changes contradict this document, either the code is wrong or this document must be updated — never silently diverge.**
 
 **Update rule:** Any commit that changes component behavior, data flow, IPC protocol, security pipeline order, engine selection logic, or test architecture MUST update this document in the same commit.
 
-## CURRENT STATE WARNING
-
-**Extension engine: event-page lifecycle landed in commit 1a (v0.1.5), end-to-end roundtrips not yet confirmed in production as of 2026-04-17.** Background was previously an MV3 service worker with a setInterval poll loop; Safari's aggressive suspension killed the poll timer. The 1a pivot replaces the service worker with an MV3 *event page* (`persistent:false`) that registers listeners at the top level, persists in-flight commands to `browser.storage.local`, and drains the daemon queue on each wake (onStartup / onInstalled / alarm / ping / session_* / script_load). A 1-minute `chrome.alarms` keepalive emits `alarm_fire` breadcrumbs which the daemon's `HealthStore` persists. Roundtrip confirmation awaits post-v0.1.5 release testing; once confirmed, this warning will be removed.
-
-**What this means for tools:** All working. They route through AppleScript/Daemon.
-**What this means for extension-only capabilities:** Closed Shadow DOM, CSP bypass via content script relay, dialog interception, network interception — these are CODED but not REACHABLE until the extension runtime issue is resolved.
-
 ---
 
 ## System Overview
 
-Safari Pilot is a native Safari browser automation framework exposing **78 tools** via MCP (stdio). It controls Safari through three engine tiers, protected by 9 security layers.
+Safari Pilot is a native Safari browser automation framework exposing **78 tools** via MCP (stdio). It controls Safari through three engine tiers, protected by 7 pre-execution security layers + 3 post-execution checks.
 
 ```
 Claude Code / AI Agent
@@ -73,12 +66,24 @@ background.js polls via HTTP fetch:
   │ → enter pollLoop: GET /poll (5s hold) → {commands:[...]} or 204
   ▼
 background.js extracts commands from response.commands
-  │ iterates each command: finds target tab by URL (queries all tabs, filters by URL)
+  │ iterates each command: finds target tab by URL via tab cache
+  │ (browser.tabs.query returns [] in alarm-woken context — persistent cache via
+  │  tabs.onCreated/onUpdated/onRemoved, stored in browser.storage.local)
   │ falls back to active tab if no URL match
   ▼
-Primary: content script relay (browser.tabs.sendMessage → content-main.js)
-Fallback: browser.scripting.executeScript({target:{tabId}, func, args:[script], world:'MAIN'})
-  │ executes in page's MAIN world JavaScript context
+Storage bus IPC (browser.storage.local as message transport):
+  │ background.js writes command to storage key 'sp_cmd'
+  │ content-isolated.js reads via storage.onChanged listener
+  │ content-isolated.js relays to content-main.js via window.postMessage
+  │ content-main.js evaluates script in MAIN world (new Function())
+  │ result flows back: content-main.js → postMessage → content-isolated.js
+  │ content-isolated.js writes result to storage key 'sp_result'
+  │ background.js reads via storage.onChanged listener
+  │
+  │ Why storage bus: Safari's browser.tabs.sendMessage and
+  │ browser.scripting.executeScript return undefined/null in alarm-woken
+  │ event page context. browser.storage.local is the only reliable
+  │ cross-context channel that survives event page lifecycle transitions.
   ▼
 Result persisted to storage.local (status:completed), then sent:
   background.js → POST /result {requestId, result}
@@ -157,27 +162,29 @@ Logic:
 2. If tool requires extension AND extension NOT available → throw `EngineUnavailableError`
 3. Otherwise: prefer extension → daemon → applescript (best available)
 
-**Response metadata:** Every MCP response includes `_meta.engine` showing which engine actually executed. Forwarded via `_meta` field in MCP CallToolResult (src/index.ts).
+**Response metadata:** Every MCP response includes `_meta.engine` reflecting the engine selector's choice. For proxy-based tools (13 of 17 modules), `_meta.engine` reflects BOTH selector choice AND physical execution engine. For direct-engine tools (Navigation, Compound, Download, PDF), `_meta.engine` reflects selector choice only — physical execution uses a hardcoded engine (AppleScript or daemon).
+
+**Engine proxy pattern (server.ts:228-251):** 12 of 17 tool modules receive an `EngineProxy` instance. Before each tool call, `server.ts:500-502` calls `proxy.setDelegate(selectedEngine)`, so proxy-based tools physically execute through the selected engine. Five modules receive engines directly: `NavigationTools(AppleScriptEngine)`, `CompoundTools(AppleScriptEngine)`, `DownloadTools(server)`, `PdfTools(server)`, `ExtensionDiagnosticsTools(DaemonEngine|null)`.
 
 ---
 
 ## Security Pipeline
 
-**9 layers, executed in this order on every tool call** (src/server.ts `executeToolWithSecurity`):
+**7 pre-execution layers + 3 post-execution checks on every tool call** (src/server.ts `executeToolWithSecurity`):
 
 | # | Layer | What it does | Wired at |
 |---|-------|-------------|----------|
-| 1 | **KillSwitch** | Global emergency stop — blocks ALL automation | server.ts:357 |
-| 2 | **TabOwnership** | Agent can only touch tabs it created via safari_new_tab | server.ts:369 |
-| 3 | **DomainPolicy** | Per-domain trust levels, blocked domains list | server.ts:380 |
-| 4 | **HumanApproval** | Blocks sensitive actions on OAuth/financial URLs | server.ts:383 |
-| 5 | **RateLimiter** | 120 actions/min global, per-domain buckets | server.ts:418 |
-| 6 | **CircuitBreaker** | 5 errors on a domain → 120s cooldown (see dual-scope note below) | server.ts:424 |
-| 7 | **Engine Selection** | Picks best available engine for tool's requirements | server.ts:430 |
-| 8 | **Tool Execution** | Calls the tool handler with selected engine | server.ts:452 |
-| 8a | **IdpiScanner** | Scans extraction results for prompt injection patterns | server.ts:457 |
-| 8b | **ScreenshotRedaction** | Attaches redaction script for banking/cross-origin iframes | server.ts:474 |
-| 9 | **AuditLog** | Records every tool call: tool, URL, engine, params, result, timing | server.ts:484 |
+| 1 | **KillSwitch** | Global emergency stop — blocks ALL automation | server.ts:391 |
+| 2 | **TabOwnership** | Agent can only touch tabs it created via safari_new_tab | server.ts:403 |
+| 3 | **DomainPolicy** | Per-domain trust levels, blocked domains list | server.ts:414 |
+| 4 | **HumanApproval** | Blocks sensitive actions on OAuth/financial URLs | server.ts:418 |
+| 5 | **RateLimiter** | 120 actions/min global, per-domain buckets | server.ts:452 |
+| 6 | **CircuitBreaker** | 5 errors on a domain → 120s cooldown (see dual-scope note below) | server.ts:459 |
+| 7 | **Engine Selection** | Picks best available engine for tool's requirements | server.ts:463 |
+| — | **Tool Execution** | Calls the tool handler with selected engine | server.ts:558 |
+| 8 | **IdpiScanner** | Post-execution: scans extraction results for prompt injection | server.ts:575 |
+| 9 | **ScreenshotRedaction** | Post-execution: attaches redaction script for banking/cross-origin | server.ts:591 |
+| 10 | **AuditLog** | Post-execution: records tool, URL, engine, params, result, timing | server.ts:596 |
 
 **CircuitBreaker dual scope (src/security/circuit-breaker.ts):** The breaker carries two INDEPENDENT scopes on the same instance.
 - **Per-domain scope** (existing): 5 failures in a 60s rolling window → 120s cooldown. API: `recordFailure(domain)` / `recordSuccess(domain)` / `isOpen(domain)` / `getState(domain)` / `assertClosed(domain)`. Runs inline at layer 6.

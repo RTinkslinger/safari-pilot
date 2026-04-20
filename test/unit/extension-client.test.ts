@@ -46,14 +46,14 @@ describe('ExtensionEngine', () => {
     expect(engine.name).toBe('extension');
   });
 
-  // ── isAvailable: extension_status sentinel ────────────────────────────────
+  // ── isAvailable: extension_health sentinel ────────────────────────────────
 
-  describe('isAvailable — extension_status sentinel', () => {
+  describe('isAvailable — extension_health sentinel (commit 2: checks ipcMechanism)', () => {
 
-    it('sends the exact sentinel "__SAFARI_PILOT_INTERNAL__ extension_status"', async () => {
+    it('sends the exact sentinel "__SAFARI_PILOT_INTERNAL__ extension_health"', async () => {
       const daemon = makeMockDaemon(async () => ({
         ok: true,
-        value: 'connected',
+        value: JSON.stringify({ ipcMechanism: 'http', isConnected: true }),
         elapsed_ms: 1,
       }));
       const engine = new ExtensionEngine(daemon);
@@ -61,14 +61,14 @@ describe('ExtensionEngine', () => {
       await engine.isAvailable();
 
       expect(daemon.execute).toHaveBeenCalledWith(
-        `${INTERNAL_PREFIX} extension_status`,
+        `${INTERNAL_PREFIX} extension_health`,
       );
     });
 
-    it('returns true when daemon reports "connected"', async () => {
+    it('returns true when ipcMechanism is "http" (extension has connected)', async () => {
       const daemon = makeMockDaemon(async () => ({
         ok: true,
-        value: 'connected',
+        value: JSON.stringify({ ipcMechanism: 'http', isConnected: true }),
         elapsed_ms: 1,
       }));
       const engine = new ExtensionEngine(daemon);
@@ -76,15 +76,26 @@ describe('ExtensionEngine', () => {
       expect(await engine.isAvailable()).toBe(true);
     });
 
-    it('returns true when daemon reports "disconnected" (event-page dormant but daemon queues)', async () => {
+    it('returns true when ipcMechanism is "tcp" (legacy path)', async () => {
       const daemon = makeMockDaemon(async () => ({
         ok: true,
-        value: 'disconnected',
+        value: JSON.stringify({ ipcMechanism: 'tcp', isConnected: false }),
         elapsed_ms: 1,
       }));
       const engine = new ExtensionEngine(daemon);
 
       expect(await engine.isAvailable()).toBe(true);
+    });
+
+    it('returns false when ipcMechanism is "none" (no extension ever connected)', async () => {
+      const daemon = makeMockDaemon(async () => ({
+        ok: true,
+        value: JSON.stringify({ ipcMechanism: 'none', isConnected: false }),
+        elapsed_ms: 1,
+      }));
+      const engine = new ExtensionEngine(daemon);
+
+      expect(await engine.isAvailable()).toBe(false);
     });
 
     it('returns false when daemon returns ok:false (daemon error)', async () => {
@@ -105,17 +116,6 @@ describe('ExtensionEngine', () => {
       const engine = new ExtensionEngine(daemon);
 
       expect(await engine.isAvailable()).toBe(false);
-    });
-
-    it('returns true for any ok:true response (daemon reachable = extension functionally available)', async () => {
-      const daemon = makeMockDaemon(async () => ({
-        ok: true,
-        value: 'unknown-state',
-        elapsed_ms: 1,
-      }));
-      const engine = new ExtensionEngine(daemon);
-
-      expect(await engine.isAvailable()).toBe(true);
     });
   });
 
@@ -242,10 +242,10 @@ describe('ExtensionEngine', () => {
 
   describe('protocol contract — sentinel format and JSON structure', () => {
 
-    it('extension_status sentinel has no trailing payload', async () => {
+    it('extension_health sentinel has no trailing payload', async () => {
       const daemon = makeMockDaemon(async () => ({
         ok: true,
-        value: 'connected',
+        value: JSON.stringify({ ipcMechanism: 'http' }),
         elapsed_ms: 1,
       }));
       const engine = new ExtensionEngine(daemon);
@@ -254,7 +254,7 @@ describe('ExtensionEngine', () => {
 
       const sent = getDaemonCall(daemon);
       // Must be exactly this string, no extra content
-      expect(sent).toBe(`${INTERNAL_PREFIX} extension_status`);
+      expect(sent).toBe(`${INTERNAL_PREFIX} extension_health`);
     });
 
     it('extension_execute payload is valid JSON', async () => {

@@ -37,7 +37,7 @@ function makeMockDaemon(
 
 describe('Bridge Protocol — sentinel prefix format', () => {
 
-  it('extension_status sentinel is: __SAFARI_PILOT_INTERNAL__ extension_status', async () => {
+  it('extension_health sentinel is: __SAFARI_PILOT_INTERNAL__ extension_health', async () => {
     const calls: string[] = [];
     const daemon = makeMockDaemon(calls);
     const engine = new ExtensionEngine(daemon);
@@ -45,7 +45,7 @@ describe('Bridge Protocol — sentinel prefix format', () => {
     await engine.isAvailable();
 
     expect(calls).toHaveLength(1);
-    expect(calls[0]).toBe(`${INTERNAL_PREFIX} extension_status`);
+    expect(calls[0]).toBe(`${INTERNAL_PREFIX} extension_health`);
   });
 
   it('extension_execute sentinel starts with: __SAFARI_PILOT_INTERNAL__ extension_execute', async () => {
@@ -126,7 +126,7 @@ describe('Bridge Protocol — JSON payload structure', () => {
     expect(payload.script).toBe(tricky);
   });
 
-  it('extension_status sentinel has NO JSON payload', async () => {
+  it('extension_health sentinel has NO JSON payload', async () => {
     const calls: string[] = [];
     const daemon = makeMockDaemon(calls);
     const engine = new ExtensionEngine(daemon);
@@ -134,7 +134,7 @@ describe('Bridge Protocol — JSON payload structure', () => {
     await engine.isAvailable();
 
     // Should be exactly the sentinel, no trailing content
-    expect(calls[0]).toBe(`${INTERNAL_PREFIX} extension_status`);
+    expect(calls[0]).toBe(`${INTERNAL_PREFIX} extension_health`);
     expect(calls[0]!.split(' ')).toHaveLength(2);
   });
 });
@@ -143,18 +143,36 @@ describe('Bridge Protocol — JSON payload structure', () => {
 
 describe('Bridge Protocol — daemon response interpretation', () => {
 
-  it('isAvailable returns true for any ok:true response (event-page model: daemon reachable = available)', async () => {
-    for (const value of ['connected', 'disconnected', '', 'true', 'yes', 'CONNECTED', undefined]) {
-      const daemon = {
-        name: 'daemon',
-        isAvailable: vi.fn().mockResolvedValue(true),
-        execute: vi.fn(async () => ({ ok: true, value, elapsed_ms: 1 })),
-        shutdown: vi.fn(),
-      } as unknown as DaemonEngine;
+  it('isAvailable returns true when ipcMechanism is "http" (commit 2: checks actual connection)', async () => {
+    const daemon = {
+      name: 'daemon',
+      isAvailable: vi.fn().mockResolvedValue(true),
+      execute: vi.fn(async () => ({
+        ok: true,
+        value: JSON.stringify({ ipcMechanism: 'http', isConnected: true }),
+        elapsed_ms: 1,
+      })),
+      shutdown: vi.fn(),
+    } as unknown as DaemonEngine;
 
-      const engine = new ExtensionEngine(daemon);
-      expect(await engine.isAvailable()).toBe(true);
-    }
+    const engine = new ExtensionEngine(daemon);
+    expect(await engine.isAvailable()).toBe(true);
+  });
+
+  it('isAvailable returns false when ipcMechanism is "none" (no extension connected)', async () => {
+    const daemon = {
+      name: 'daemon',
+      isAvailable: vi.fn().mockResolvedValue(true),
+      execute: vi.fn(async () => ({
+        ok: true,
+        value: JSON.stringify({ ipcMechanism: 'none', isConnected: false }),
+        elapsed_ms: 1,
+      })),
+      shutdown: vi.fn(),
+    } as unknown as DaemonEngine;
+
+    const engine = new ExtensionEngine(daemon);
+    expect(await engine.isAvailable()).toBe(false);
   });
 
   it('isAvailable returns false when daemon response has ok:false (even if value is "connected")', async () => {

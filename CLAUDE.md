@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-Safari Pilot is a native Safari browser automation framework for AI agents on macOS. It exposes 76 tools via MCP (stdio), letting Claude Code control Safari directly through AppleScript, a persistent Swift daemon, or a Safari Web Extension — no Chrome needed.
+Safari Pilot is a native Safari browser automation framework for AI agents on macOS. It exposes 78 tools via MCP (stdio), letting Claude Code control Safari directly through AppleScript, a persistent Swift daemon, or a Safari Web Extension — no Chrome needed.
 
 ## Ways of Working
 
@@ -84,7 +84,7 @@ npm run build          # TypeScript → dist/
 npm run dev            # tsc --watch
 npm run lint           # tsc --noEmit (type-check only)
 npm test               # all tests via vitest
-npm run test:unit      # 1427 unit tests (no Safari needed)
+npm run test:unit      # 1428 unit tests (no Safari needed)
 npm run test:integration
 npm run test:e2e       # needs Safari running + JS from Apple Events enabled
 npm run test:security
@@ -112,25 +112,31 @@ AppleScript (80ms p50) →  Always available fallback, basic navigation/forms
 
 `engine-selector.ts` picks the best available engine by matching `ToolRequirements` against `ENGINE_CAPS`. If a tool needs `requiresShadowDom`, only Extension qualifies — if unavailable, `EngineUnavailableError` is thrown (not a silent fallback).
 
-**Extension IPC (HTTP short-poll):** `background.js` communicates with the daemon via HTTP `fetch()` to `127.0.0.1:19475` (Hummingbird). Three routes: `POST /connect` (reconcile on wake), `GET /poll` (5s hold for pending commands), `POST /result` (deliver execution result). The daemon's `ExtensionHTTPServer` serves these routes and accesses `ExtensionBridge` directly. Commands queued via `ExtensionBridge` (in-memory) are delivered via `/poll` and executed by `background.js` via content script relay or `browser.scripting.executeScript` in the MAIN world. `SafariWebExtensionHandler.swift` is a Xcode-required stub (echo-only) — the extension never calls `sendNativeMessage`. TCP:19474 (`ExtensionSocketServer`) is preserved for DaemonEngine, health checks, and benchmarks.
+**Extension IPC (HTTP short-poll + storage bus):** `background.js` communicates with the daemon via HTTP `fetch()` to `127.0.0.1:19475` (Hummingbird). Three routes: `POST /connect` (reconcile on wake), `GET /poll` (5s hold for pending commands), `POST /result` (deliver execution result). Commands are executed via the **storage bus**: `background.js` writes to `browser.storage.local` key `sp_cmd`, `content-isolated.js` reads via `storage.onChanged`, relays to `content-main.js` via `window.postMessage`, and results flow back through `sp_result`. This replaces `browser.tabs.sendMessage`/`browser.scripting.executeScript` which return `undefined` in alarm-woken event page context. Tab discovery uses a persistent cache (`tabs.onCreated`/`onUpdated`/`onRemoved` → `browser.storage.local`) since `browser.tabs.query({})` also returns `[]` in alarm context. `SafariWebExtensionHandler.swift` is a Xcode-required stub (echo-only). TCP:19474 preserved for DaemonEngine, health checks, and benchmarks.
+
+**Phase 0 fix (2026-04-20):** `handleInternalCommand()` in `CommandDispatcher.swift` now routes the `extension_health` sentinel, fixing `ExtensionEngine.isAvailable()` which previously always returned `false`. The extension engine was dead code until this fix. `handleResult()` in `ExtensionBridge.swift` now unwraps the storage bus `{ok, value}` wrapper on success results, preventing double-wrapping through the daemon response chain.
 
 ### Security Pipeline
 
-Nine sequential layers run before every tool execution in `server.ts`:
+Seven pre-execution layers + three post-execution checks run on every tool call in `server.ts executeToolWithSecurity()`:
 
-1. **KillSwitch** — global emergency stop
-2. **TabOwnership** — agent can only touch tabs it created via `safari_new_tab`
-3. **DomainPolicy** — per-domain trust levels and rules
-4. **RateLimiter** — 120 actions/min global, per-domain buckets
-5. **CircuitBreaker** — 5 errors on a domain → 120s cooldown
-6. **IdpiScanner** — indirect prompt injection detection in extracted text
-7. **HumanApproval** — flags sensitive actions on untrusted domains
-8. **AuditLog** — records every tool call (params redacted for passwords)
-9. **ScreenshotRedaction** — attaches CSS blur script for cross-origin iframes and banking domains (metadata-only; caller must apply the script)
+**Pre-execution (block before tool runs):**
+1. **KillSwitch** — global emergency stop (server.ts:391)
+2. **TabOwnership** — agent can only touch tabs it created via `safari_new_tab` (server.ts:403)
+3. **DomainPolicy** — per-domain trust levels and rules (server.ts:414)
+4. **HumanApproval** — flags sensitive actions on untrusted domains (server.ts:418)
+5. **RateLimiter** — 120 actions/min global, per-domain buckets (server.ts:452)
+6. **CircuitBreaker** — 5 errors on a domain → 120s cooldown (server.ts:459)
+7. **Engine Selection** — picks best available engine for tool's requirements (server.ts:463)
+
+**Post-execution (annotate/audit after tool runs):**
+8. **IdpiScanner** — indirect prompt injection detection on extraction tool results only (server.ts:575)
+9. **ScreenshotRedaction** — attaches CSS blur script for cross-origin iframes and banking domains on screenshot tool only (server.ts:591)
+10. **AuditLog** — records every tool call with params, engine, result, timing (server.ts:596)
 
 ### Tool Module Pattern
 
-Each of the 14 files in `src/tools/` follows the same structure:
+Each of the 17 files in `src/tools/` follows the same structure:
 
 ```typescript
 class XTools {
@@ -255,6 +261,10 @@ These are non-negotiable. Every one of these was learned through a catastrophic 
 ## End-to-End Testing (HARD RULES)
 
 E2E tests verify the **shipped artifact works as an end user would experience it**. Not the internal API. Not mocked components. The actual product, through the actual interfaces, producing actual results.
+
+### Production stack requirement
+
+E2E tests require the full production stack running: system daemon on TCP:19474, Safari extension connected via HTTP:19475, Safari open with JS from Apple Events enabled. The `test/e2e/setup-production.ts` globalSetup verifies all 4 preconditions before tests execute (skips checks for non-e2e runs).
 
 ### The principle
 

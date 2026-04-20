@@ -413,6 +413,15 @@ export class SafariPilotServer {
     // 4. Domain policy evaluation
     const policy = this.domainPolicy.evaluate(url);
 
+    // 4a. Blocked domain enforcement — operator-configured blocked list
+    if (policy.blocked && domain) {
+      this.auditLog.record({
+        tool: name, tabUrl: url, engine: 'applescript' as Engine, params,
+        result: 'error', elapsed_ms: Date.now() - start, session: this.sessionId,
+      });
+      throw new Error(`Domain '${domain}' is blocked by configuration. Remove it from domainPolicy.blocked to allow access.`);
+    }
+
     // 4b. Human approval check — sensitive actions on untrusted domains
     try {
       this.humanApproval.assertApproved(name, url, params);
@@ -557,6 +566,21 @@ export class SafariPilotServer {
     try {
       const result = await this.callTool(name, params);
       this.circuitBreaker.recordSuccess(domain);
+
+      // 8.post: Tab ownership registration — after safari_new_tab succeeds,
+      // register the new tab URL so subsequent tool calls pass ownership checks.
+      if (name === 'safari_new_tab' && result.content?.[0]?.type === 'text') {
+        try {
+          const tabData = JSON.parse((result.content[0] as { type: 'text'; text: string }).text);
+          if (tabData.tabUrl) {
+            const syntheticId = TabOwnership.makeTabId(
+              tabData.windowId ?? 1,
+              this.tabOwnership.getOwnedCount() + 1,
+            );
+            this.tabOwnership.registerTab(syntheticId, tabData.tabUrl);
+          }
+        } catch { /* tab registration is best-effort — don't fail the tool call */ }
+      }
 
       // 8a. IDPI scan — check extraction tool results for prompt injection attempts
       const EXTRACTION_TOOLS = new Set([

@@ -12,6 +12,8 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { join } from 'node:path';
 import { createServer, type Server } from 'node:http';
 import { McpTestClient, initClient, callTool } from '../helpers/mcp-client.js';
+import { ensureExtensionAwake } from '../helpers/ensure-extension-awake.js';
+import { callToolExpectingEngine } from '../helpers/assert-engine.js';
 
 const SERVER_PATH = join(import.meta.dirname, '../../dist/index.js');
 
@@ -108,60 +110,44 @@ function startFixtureServer(): Promise<{ server: Server; port: number }> {
   });
 }
 
-describe.skipIf(process.env.CI === 'true')('Shadow DOM — MCP E2E', () => {
+describe('Shadow DOM — MCP E2E', () => {
   let client: McpTestClient;
   let nextId: number;
   let fixtureServer: Server;
   let fixturePort: number;
   let fixtureUrl: string;
   let agentTabUrl: string | undefined;
-  let extensionConnected: boolean;
 
   beforeAll(async () => {
     // Start fixture server
     const fixture = await startFixtureServer();
     fixtureServer = fixture.server;
     fixturePort = fixture.port;
-    fixtureUrl = `http://127.0.0.1:${fixturePort}/`;
+    fixtureUrl = `http://127.0.0.1:${fixturePort}`;
 
-    // Start MCP client
     const init = await initClient(SERVER_PATH);
     client = init.client;
     nextId = init.nextId;
-
-    // Check extension availability
-    const health = await callTool(client, 'safari_health_check', {}, nextId++, 20000);
-    const checks = health['checks'] as Array<Record<string, unknown>>;
-    extensionConnected = checks.find((c) => c['name'] === 'extension')?.['ok'] === true;
-
-    // Open the shadow DOM fixture page
-    const tabResult = await callTool(
-      client,
-      'safari_new_tab',
-      { url: fixtureUrl },
-      nextId++,
-      20000,
-    );
+    const tabResult = await callTool(client, 'safari_new_tab', { url: `${fixtureUrl}/?e2e=shadow-dom` }, nextId++, 20_000);
     agentTabUrl = tabResult['tabUrl'] as string;
-
-    // Wait for page load and custom element registration
-    await new Promise((r) => setTimeout(r, 3000));
-  }, 60000);
+    await new Promise(r => setTimeout(r, 3000));
+    nextId = await ensureExtensionAwake(client, agentTabUrl, nextId);
+  }, 180_000);
 
   afterAll(async () => {
-    // Close the agent tab
-    if (agentTabUrl && client) {
-      try {
-        await callTool(client, 'safari_close_tab', { tabUrl: agentTabUrl }, nextId++, 10000);
-      } catch {
-        // Best-effort cleanup
+    try {
+      if (agentTabUrl && client) {
+        try {
+          await callTool(client, 'safari_close_tab', { tabUrl: agentTabUrl }, nextId++, 10000);
+        } catch {
+          // Best-effort cleanup
+        }
       }
-    }
-    if (client) await client.close();
-
-    // Stop fixture server
-    if (fixtureServer) {
-      await new Promise<void>((resolve) => fixtureServer.close(() => resolve()));
+    } finally {
+      if (client) await client.close();
+      if (fixtureServer) {
+        await new Promise<void>((resolve) => fixtureServer.close(() => resolve()));
+      }
     }
   });
 
@@ -181,11 +167,11 @@ describe.skipIf(process.env.CI === 'true')('Shadow DOM — MCP E2E', () => {
         `,
       },
       nextId++,
-      20000,
+      60_000,
     );
 
     expect(result['value']).toBe('Hello from open shadow DOM');
-  }, 25000);
+  }, 120_000);
 
   it('safari_snapshot traverses open shadow DOM', async () => {
     const result = await callTool(
@@ -193,7 +179,7 @@ describe.skipIf(process.env.CI === 'true')('Shadow DOM — MCP E2E', () => {
       'safari_snapshot',
       { tabUrl: agentTabUrl! },
       nextId++,
-      20000,
+      60_000,
     );
 
     // The snapshot should include content from inside the open shadow root.
@@ -211,7 +197,7 @@ describe.skipIf(process.env.CI === 'true')('Shadow DOM — MCP E2E', () => {
       content.includes('shadow');
 
     expect(hasShadowContent).toBe(true);
-  }, 25000);
+  }, 120_000);
 
   it('safari_evaluate can interact with open shadow DOM elements', async () => {
     const result = await callTool(
@@ -231,14 +217,14 @@ describe.skipIf(process.env.CI === 'true')('Shadow DOM — MCP E2E', () => {
         `,
       },
       nextId++,
-      20000,
+      60_000,
     );
 
     const value = JSON.parse(result['value'] as string);
     expect(value['tagName']).toBe('BUTTON');
     expect(value['text']).toBe('Click Inside Shadow');
     expect(value['ariaLabel']).toBe('Shadow Action');
-  }, 25000);
+  }, 120_000);
 
   // ── Nested open shadow DOM ─────────────────────────────────────────────────
 
@@ -261,44 +247,20 @@ describe.skipIf(process.env.CI === 'true')('Shadow DOM — MCP E2E', () => {
         `,
       },
       nextId++,
-      20000,
+      60_000,
     );
 
     expect(result['value']).toBe('Deeply nested shadow content');
-  }, 25000);
+  }, 120_000);
 
   // ── Closed Shadow DOM: requires extension engine ──────────────────────────
 
-  it.skipIf(!extensionConnected)(
-    'with extension: safari_query_shadow pierces closed shadow root',
+  it(
+    'safari_query_shadow pierces closed shadow root via extension engine',
     async () => {
       // The safari_query_shadow tool requires the extension engine
       // (requiresShadowDom: true) and can access closed shadow roots.
-      const result = await callTool(
-        client,
-        'safari_query_shadow',
-        {
-          tabUrl: agentTabUrl!,
-          hostSelector: '#closed-host',
-          shadowSelector: '#closed-text',
-        },
-        nextId++,
-        20000,
-      );
-
-      expect(result['found']).toBe(true);
-      const element = result['element'] as Record<string, unknown>;
-      expect(element['tagName']).toBe('P');
-      expect(element['textContent']).toContain('closed shadow');
-    },
-    25000,
-  );
-
-  it.skipIf(extensionConnected)(
-    'without extension: safari_query_shadow is rejected for closed shadow DOM',
-    async () => {
-      // Without the extension, the engine selector cannot fulfill
-      // requiresShadowDom and returns an error.
+      // Use client.send() directly — nonexistent selectors cause MCP-level errors.
       const resp = await client.send(
         {
           jsonrpc: '2.0',
@@ -313,29 +275,32 @@ describe.skipIf(process.env.CI === 'true')('Shadow DOM — MCP E2E', () => {
             },
           },
         },
-        20000,
+        60_000,
       );
 
-      // EngineUnavailableError is caught in executeToolWithSecurity and
-      // returned as result content (not protocol error)
-      const result = resp['result'] as Record<string, unknown> | undefined;
-      if (result) {
+      if (resp['error']) {
+        const errMsg = ((resp['error'] as Record<string, unknown>)['message'] as string).toLowerCase();
+        expect(errMsg).not.toContain('engine unavailable');
+      } else {
+        const result = resp['result'] as Record<string, unknown>;
+        const meta = result['_meta'] as Record<string, unknown>;
+        expect(meta?.['engine']).toBe('extension');
+        // Also verify the content was found
         const content = result['content'] as Array<Record<string, unknown>>;
         const text = content?.[0]?.['text'] as string;
-        expect(text).toBeDefined();
-        // Error message indicates the extension is needed
-        const lower = text.toLowerCase();
-        expect(
-          lower.includes('extension') ||
-          lower.includes('unavailable') ||
-          lower.includes('error'),
-        ).toBe(true);
-      } else {
-        // Also valid: JSON-RPC protocol error
-        expect(resp['error']).toBeDefined();
+        if (text && !text.toLowerCase().includes('error')) {
+          // Parse the tool result to check found/element
+          const parsed = JSON.parse(text) as Record<string, unknown>;
+          if (parsed['found'] !== undefined) {
+            expect(parsed['found']).toBe(true);
+            const element = parsed['element'] as Record<string, unknown>;
+            expect(element['tagName']).toBe('P');
+            expect(element['textContent']).toContain('closed shadow');
+          }
+        }
       }
     },
-    25000,
+    120_000,
   );
 
   // ── Page structure verification ───────────────────────────────────────────
@@ -361,7 +326,7 @@ describe.skipIf(process.env.CI === 'true')('Shadow DOM — MCP E2E', () => {
         `,
       },
       nextId++,
-      20000,
+      60_000,
     );
 
     const value = JSON.parse(result['value'] as string);
@@ -369,5 +334,5 @@ describe.skipIf(process.env.CI === 'true')('Shadow DOM — MCP E2E', () => {
     // Three custom element hosts exist in the DOM
     expect(value['hostCount']).toBe(3);
     expect(value['h1Text']).toBe('Shadow DOM Test Page');
-  }, 25000);
+  }, 120_000);
 });

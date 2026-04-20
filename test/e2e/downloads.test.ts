@@ -1,35 +1,54 @@
 /**
  * Downloads E2E Tests
  *
- * Verifies safari_wait_for_download tool existence and interface through
- * the real MCP protocol over stdin/stdout.
+ * Verifies safari_wait_for_download tool existence, interface, and engine
+ * routing through the real MCP protocol over stdin/stdout.
+ *
+ * Selector-only engine proof: verifies _meta.engine === 'extension' (engine
+ * selector routes through extension) for the download tool. DownloadTools
+ * uses daemon internally, but the engine selector picks extension as the
+ * routing layer — both facts are verified where possible.
  *
  * NOTE: Actual download testing requires a download-triggering click workflow
  * and user interaction with Safari's "Allow downloads?" prompt. The tool
- * presence and parameter schema are verified here. Actual download flow
- * tests are marked as .todo since they require a fixture server and
- * interactive Safari approval.
+ * presence, parameter schema, and engine routing are verified here. Actual
+ * download flow tests are marked as .todo since they require a fixture server
+ * and interactive Safari approval.
  *
  * Zero mocks. Zero source imports. Real MCP protocol.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { join } from 'node:path';
-import { McpTestClient, initClient } from '../helpers/mcp-client.js';
+import { McpTestClient, initClient, callTool, rawCallTool } from '../helpers/mcp-client.js';
+import { ensureExtensionAwake } from '../helpers/ensure-extension-awake.js';
+import { callToolExpectingEngine } from '../helpers/assert-engine.js';
 
 const SERVER_PATH = join(import.meta.dirname, '../../dist/index.js');
 
-describe.skipIf(process.env.CI === 'true')('Downloads E2E', () => {
+describe('Downloads E2E', () => {
   let client: McpTestClient;
   let nextId: number;
+  let agentTabUrl: string;
 
   beforeAll(async () => {
     const init = await initClient(SERVER_PATH);
     client = init.client;
     nextId = init.nextId;
-  }, 30000);
+    const tabResult = await callTool(client, 'safari_new_tab', { url: 'https://example.com/?e2e=downloads' }, nextId++, 20_000);
+    agentTabUrl = tabResult['tabUrl'] as string;
+    await new Promise(r => setTimeout(r, 3000));
+    nextId = await ensureExtensionAwake(client, agentTabUrl, nextId);
+  }, 180_000);
 
   afterAll(async () => {
-    if (client) await client.close();
+    try {
+      if (agentTabUrl && client) {
+        await callTool(client, 'safari_close_tab', { tabUrl: agentTabUrl }, nextId++, 10_000)
+          .catch(() => {});
+      }
+    } finally {
+      await client?.close().catch(() => {});
+    }
   });
 
   it('safari_wait_for_download is listed in tools/list', async () => {
@@ -51,7 +70,7 @@ describe.skipIf(process.env.CI === 'true')('Downloads E2E', () => {
     expect(downloadTool!['description']).toBeDefined();
     expect(typeof downloadTool!['description']).toBe('string');
     expect((downloadTool!['description'] as string).length).toBeGreaterThan(0);
-  }, 15000);
+  }, 60_000);
 
   it('safari_wait_for_download has correct inputSchema', async () => {
     const resp = await client.send({
@@ -78,7 +97,7 @@ describe.skipIf(process.env.CI === 'true')('Downloads E2E', () => {
     expect(properties['timeout']).toBeDefined();
     expect(properties['filenamePattern']).toBeDefined();
     expect(properties['tabUrl']).toBeDefined();
-  }, 15000);
+  }, 60_000);
 
   it.todo(
     'safari_wait_for_download detects a completed download ' +

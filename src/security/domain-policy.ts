@@ -20,6 +20,8 @@ export interface EvaluateResult {
   privateWindow: boolean;
   extensionAllowed: boolean;
   maxActionsPerMinute: number;
+  /** True when the domain is in the operator's explicit blocked list. */
+  blocked: boolean;
 }
 
 const DEFAULT_MAX_ACTIONS = 60;
@@ -99,6 +101,7 @@ function matchesDomain(pattern: string, hostname: string): boolean {
 export class DomainPolicy {
   private rules: Map<string, PolicyRule> = new Map();
   private readonly defaultPolicy: PolicyRule;
+  private readonly blockedPatterns: Set<string> = new Set();
 
   constructor(options: DomainPolicyOptions = {}) {
     const maxActions = options.defaultMaxActionsPerMinute ?? DEFAULT_MAX_ACTIONS;
@@ -110,6 +113,7 @@ export class DomainPolicy {
 
     // Config-supplied domains must not override hardcoded sensitive protections
     for (const domain of options.blocked ?? []) {
+      this.blockedPatterns.add(domain);
       if (!this.rules.has(domain)) {
         this.rules.set(domain, {
           trust: 'untrusted',
@@ -155,11 +159,12 @@ export class DomainPolicy {
 
     for (const [pattern, rule] of this.rules) {
       if (matchesDomain(pattern, hostname)) {
-        return { ...rule };
+        const blocked = this.blockedPatterns.has(pattern);
+        return { ...rule, blocked };
       }
     }
 
-    return { ...this.defaultPolicy };
+    return { ...this.defaultPolicy, blocked: false };
   }
 
   // ── Introspection ────────────────────────────────────────────────────────────

@@ -88,7 +88,7 @@ class DaemonTestClient {
   }
 }
 
-describe.skipIf(process.env.CI === 'true' || !existsSync(DAEMON_PATH))('Daemon Engine — NDJSON Protocol', () => {
+describe.skipIf(!existsSync(DAEMON_PATH))('Daemon Engine — NDJSON Protocol', () => {
   let daemon: DaemonTestClient;
 
   beforeAll(() => {

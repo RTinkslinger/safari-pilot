@@ -8,79 +8,62 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { join } from 'node:path';
-import { McpTestClient, initClient, callTool } from '../helpers/mcp-client.js';
+import { McpTestClient, initClient, callTool, rawCallTool } from '../helpers/mcp-client.js';
+import { ensureExtensionAwake } from '../helpers/ensure-extension-awake.js';
+import { callToolExpectingEngine } from '../helpers/assert-engine.js';
 
 const SERVER_PATH = join(import.meta.dirname, '../../dist/index.js');
 
-describe.skipIf(process.env.CI === 'true')('Interaction Tools E2E', () => {
+describe('Interaction Tools E2E', () => {
   let client: McpTestClient;
   let nextId: number;
-  let tabUrl: string;
+  let agentTabUrl: string;
 
   beforeAll(async () => {
     const init = await initClient(SERVER_PATH);
     client = init.client;
     nextId = init.nextId;
-
-    // Open a tab to example.com for interaction testing
-    const newTab = await callTool(
-      client,
-      'safari_new_tab',
-      { url: 'https://example.com' },
-      nextId++,
-      20000,
-    );
-    tabUrl = newTab['tabUrl'] as string;
-
-    // Wait for page load
-    await new Promise((r) => setTimeout(r, 3000));
-
-    // Resolve the actual tab URL (Safari may normalize it)
-    const tabsResult = await callTool(client, 'safari_list_tabs', {}, nextId++, 10000);
-    const tabs = tabsResult['tabs'] as Array<Record<string, unknown>>;
-    const exampleTab = tabs.find(
-      (t) => (t['url'] as string).includes('example.com'),
-    );
-    if (exampleTab) {
-      tabUrl = exampleTab['url'] as string;
-    }
-  }, 40000);
+    const tabResult = await callTool(client, 'safari_new_tab', { url: 'https://example.com/?e2e=interaction' }, nextId++, 20_000);
+    agentTabUrl = tabResult['tabUrl'] as string;
+    await new Promise(r => setTimeout(r, 3000));
+    nextId = await ensureExtensionAwake(client, agentTabUrl, nextId);
+  }, 180_000);
 
   afterAll(async () => {
-    // Clean up tabs
-    for (const url of [tabUrl, 'https://example.com/', 'https://example.com', 'https://www.iana.org/domains/reserved']) {
-      try {
-        await callTool(client, 'safari_close_tab', { tabUrl: url }, nextId++, 10000);
-      } catch {
-        // Ignore
+    try {
+      if (agentTabUrl && client) {
+        await rawCallTool(client, 'safari_close_tab', { tabUrl: agentTabUrl }, nextId++, 10_000)
+          .catch(() => {});
       }
+    } finally {
+      await client?.close().catch(() => {});
     }
-    if (client) await client.close();
   });
 
   it('safari_click on a link navigates to its href', async () => {
     // example.com has a link with text "More information..." pointing to iana.org
-    const clickResult = await callTool(
+    const { payload, meta } = await callToolExpectingEngine(
       client,
       'safari_click',
       {
-        tabUrl,
+        tabUrl: agentTabUrl,
         selector: 'a',
         waitForNavigation: true,
       },
+      'extension',
       nextId++,
-      20000,
+      60_000,
     );
 
     // The click should succeed
-    expect(clickResult).toBeDefined();
+    expect(payload).toBeDefined();
+    expect(meta['engine']).toBe('extension');
 
     // Wait for navigation
     await new Promise((r) => setTimeout(r, 3000));
 
-    // Verify the page navigated by checking the current URL via evaluate
-    // We need to find the tab's new URL since it navigated
-    const tabsResult = await callTool(client, 'safari_list_tabs', {}, nextId++, 10000);
+    // Verify the page navigated by checking the current URL via list_tabs
+    const tabsResult = await callTool(client, 'safari_list_tabs', {}, nextId++, 15_000);
     const tabs = tabsResult['tabs'] as Array<Record<string, unknown>>;
 
     // Look for a tab that navigated away from example.com (to iana.org)
@@ -89,39 +72,31 @@ describe.skipIf(process.env.CI === 'true')('Interaction Tools E2E', () => {
     );
     expect(ianaTab).toBeDefined();
 
-    // Update tabUrl for subsequent tests
+    // Update agentTabUrl to the navigated URL for subsequent tests
     if (ianaTab) {
-      tabUrl = ianaTab['url'] as string;
+      agentTabUrl = ianaTab['url'] as string;
     }
-  }, 30000);
+  }, 120_000);
 
   it('safari_fill types text into an input field', async () => {
-    // Open a fresh tab to example.com for this test
-    const freshTab = await callTool(
+    // Navigate back to example.com for a clean state
+    await callTool(
       client,
-      'safari_new_tab',
-      { url: 'https://example.com' },
+      'safari_navigate',
+      { url: 'https://example.com/?e2e=interaction-fill', tabUrl: agentTabUrl },
       nextId++,
-      20000,
+      60_000,
     );
-    const freshTabUrl = freshTab['tabUrl'] as string;
-    expect(freshTabUrl).toBeDefined();
-
-    // Wait for page load
+    // Update agentTabUrl after navigation — old URL (iana.org) no longer matches
+    agentTabUrl = 'https://example.com/?e2e=interaction-fill';
     await new Promise((r) => setTimeout(r, 3000));
 
-    // Resolve the actual tab URL from the tab list
-    const tabsResult = await callTool(client, 'safari_list_tabs', {}, nextId++, 10000);
-    const tabs = tabsResult['tabs'] as Array<Record<string, unknown>>;
-    const exTab = tabs.find((t) => (t['url'] as string).includes('example.com'));
-    const resolvedUrl = exTab ? (exTab['url'] as string) : freshTabUrl;
-
     // Inject a text input into the page via evaluate
-    const injectResult = await callTool(
+    const { payload: injectPayload } = await callToolExpectingEngine(
       client,
       'safari_evaluate',
       {
-        tabUrl: resolvedUrl,
+        tabUrl: agentTabUrl,
         script: `
           var input = document.createElement('input');
           input.type = 'text';
@@ -131,50 +106,51 @@ describe.skipIf(process.env.CI === 'true')('Interaction Tools E2E', () => {
           return { injected: true };
         `,
       },
+      'extension',
       nextId++,
-      10000,
+      60_000,
     );
-    expect(injectResult['value']).toEqual({ injected: true });
+    expect(injectPayload['value']).toEqual({ injected: true });
 
     // Fill the input
-    const fillResult = await callTool(
+    const { payload: fillPayload, meta: fillMeta } = await callToolExpectingEngine(
       client,
       'safari_fill',
       {
-        tabUrl: resolvedUrl,
+        tabUrl: agentTabUrl,
         selector: '#test-input',
         value: 'Hello Safari Pilot',
       },
+      'extension',
       nextId++,
-      15000,
+      60_000,
     );
-    expect(fillResult).toBeDefined();
+    expect(fillPayload).toBeDefined();
+    expect(fillMeta['engine']).toBe('extension');
 
     // Verify the value was set via evaluate
-    const checkResult = await callTool(
+    const { payload: checkPayload } = await callToolExpectingEngine(
       client,
       'safari_evaluate',
       {
-        tabUrl: resolvedUrl,
+        tabUrl: agentTabUrl,
         script: `return document.getElementById('test-input').value;`,
       },
+      'extension',
       nextId++,
-      10000,
+      60_000,
     );
 
-    expect(checkResult['value']).toBe('Hello Safari Pilot');
-
-    // Update tabUrl for the next test
-    tabUrl = resolvedUrl;
-  }, 50000);
+    expect(checkPayload['value']).toBe('Hello Safari Pilot');
+  }, 120_000);
 
   it('safari_evaluate can check DOM state after interaction', async () => {
     // Use evaluate to inspect the page state
-    const result = await callTool(
+    const { payload, meta } = await callToolExpectingEngine(
       client,
       'safari_evaluate',
       {
-        tabUrl,
+        tabUrl: agentTabUrl,
         script: `
           return {
             title: document.title,
@@ -184,15 +160,17 @@ describe.skipIf(process.env.CI === 'true')('Interaction Tools E2E', () => {
           };
         `,
       },
+      'extension',
       nextId++,
-      10000,
+      60_000,
     );
 
-    expect(result['value']).toBeDefined();
-    const state = result['value'] as Record<string, unknown>;
+    expect(payload['value']).toBeDefined();
+    const state = payload['value'] as Record<string, unknown>;
     expect(state['title']).toContain('Example Domain');
     expect(state['hasInput']).toBe(true);
     expect(state['inputValue']).toBe('Hello Safari Pilot');
     expect(typeof state['bodyChildCount']).toBe('number');
-  }, 15000);
+    expect(meta['engine']).toBe('extension');
+  }, 120_000);
 });
