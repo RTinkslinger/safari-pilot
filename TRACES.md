@@ -86,6 +86,12 @@
 **Context:** Four-agent code review found 22 issues. Three adversarial audits refined the plan to v3. Key decisions: navigate_back/forward added to SKIP_OWNERSHIP_TOOLS (pre-existing handler limitation — can't determine post-navigation URL). Engine routing change (daemon-first) deferred (44 test cascade). escapeForJsSingleQuote handles \, ', \n, \r, \0, U+2028, U+2029. escapeForTemplateLiteral handles \, `, ${. IDPI test learned: innerText excludes display:none content.
 ---
 
+### Iteration 18 - 2026-04-21
+**What:** Tab ownership by identity — extension tab.id replaces URL-only matching. Fixes click→navigate→interact breakage from fail-closed ownership (iteration 17).
+**Changes:** `src/types.ts` (+meta field on EngineResult), `src/security/tab-ownership.ts` (complete rewrite — dual-key registry: Map<TabId, OwnedTab> with currentUrl + extensionTabId), `src/engines/engine-proxy.ts` (resetMeta/getLastMeta capture meta from executeJsInTab), `src/engines/extension.ts` (detect _meta wrapper, extract into EngineResult.meta), `extension/background.js` (enrich results with _meta: {tabId, tabUrl}), `daemon/Sources/SafariPilotdCore/ExtensionBridge.swift` (pass through _meta in wrapper), `src/server.ts` (pipeline reorder: engine selection before ownership; deferred ownership for extension engine; post-execution verify via _meta.tabId; removed NAVIGATION_URL_TRACKING_TOOLS), `test/unit/security/tab-ownership.test.ts` (rewritten — 30 tests for new API), `test/e2e/security-enforcement.test.ts` (+deferred path test), `ARCHITECTURE.md` (new pipeline order, dual-key model, _meta propagation)
+**Context:** Pipeline reordered: engine selection (step 7) before ownership check (step 7d). When URL lookup fails but extension engine + domain matches → defer to post-execution. Extension result _meta.tabId verifies the tab is owned. Zero additional IPC latency — piggybacks on existing result. Fixes the 2 e2e failures in interaction-tools.test.ts caused by fail-closed ownership after safari_click navigation. 1461 unit tests pass (17 net new).
+---
+
 <!-- Iterations 5-6 archived to traces/archive/milestone-2.md -->
 
 <!-- Iterations 7-9 archived to traces/archive/milestone-3.md -->

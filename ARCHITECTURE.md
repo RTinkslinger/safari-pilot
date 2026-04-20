@@ -1,6 +1,6 @@
 # Safari Pilot Architecture — Canonical Source of Truth
 
-*Last verified: 2026-04-20 | Branch: fix/e2e-test-tab-ownership*
+*Last verified: 2026-04-21 | Branch: feat/tab-ownership-by-identity*
 
 **This document describes how Safari Pilot ACTUALLY works as shipped. Every statement is backed by verified evidence. If code changes contradict this document, either the code is wrong or this document must be updated — never silently diverge.**
 
@@ -175,16 +175,17 @@ Logic:
 | # | Layer | What it does | Wired at |
 |---|-------|-------------|----------|
 | 1 | **KillSwitch** | Global emergency stop — blocks ALL automation | server.ts:391 |
-| 2 | **TabOwnership** | Agent can only touch tabs it created via safari_new_tab | server.ts:403 |
-| 3 | **DomainPolicy** | Per-domain trust levels, blocked domains list | server.ts:414 |
-| 4 | **HumanApproval** | Blocks sensitive actions on OAuth/financial URLs | server.ts:418 |
-| 5 | **RateLimiter** | 120 actions/min global, per-domain buckets | server.ts:452 |
-| 6 | **CircuitBreaker** | 5 errors on a domain → 120s cooldown (see dual-scope note below) | server.ts:459 |
-| 7 | **Engine Selection** | Picks best available engine for tool's requirements | server.ts:463 |
-| — | **Tool Execution** | Calls the tool handler with selected engine | server.ts:558 |
-| 8 | **IdpiScanner** | Post-execution: scans extraction results for prompt injection | server.ts:575 |
-| 9 | **ScreenshotRedaction** | Post-execution: attaches redaction script for banking/cross-origin | server.ts:591 |
-| 10 | **AuditLog** | Post-execution: records tool, URL, engine, params, result, timing | server.ts:596 |
+| 2 | **DomainPolicy** | Per-domain trust levels, blocked domains list | server.ts:406 |
+| 3 | **HumanApproval** | Blocks sensitive actions on OAuth/financial URLs | server.ts:410 |
+| 4 | **RateLimiter** | 120 actions/min global, per-domain buckets | server.ts:452 |
+| 5 | **CircuitBreaker** | 5 errors on a domain → 120s cooldown (see dual-scope note below) | server.ts:459 |
+| 6 | **Engine Selection** | Picks best available engine for tool's requirements | server.ts:463 |
+| 7 | **TabOwnership** | Identity-based: defers to post-execution if extension engine + domain match | server.ts:512 |
+| — | **Tool Execution** | Calls the tool handler with selected engine | server.ts:576 |
+| 8 | **Post-exec Ownership** | Backfill extensionTabId, refresh URL, verify deferred ownership | server.ts:602 |
+| 9 | **IdpiScanner** | Post-execution: scans extraction results for prompt injection | server.ts:638 |
+| 10 | **ScreenshotRedaction** | Post-execution: attaches redaction script for banking/cross-origin | server.ts:654 |
+| 11 | **AuditLog** | Post-execution: records tool, URL, engine, params, result, timing | server.ts:659 |
 
 **CircuitBreaker dual scope (src/security/circuit-breaker.ts):** The breaker carries two INDEPENDENT scopes on the same instance.
 - **Per-domain scope** (existing): 5 failures in a 60s rolling window → 120s cooldown. API: `recordFailure(domain)` / `recordSuccess(domain)` / `isOpen(domain)` / `getState(domain)` / `assertClosed(domain)`. Runs inline at layer 6.
@@ -198,12 +199,27 @@ Logic:
 
 **INFRA_MESSAGE_TYPES (src/server.ts):** Documented bypass set for daemon↔extension infrastructure methods — `extension_poll`, `extension_drain`, `extension_reconcile`, `extension_connected`, `extension_disconnected`, `extension_log`, `extension_result`. These are coordination messages, not per-domain tool calls, and must never traverse the 9-layer pipeline. Commit 1a declares the contract as an exported `ReadonlySet<string>`; Commit 1b wires the reconcile + drain routes. These messages currently flow via `ExtensionSocketServer` + NDJSON dispatcher in the daemon, never reaching `executeToolWithSecurity` (whose name parameter only receives registered `safari_*` tool names). No pre-pipeline bypass check is required at 1a — the constant is declarative and becomes enforcement-wired when 1b introduces the reconcile/drain routes.
 
-**Tab ownership enforcement (2026-04-20 security hardening):**
-- Fails CLOSED: if `findByUrl(tabUrl)` returns undefined, `TabUrlNotRecognizedError` is thrown
-- Navigation URL tracking: after `safari_navigate` succeeds, `updateUrl()` is called on the ownership registry with the new URL from the response
-- `safari_navigate_back` and `safari_navigate_forward` added to `SKIP_OWNERSHIP_TOOLS` — their handlers query the tab by stale URL after history.back()/forward(), making ownership enforcement unreliable for them
-- Tab IDs use monotonic counter (`_nextTabIndex++`) instead of `getOwnedCount()+1`
-- **Known limitation:** `safari_click` (link navigation) does NOT update the registry. The URL changes without server awareness. A future PR should refactor navigation handlers to use tab-index-based queries.
+**Tab ownership enforcement (identity-based, 2026-04-21):**
+
+Dual-key registry: tabs are tracked by both positional `TabId` (windowIndex * 1000 + tabIndex) and stable `extensionTabId` (Safari's `tab.id` from the extension). URL is mutable and refreshed on every extension-engine result.
+
+- **Registration:** `safari_new_tab` registers with URL + null extensionTabId. The extensionTabId is backfilled on the first extension-engine tool call (via `_meta.tabId` in the result).
+- **Ownership check flow (server.ts step 7d, after engine selection):**
+  1. `findByUrl(tabUrl)` → if found, `assertOwnership(tabId)` (fast path)
+  2. If URL not found AND extension engine selected AND `domainMatches(tabUrl)` → set `deferredOwnershipCheck = true` (deferred path)
+  3. If URL not found AND (not extension engine OR domain doesn't match) → throw `TabUrlNotRecognizedError` (fail closed)
+- **Post-execution verify (server.ts step 8.post2):**
+  1. Read `engineProxy.getLastMeta()` — contains `_meta.tabId` + `_meta.tabUrl` from extension result
+  2. Backfill `extensionTabId` on first call via `setExtensionTabId()`
+  3. Refresh URL in registry via `findByExtensionTabId()` + `updateUrl()` (keeps `findByUrl` working for next call)
+  4. If `deferredOwnershipCheck`: verify `findByExtensionTabId(extTabId)` returns an owned tab. If undefined → throw (tab not ours). If no `_meta` returned → throw (fail closed).
+- **SKIP_OWNERSHIP_TOOLS:** `safari_list_tabs`, `safari_new_tab`, `safari_health_check` (navigate_back/forward now go through the deferred path)
+- **Domain guard (`domainMatches`):** Compares last two hostname segments (eTLD+1 approximation). Prevents DoS by requiring at least one owned tab on the same registrable domain before deferring.
+- **Known limitations:**
+  - SPA `history.pushState` does not fire `tabs.onUpdated` — extensionTabId cache and server URL both go stale. First call after pushState will fail.
+  - Two-part ccTLDs (`.co.uk`, `.com.au`) are incorrectly equated by `domainMatches` — `evil.co.uk` would pass the domain guard if `bank.co.uk` is owned. The post-execution verify still catches this (different tab.id).
+  - Multiple tabs at same URL: `findByUrl` returns first found. `findByExtensionTabId` is unambiguous after backfill.
+  - AppleScript-only sessions: no extension → no tab.id backfill → ownership remains URL-only (same as pre-identity behavior).
 
 **Circuit breaker pipeline usage:**
 - Uses `assertClosed(domain)` (not `isOpen()` + manual throw) — correctly handles half-open probe logic
@@ -268,7 +284,14 @@ Logic:
 - In-memory queue (not file-based — sandbox blocks filesystem access)
 - handleExecute: queues command + suspends via CheckedContinuation; fast-paths a waiting long-poll if one is registered
 - handlePoll: drains ALL undelivered commands at once (`{commands: [...]}`), marks them delivered=true; supports long-poll via `waitTimeout` (default 0.0 returns `{commands: []}` immediately)
-- handleResult: matches by requestId, resumes continuation
+- handleResult: matches by requestId, resumes continuation; if result contains `_meta` key, wraps as `{"value": innerValue, "_meta": meta}` for ExtensionEngine to extract
+
+### _meta Tab Identity Propagation (2026-04-21)
+- **background.js** enriches every successful `executeCommand()` result with `_meta: { tabId: tab.id, tabUrl: tab.url }` — `tab` is from `findTargetTab()`, guaranteed non-null by that point
+- **ExtensionBridge.swift** detects `_meta` in the result dict and wraps the response as `{"value": innerValue, "_meta": meta}` (backward-compatible: absent `_meta` returns `innerValue` directly)
+- **DaemonEngine** (daemon.ts:179) JSON.stringifies object values, so the wrapper passes through as a string
+- **ExtensionEngine** (extension.ts) `JSON.parse`s the result, detects `_meta` key, extracts into `EngineResult.meta`, unwraps inner value
+- **EngineProxy** captures `result.meta` from `executeJsInTab()` into `_lastMeta`; server reads via `getLastMeta()` after tool execution
 - Timeout: 30s, cancels via Task
 - Disconnect (event-page wake semantics): flips `delivered=true → false` on unacked commands so the next poll redelivers them; clears waiting long-polls with empty commands array. Pending commands are NEVER cancelled on disconnect — the event page unloads aggressively and will wake + poll shortly.
 
