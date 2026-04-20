@@ -64,13 +64,10 @@ export class CircuitBreaker {
    * Record a successful call. Resets the failure counter and closes the circuit.
    */
   recordSuccess(domain: string): void {
-    const state = this.getState_(domain);
-    state.failures = 0;
-    state.firstFailureAt = 0;
-    state.openedAt = null;
-    state.probeAllowed = false;
-    state.probeInFlight = false;
-    this.states.set(domain, state);
+    // Delete instead of zeroing — getState_() recreates fresh emptyState() on
+    // next access (openedAt: null → 'closed', probeAllowed: false). Prevents
+    // unbounded Map growth from accumulating entries for every visited domain.
+    this.states.delete(domain);
   }
 
   /**

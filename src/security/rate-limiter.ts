@@ -95,7 +95,11 @@ export class RateLimiter {
     const entries = this.windows.get(domain) ?? [];
     const cutoff = now - this.windowMs;
     const pruned = entries.filter((ts) => ts > cutoff);
-    this.windows.set(domain, pruned);
+    if (pruned.length === 0) {
+      this.windows.delete(domain);
+    } else {
+      this.windows.set(domain, pruned);
+    }
     return pruned;
   }
 }
