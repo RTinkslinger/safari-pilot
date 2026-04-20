@@ -1,5 +1,6 @@
 import type { IEngine } from '../engines/engine.js';
 import type { Engine, ToolResponse, ToolRequirements } from '../types.js';
+import { escapeForJsSingleQuote, escapeForTemplateLiteral } from '../escape.js';
 
 export interface ToolDefinition {
   name: string;
@@ -257,7 +258,7 @@ export class StorageTools {
     const start = Date.now();
     const tabUrl = params['tabUrl'] as string | undefined;
     const domain = params['domain'] as string | undefined;
-    const escapedDomain = domain ? domain.replace(/'/g, "\\'") : '';
+    const escapedDomain = domain ? escapeForJsSingleQuote(domain) : '';
 
     const js = `
       var rawCookies = document.cookie;
@@ -308,11 +309,11 @@ export class StorageTools {
     const secure = params['secure'] === true;
     const sameSite = (params['sameSite'] as string | undefined) ?? 'lax';
 
-    const escapedName = name.replace(/'/g, "\\'");
-    const escapedValue = value.replace(/'/g, "\\'");
-    const escapedDomain = domain ? domain.replace(/'/g, "\\'") : '';
-    const escapedPath = path.replace(/'/g, "\\'");
-    const escapedSameSite = sameSite.replace(/'/g, "\\'");
+    const escapedName = escapeForJsSingleQuote(name);
+    const escapedValue = escapeForJsSingleQuote(value);
+    const escapedDomain = domain ? escapeForJsSingleQuote(domain) : '';
+    const escapedPath = escapeForJsSingleQuote(path);
+    const escapedSameSite = escapeForJsSingleQuote(sameSite);
 
     const js = `
       var cookieName = '${escapedName}';
@@ -321,7 +322,7 @@ export class StorageTools {
       var cookiePath = '${escapedPath}';
       var cookieSecure = ${secure};
       var cookieSameSite = '${escapedSameSite}';
-      var expiresParam = ${expires ? `'${expires.replace(/'/g, "\\'")}'` : 'null'};
+      var expiresParam = ${expires ? `'${escapeForJsSingleQuote(expires)}'` : 'null'};
 
       var parts = [cookieName + '=' + cookieValue];
 
@@ -366,9 +367,9 @@ export class StorageTools {
     const domain = params['domain'] as string | undefined;
     const path = (params['path'] as string | undefined) ?? '/';
 
-    const escapedName = name.replace(/'/g, "\\'");
-    const escapedDomain = domain ? domain.replace(/'/g, "\\'") : '';
-    const escapedPath = path.replace(/'/g, "\\'");
+    const escapedName = escapeForJsSingleQuote(name);
+    const escapedDomain = domain ? escapeForJsSingleQuote(domain) : '';
+    const escapedPath = escapeForJsSingleQuote(path);
 
     const js = `
       var cookieName = '${escapedName}';
@@ -472,7 +473,7 @@ export class StorageTools {
     const state = params['state'] as Record<string, unknown>;
 
     // Serialise the state to inject into JS safely
-    const stateJson = JSON.stringify(state).replace(/\\/g, '\\\\').replace(/`/g, '\\`');
+    const stateJson = escapeForTemplateLiteral(JSON.stringify(state));
 
     const js = `
       var state = JSON.parse(\`${stateJson}\`);
@@ -533,7 +534,7 @@ export class StorageTools {
     const tabUrl = params['tabUrl'] as string;
     const key = params['key'] as string;
 
-    const escapedKey = key.replace(/'/g, "\\'");
+    const escapedKey = escapeForJsSingleQuote(key);
 
     const js = `
       var key = '${escapedKey}';
@@ -560,8 +561,8 @@ export class StorageTools {
     const key = params['key'] as string;
     const value = params['value'] as string;
 
-    const escapedKey = key.replace(/'/g, "\\'");
-    const escapedValue = value.replace(/'/g, "\\'");
+    const escapedKey = escapeForJsSingleQuote(key);
+    const escapedValue = escapeForJsSingleQuote(value);
 
     const js = `
       var key = '${escapedKey}';
@@ -585,7 +586,7 @@ export class StorageTools {
     const tabUrl = params['tabUrl'] as string;
     const key = params['key'] as string;
 
-    const escapedKey = key.replace(/'/g, "\\'");
+    const escapedKey = escapeForJsSingleQuote(key);
 
     const js = `
       var key = '${escapedKey}';
@@ -612,8 +613,8 @@ export class StorageTools {
     const key = params['key'] as string;
     const value = params['value'] as string;
 
-    const escapedKey = key.replace(/'/g, "\\'");
-    const escapedValue = value.replace(/'/g, "\\'");
+    const escapedKey = escapeForJsSingleQuote(key);
+    const escapedValue = escapeForJsSingleQuote(value);
 
     const js = `
       var key = '${escapedKey}';
@@ -665,7 +666,7 @@ export class StorageTools {
     const query = params['query'] as Record<string, unknown> | undefined;
     const limit = typeof params['limit'] === 'number' ? params['limit'] : 100;
 
-    const queryJson = query ? JSON.stringify(query).replace(/\\/g, '\\\\').replace(/`/g, '\\`') : 'null';
+    const queryJson = query ? escapeForTemplateLiteral(JSON.stringify(query)) : 'null';
 
     const js = `
       var dbName = ${JSON.stringify(database)};
