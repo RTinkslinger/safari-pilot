@@ -76,7 +76,7 @@ export class FrameTools {
           },
           required: ['tabUrl', 'frameSelector', 'script'],
         },
-        requirements: {},
+        requirements: { idempotent: false },
       },
     ];
   }

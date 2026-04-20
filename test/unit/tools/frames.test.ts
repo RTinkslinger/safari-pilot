@@ -60,9 +60,10 @@ describe('FrameTools - tool definitions', () => {
     }
   });
 
-  it('safari_eval_in_frame has no special engine requirements', () => {
+  it('safari_eval_in_frame has no special engine requirements (only idempotent flag)', () => {
     const def = tools.getDefinitions().find((d) => d.name === 'safari_eval_in_frame')!;
-    expect(def.requirements).toEqual({});
+    expect(def.requirements).toEqual({ idempotent: false });
+    expect(def.requirements.requiresFramesCrossOrigin).toBeUndefined();
   });
 });
 
