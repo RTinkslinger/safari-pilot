@@ -60,7 +60,7 @@ describe('MCP Handshake', () => {
     const tools = result['tools'] as Array<Record<string, unknown>>;
 
     expect(tools).toBeInstanceOf(Array);
-    expect(tools.length).toBeGreaterThanOrEqual(78);
+    expect(tools.length).toBe(78);
   }, 60_000);
 
   it('all tool names start with safari_', async () => {
