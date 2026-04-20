@@ -1,6 +1,7 @@
 import type { ToolResponse, ToolRequirements } from '../types.js';
 import type { IEngine } from '../engines/engine.js';
 import type { Engine } from '../types.js';
+import { escapeForJsSingleQuote } from '../escape.js';
 
 export interface ToolDefinition {
   name: string;
@@ -177,7 +178,7 @@ export class PermissionTools {
     const tabUrl = params['tabUrl'] as string;
     const permission = params['permission'] as string;
 
-    const escapedPermission = permission.replace(/'/g, "\\'");
+    const escapedPermission = escapeForJsSingleQuote(permission);
 
     const js = `
       if (!navigator.permissions) {

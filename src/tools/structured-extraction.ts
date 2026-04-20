@@ -1,5 +1,6 @@
 import type { ToolResponse, ToolRequirements } from '../types.js';
 import type { IEngine } from '../engines/engine.js';
+import { escapeForJsSingleQuote } from '../escape.js';
 
 export interface ToolDefinition {
   name: string;
@@ -149,7 +150,7 @@ export class StructuredExtractionTools {
     const scope = params['scope'] as string | undefined;
 
     const schemaJson = JSON.stringify(schema);
-    const escapedScope = scope ? scope.replace(/'/g, "\\'") : '';
+    const escapedScope = scope ? escapeForJsSingleQuote(scope) : '';
 
     const js = `
       var schema = ${schemaJson};
@@ -239,7 +240,7 @@ export class StructuredExtractionTools {
     const tabUrl = params['tabUrl'] as string;
     const selector = params['selector'] as string | undefined;
 
-    const escapedSelector = selector ? selector.replace(/'/g, "\\'") : '';
+    const escapedSelector = selector ? escapeForJsSingleQuote(selector) : '';
 
     const js = `
       var tables = ${selector ? `document.querySelectorAll('${escapedSelector}')` : 'document.querySelectorAll("table")'};

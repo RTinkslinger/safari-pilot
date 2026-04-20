@@ -5,6 +5,7 @@ import type { SafariPilotServer } from '../server.js';
 import { buildRefSelector } from '../aria.js';
 import { generateAutoWaitJs, ACTION_CHECKS } from '../auto-wait.js';
 import { hasLocatorParams, extractLocatorFromParams, generateLocatorJs } from '../locator.js';
+import { escapeForJsSingleQuote } from '../escape.js';
 
 export interface ToolDefinition {
   name: string;
@@ -851,11 +852,12 @@ export class InteractionTools {
     const action = (params['action'] as string | undefined) ?? 'accept';
     const promptText = (params['promptText'] as string | undefined) ?? '';
 
-    const escapedPromptText = promptText.replace(/'/g, "\\'");
+    const escapedPromptText = escapeForJsSingleQuote(promptText);
+    const escapedAction = escapeForJsSingleQuote(action);
 
     const js = `
       var autoHandle = ${autoHandle};
-      var action = '${action}';
+      var action = '${escapedAction}';
       var promptText = '${escapedPromptText}';
 
       if (!window.__safariPilotDialogs) {
