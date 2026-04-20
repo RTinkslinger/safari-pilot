@@ -122,7 +122,7 @@ Seven pre-execution layers + three post-execution checks run on every tool call 
 
 **Pre-execution (block before tool runs):**
 1. **KillSwitch** — global emergency stop (server.ts:391)
-2. **TabOwnership** — agent can only touch tabs it created via `safari_new_tab` (server.ts:403)
+2. **TabOwnership** — agent can only touch tabs it created via `safari_new_tab`; fails CLOSED on unrecognized URLs (server.ts:403)
 3. **DomainPolicy** — per-domain trust levels and rules (server.ts:414)
 4. **HumanApproval** — flags sensitive actions on untrusted domains (server.ts:418)
 5. **RateLimiter** — 120 actions/min global, per-domain buckets (server.ts:452)
@@ -320,5 +320,7 @@ Read `ARCHITECTURE.md` at session start. Before claiming any component "works," 
 - **Daemon IPC is triple** — stdin/stdout NDJSON for MCP commands, TCP localhost:19474 for DaemonEngine/health-checks/benchmarks, HTTP localhost:19475 for extension `fetch()` polling (Hummingbird, requires macOS 14+). TCP:19474 and HTTP:19475 serve different clients — they are NOT interchangeable.
 - **Safari prerequisite** — "Allow JavaScript from Apple Events" must be enabled in Safari > Develop menu for any JS execution to work. Health check detects this (error code `-1743`).
 - **No credential access** — never touches macOS Keychain. Auth happens via real browser interaction only.
-- **SKIP_OWNERSHIP_TOOLS** — `safari_list_tabs`, `safari_new_tab`, `safari_health_check` bypass tab ownership checks.
+- **Tab ownership fails CLOSED** — if `findByUrl(tabUrl)` returns undefined, `TabUrlNotRecognizedError` is thrown (not silently passed). After `safari_navigate` succeeds, ownership registry updates to the new URL. `safari_click` link navigation does NOT update the registry (known limitation).
+- **SKIP_OWNERSHIP_TOOLS** — `safari_list_tabs`, `safari_new_tab`, `safari_health_check`, `safari_navigate_back`, `safari_navigate_forward` bypass tab ownership checks. The navigate_back/forward handlers query the tab by stale URL after history.back()/forward() — ownership enforcement is unreliable for them.
+- **JS string escaping** — all user-provided strings embedded in JS use `escapeForJsSingleQuote()` or `escapeForTemplateLiteral()` from `src/escape.ts`. Never use bare `.replace(/'/g, "\\'")` — it misses backslash escaping and creates injection vectors.
 - **Rate limiter is per-domain**, not per-tab — prevents spamming one domain across multiple tabs.
