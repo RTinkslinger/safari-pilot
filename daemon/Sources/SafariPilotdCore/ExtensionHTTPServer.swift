@@ -137,6 +137,10 @@ public final class ExtensionHTTPServer: @unchecked Sendable {
             return self.handleSession()
         }
 
+        router.get("health") { [self] _, _ -> HBResponse in
+            return self.handleHealth()
+        }
+
         return router
     }
 
@@ -251,6 +255,23 @@ public final class ExtensionHTTPServer: @unchecked Sendable {
             "mcp": mcpConn,
             "sessionTab": sessionTab,
             "lastPingAge": lastPingAge,
+        ])
+    }
+
+    /// GET /health — returns health data for the session dashboard page.
+    /// Combines extension connectivity, MCP connection, and command timestamps.
+    private func handleHealth() -> HBResponse {
+        let lastExecMs: Any
+        if let ts = healthStore.lastExecutedResultTimestamp {
+            lastExecMs = ts.timeIntervalSince1970 * 1000
+        } else {
+            lastExecMs = NSNull()
+        }
+
+        return jsonResponse([
+            "isConnected": bridge.isExtensionConnected,
+            "mcpConnected": healthStore.mcpConnected,
+            "lastExecutedResultTimestamp": lastExecMs,
         ])
     }
 
