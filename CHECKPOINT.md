@@ -1,41 +1,44 @@
 # Checkpoint
-*Written: 2026-04-20 18:15*
+*Written: 2026-04-21 07:30*
 
 ## Current Task
-Production e2e rewrite is COMPLETE and merged to main. No active task.
+Persistent Session Tab — writing implementation plan (upp:writing-plans skill invoked, plan not yet written).
 
 ## Progress
-- [x] Phase 0: Daemon fix (extension_health routing + result unwrapping)
-- [x] Phase 1: Extension engine smoke test gate (5/5 pass)
-- [x] Phase 2: Test infrastructure (globalSetup, wake probe, engine assertion, vitest config, report collector)
-- [x] Phase 3a: Core architecture files (engine-selection, extension-engine, security-pipeline)
-- [x] Phase 3b: All remaining 14 e2e files rewritten
-- [x] Degradation test (4 scenarios: kill-switch, circuit breaker, extension-unavailable, disconnect)
-- [x] Documentation (ARCHITECTURE.md, CLAUDE.md corrected)
-- [x] Security fixes: TabOwnership wired (registerTab after safari_new_tab), DomainPolicy enforced (blocked domains throw)
-- [x] Storage bus IPC: debug logging removed, production-ready
-- [x] Three adversarial audits completed, findings addressed
-- [x] Code review passed, squash-merged to main, pushed to origin
-- [ ] Extension .app rebuild (source changes to background.js/content-isolated.js not yet in the binary)
-- [ ] GitHub Release (daemon binary + extension .app)
+- [x] Tab Ownership by Identity — plan v1.1 executed (10 tasks, all code committed on `feat/tab-ownership-by-identity`)
+- [x] Telemetry system — spec + plan + execution complete (15 trace points, trace.ndjson + daemon-trace.ndjson, EXECUTION-FLOWS.md)
+- [x] Version sync fix — manifest.json now synced from package.json by build-extension.sh (was causing Safari to serve stale cached code)
+- [x] Alarm fix — clear-then-create + verify on boot (alarm IS working, telemetry reporting was broken)
+- [x] Persistent Session Tab — spec written and committed (`docs/upp/specs/2026-04-21-persistent-session-tab-design.md`)
+- [ ] Persistent Session Tab — implementation plan (writing-plans skill loaded, ready to write)
+- [ ] Persistent Session Tab — execution
+- [ ] Tab Ownership by Identity — domainMatches cross-domain issue (safari_click → iana.org fails deferred path). Known bug, separate from session tab work.
+- [ ] Update canonical docs (ARCHITECTURE.md, TRACES.md, CLAUDE.md) after all work complete
 
 ## Key Decisions (not yet persisted)
-- Storage bus `{ok, value}` wrapper is unwrapped in daemon's `handleResult` (not in background.js) — keeps the storage format self-describing while the daemon delivers only the inner value to callers
-- TabOwnership uses synthetic tabIds (windowId * 1000 + ownedCount+1) since AppleScript doesn't return real tab indices
-- DomainPolicy: only EXPLICIT blocked list throws; sensitive patterns (banking) just throttle (30 req/min)
-- IDPI Scanner is advisory-only (adds metadata, never blocks tool execution)
-- `handleExecuteInMain` in background.js is dead code (legacy from pre-storage-bus era) — preserved but unreachable
+1. **Alarm is working** — the stale `lastAlarmFireTimestamp` was a telemetry bug (background.js never sends "alarm_fire" extension_log). Daemon log proves alarm fires on a 60s cycle.
+2. **Extension version: Safari uses manifest.json "version"** — not Info.plist CFBundleShortVersionString. build-extension.sh now syncs both. Memory saved.
+3. **Persistent session tab architecture** — daemon serves `/session` (dashboard) + `/status` (fast check). Content script keepalive on session page. Server bootstrap with 10s bounded wait. Alarm stays as backup.
+4. **Session tab visible** to agent with `type: 'session'` marker. Shared across multiple MCP sessions.
+5. **Self-healing** — if user closes session tab, next tool call reopens it.
+6. **Current version:** 0.1.8 (package.json, manifest.json, Info.plist all synced)
 
 ## Next Steps
-1. Rebuild extension: `bash scripts/build-extension.sh` (picks up debug cleanup + storage bus from source)
-2. Verify extension works in Safari after rebuild
-3. Tag release + push to GitHub Releases + npm publish
-4. Consider roadmap items from audits: per-engine circuit breaker wiring, audit log disk persistence, IDPI scanner threshold tuning
+1. Write implementation plan for persistent session tab (`docs/upp/plans/2026-04-21-persistent-session-tab.md`)
+2. Execute the plan using `upp:executing-plans` (subagent mode)
+3. After execution: bump version to 0.1.9, rebuild daemon + extension
+4. Test full production pipeline: session tab opens → extension stays alive → extension engine selected → _meta flows → tab ownership works
+5. Update ARCHITECTURE.md, TRACES.md, EXECUTION-FLOWS.md with session tab docs
 
 ## Context
-- Branch: main (at 744a75c)
-- Feature branch deleted: fix/e2e-test-tab-ownership
-- Daemon already rebuilt with latest fixes (version 20260420120543)
-- Extension binary in `bin/Safari Pilot.app` is STALE (has old debug logging, old IPC without storage bus fixes)
-- 1428 unit tests pass, 91 e2e tests pass (19 files)
-- safari-extension-learnings.md at ~/Claude Projects/ documents the IPC race conditions discovered
+- **Branch:** `feat/telemetry` (branched from `feat/tab-ownership-by-identity` which branched from `main`)
+- **Commit stack:** main → tab-ownership (10 commits) → telemetry (11 commits) → version fix → alarm fix → session tab spec
+- **Current HEAD:** `9dc0988` (session tab spec commit)
+- **Key file states:**
+  - `src/server.ts` — has 8 trace points, tab-ownership-by-identity pipeline reorder, needs `ensureExtensionReady()` added
+  - `daemon/Sources/SafariPilotdCore/ExtensionHTTPServer.swift` — needs `/session` and `/status` routes
+  - `extension/content-isolated.js` — needs keepalive ping for session page URL
+  - `extension/background.js` — needs `keepalive` handler + `alarm_fire` log emission
+- **Spec location:** `docs/upp/specs/2026-04-21-persistent-session-tab-design.md`
+- **E2E test status:** Extension-dependent tests fail due to tab-ownership cross-domain issue (separate bug). MCP handshake tests pass. Telemetry traces confirmed working.
+- **Extension status:** v0.1.8, alarm working (60s cycle), tabs.onCreated wakes it, `isAvailable()` returns false during ~15s dead window between cycles
