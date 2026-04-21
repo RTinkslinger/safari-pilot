@@ -63,9 +63,9 @@ describe('Extension background.js — event-page form', () => {
     expect(BG).toMatch(/handleReconcileResponse/);
   });
 
-  it('line count within <=510 target (storage bus IPC + tab cache + trace)', () => {
+  it('line count within <=530 target (storage bus IPC + tab cache + trace + keepalive)', () => {
     const lines = BG.split('\n').length;
-    expect(lines).toBeLessThanOrEqual(510);
+    expect(lines).toBeLessThanOrEqual(530);
   });
 
   it('uses HTTP fetch for daemon communication (commit 2)', () => {

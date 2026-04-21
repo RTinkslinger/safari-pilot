@@ -159,6 +159,8 @@ export class SafariPilotServer {
   private clickContexts: Map<string, ClickContext> = new Map();
   private clickContextTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
   private _nextTabIndex = 1;
+  private _sessionTabOpened = false;
+  private readonly sessionTabUrl = 'http://127.0.0.1:19475/session';
 
   constructor(config?: SafariPilotConfig) {
     this.config = config ?? DEFAULT_CONFIG;
@@ -527,6 +529,19 @@ export class SafariPilotServer {
       degraded: false,
     });
 
+    // 7a.5: Ensure extension is ready (opens session tab if needed)
+    if (selectedEngineName === 'extension') {
+      const ready = await this.ensureExtensionReady(traceId);
+      if (!ready) {
+        selectedEngineName = 'daemon' as Engine;
+        const fallbackEngine = this.engines.get('daemon') || this._engine!;
+        if (this.engineProxy) {
+          this.engineProxy.setDelegate(fallbackEngine);
+        }
+        trace(traceId, 'server', 'engine_selected', { engine: 'daemon', degraded: true });
+      }
+    }
+
     // 7c. Reset engine meta to prevent stale reads from previous tool calls
     if (this.engineProxy) {
       this.engineProxy.resetMeta();
@@ -837,6 +852,67 @@ export class SafariPilotServer {
 
   getDaemonEngine(): DaemonEngine | null {
     return (this.engines.get('daemon') as DaemonEngine) ?? null;
+  }
+
+  /**
+   * Fast connectivity check via daemon's /status HTTP endpoint.
+   * Bypasses the NDJSON command channel — direct HTTP for sub-second response.
+   */
+  private async checkExtensionStatus(): Promise<{ ext: boolean; mcp: boolean; sessionTab: boolean; lastPingAge: number | null }> {
+    try {
+      const resp = await fetch('http://127.0.0.1:19475/status', { signal: AbortSignal.timeout(5000) });
+      if (!resp.ok) return { ext: false, mcp: false, sessionTab: false, lastPingAge: null };
+      return await resp.json();
+    } catch {
+      return { ext: false, mcp: false, sessionTab: false, lastPingAge: null };
+    }
+  }
+
+  /**
+   * Ensure the extension is connected before dispatching an extension-engine call.
+   * Opens the session tab if needed and waits up to 10s for connection.
+   * Returns true if extension is ready, false if caller should fall back to daemon.
+   */
+  private async ensureExtensionReady(traceId: string): Promise<boolean> {
+    trace(traceId, 'server', 'extension_bootstrap_start', { alreadyConnected: false });
+
+    const status = await this.checkExtensionStatus();
+    if (status.ext) {
+      trace(traceId, 'server', 'extension_bootstrap_result', { outcome: 'already_connected', waitMs: 0 });
+      return true;
+    }
+
+    // Open session tab if not already open
+    if (!status.sessionTab && !this._sessionTabOpened) {
+      try {
+        const { execSync } = await import('node:child_process');
+        execSync(
+          `osascript -e 'tell application "Safari" to make new document with properties {URL:"${this.sessionTabUrl}"}'`,
+          { timeout: 5000 },
+        );
+        this._sessionTabOpened = true;
+      } catch { /* AppleScript failed — proceed with wait anyway */ }
+    }
+
+    // Poll /status every 1s for up to 10s
+    const start = Date.now();
+    for (let i = 0; i < 10; i++) {
+      await new Promise(r => setTimeout(r, 1000));
+      const check = await this.checkExtensionStatus();
+      if (check.ext) {
+        trace(traceId, 'server', 'extension_bootstrap_result', {
+          outcome: 'tab_opened_connected',
+          waitMs: Date.now() - start,
+        });
+        return true;
+      }
+    }
+
+    trace(traceId, 'server', 'extension_bootstrap_result', {
+      outcome: 'timeout_fallback',
+      waitMs: Date.now() - start,
+    }, 'error');
+    return false;
   }
 
   getToolDefinition(name: string): ToolDefinition | undefined {
