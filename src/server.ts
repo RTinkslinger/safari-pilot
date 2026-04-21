@@ -887,7 +887,7 @@ export class SafariPilotServer {
       try {
         const { execSync } = await import('node:child_process');
         execSync(
-          `osascript -e 'tell application "Safari" to make new document with properties {URL:"${this.sessionTabUrl}"}'`,
+          `osascript -e 'tell application "Safari" to tell front window to set current tab to (make new tab with properties {URL:"${this.sessionTabUrl}"})'`,
           { timeout: 5000 },
         );
         this._sessionTabOpened = true;
