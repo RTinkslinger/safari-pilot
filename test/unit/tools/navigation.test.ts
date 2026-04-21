@@ -211,7 +211,7 @@ describe('safari_new_tab', () => {
     const handler = tools.getHandler('safari_new_tab');
     await handler({});
 
-    expect(engine.buildNewTabScript).toHaveBeenCalledWith('about:blank', false);
+    expect(engine.buildNewTabScript).toHaveBeenCalledWith('about:blank', false, undefined);
   });
 });
 

@@ -160,6 +160,7 @@ export class SafariPilotServer {
   private clickContextTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
   private _nextTabIndex = 1;
   private _sessionTabOpened = false;
+  private _sessionWindowId: number | undefined;
   private readonly sessionTabUrl = 'http://127.0.0.1:19475/session';
 
   constructor(config?: SafariPilotConfig) {
@@ -638,6 +639,11 @@ export class SafariPilotServer {
       tabUrl: ((params['tabUrl'] ?? '') as string),
     });
 
+    // 8. Inject session window ID for safari_new_tab so tabs open in the session window
+    if (name === 'safari_new_tab' && this._sessionWindowId !== undefined) {
+      params['_sessionWindowId'] = this._sessionWindowId;
+    }
+
     // 8. Execute the tool, record circuit breaker outcome, and audit
     try {
       const result = await this.callTool(name, params);
@@ -905,14 +911,22 @@ export class SafariPilotServer {
       return true;
     }
 
-    // Open session tab if not already open
+    // Open session tab in a NEW window and capture the window ID.
+    // All subsequent safari_new_tab calls will open in this window.
     if (!status.sessionTab && !this._sessionTabOpened) {
       try {
         const { execSync } = await import('node:child_process');
-        execSync(
-          `osascript -e 'tell application "Safari" to tell front window to set current tab to (make new tab with properties {URL:"${this.sessionTabUrl}"})'`,
-          { timeout: 5000 },
-        );
+        const result = execSync(
+          `osascript -e 'tell application "Safari"
+  make new document with properties {URL:"${this.sessionTabUrl}"}
+  return id of window 1
+end tell'`,
+          { timeout: 5000, encoding: 'utf-8' },
+        ).trim();
+        const windowId = parseInt(result, 10);
+        if (!isNaN(windowId)) {
+          this._sessionWindowId = windowId;
+        }
         this._sessionTabOpened = true;
       } catch { /* AppleScript failed — proceed with wait anyway */ }
     }

@@ -99,7 +99,7 @@ end tell`;
   /**
    * Build an AppleScript that opens a new tab (optionally in a private window).
    */
-  public buildNewTabScript(url: string, privateWindow: boolean = false): string {
+  public buildNewTabScript(url: string, privateWindow: boolean = false, windowId?: number): string {
     const escapedUrl = url.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
     if (privateWindow) {
       // Private windows require System Events menu click
@@ -113,8 +113,10 @@ tell application "Safari"
   set URL of current tab of front window to "${escapedUrl}"
 end tell`;
     }
+    // Target session window by ID if available, else fall back to front window
+    const windowRef = windowId ? `window id ${windowId}` : 'front window';
     return `tell application "Safari"
-  tell front window
+  tell ${windowRef}
     set _tab to make new tab with properties {URL:"${escapedUrl}"}
     set current tab to _tab
   end tell

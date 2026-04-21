@@ -233,8 +233,9 @@ export class NavigationTools {
     const start = Date.now();
     const url = (params['url'] as string | undefined) ?? 'about:blank';
     const privateWindow = params['privateWindow'] === true;
+    const sessionWindowId = typeof params['_sessionWindowId'] === 'number' ? params['_sessionWindowId'] : undefined;
 
-    const script = this.engine.buildNewTabScript(url, privateWindow);
+    const script = this.engine.buildNewTabScript(url, privateWindow, sessionWindowId);
     const result = await this.engine.execute(script);
 
     if (!result.ok) {
