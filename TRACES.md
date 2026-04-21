@@ -92,6 +92,12 @@
 **Context:** Pipeline reordered: engine selection (step 7) before ownership check (step 7d). When URL lookup fails but extension engine + domain matches → defer to post-execution. Extension result _meta.tabId verifies the tab is owned. Zero additional IPC latency — piggybacks on existing result. Fixes the 2 e2e failures in interaction-tools.test.ts caused by fail-closed ownership after safari_click navigation. 1461 unit tests pass (17 net new).
 ---
 
+### Iteration 19 - 2026-04-21
+**What:** Telemetry system (15 trace points) + persistent session tab (keepalive via content script). Eliminates 15s dead windows in extension connectivity.
+**Changes:** `src/trace.ts` (created — TS trace module), `src/engines/daemon.ts` (+traceId injection), `src/server.ts` (+8 trace points + ensureExtensionReady bootstrap), `daemon/Sources/SafariPilotdCore/Trace.swift` (created), `daemon/Sources/SafariPilotdCore/{CommandDispatcher,ExtensionBridge,ExtensionHTTPServer,HealthStore}.swift` (trace points + /status + /session + __keepalive__ + MCP tracking), `extension/background.js` (trace points + keepalive handler + alarm_fire), `extension/content-isolated.js` (session page keepalive ping), `docs/EXECUTION-FLOWS.md` (created — canonical flow map), `scripts/trace-merge.sh` + `trace-rotate.sh`, `scripts/build-extension.sh` (manifest.json version sync fix)
+**Context:** Root causes found: (1) Extension alarm WAS working but telemetry was broken (background.js never sent "alarm_fire" to daemon). (2) Safari caches extensions by manifest.json "version" not Info.plist — all rebuilds at same version were invisible. (3) Engine selector already preferred extension but isAvailable() returned false during 15s dead windows between alarm cycles. Fix: persistent session tab with 20s content script keepalive ping → extension stays alive continuously. Verified: 36/36 checks over 3 minutes, zero dead windows. Version: 0.1.9.
+---
+
 <!-- Iterations 5-6 archived to traces/archive/milestone-2.md -->
 
 <!-- Iterations 7-9 archived to traces/archive/milestone-3.md -->

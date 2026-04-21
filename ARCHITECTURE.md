@@ -1,6 +1,6 @@
 # Safari Pilot Architecture — Canonical Source of Truth
 
-*Last verified: 2026-04-21 | Branch: feat/tab-ownership-by-identity*
+*Last verified: 2026-04-21 | Branch: feat/persistent-session-tab*
 
 **This document describes how Safari Pilot ACTUALLY works as shipped. Every statement is backed by verified evidence. If code changes contradict this document, either the code is wrong or this document must be updated — never silently diverge.**
 
@@ -279,6 +279,18 @@ Dual-key registry: tabs are tracked by both positional `TabId` (windowIndex * 10
 - Keepalive: `browser.alarms` named `safari-pilot-keepalive` fires every 1 min, emits `alarm_fire` log (ingested by `HealthStore.lastAlarmFireTimestamp`) and re-runs the wake sequence.
 - Pending-command persistence uses `storage.local` key `safari_pilot_pending_commands` (status `executing` → `completed`); profile identity persisted under `safari_pilot_profile_id`.
 - **DEBUG_HARNESS force-unload hook:** A `browser.runtime.onMessage` listener responds to `{type: '__safari_pilot_test_force_unload__'}` by calling `browser.runtime.reload()` after a 50ms delay — used by e2e tests to simulate cold-wake. Gated inside `/*@DEBUG_HARNESS_BEGIN@*/ … /*@DEBUG_HARNESS_END@*/` markers; stripped from release builds by `build-extension.sh`.
+
+### Persistent Session Tab & Extension Keepalive (2026-04-21)
+
+The MCP server maintains a "session tab" at `http://127.0.0.1:19475/session` that keeps the extension alive indefinitely via content script keepalive pings.
+
+- **Bootstrap flow** (`server.ts:ensureExtensionReady()`): Before dispatching to extension engine, server calls `GET /status`. If `ext: false`, opens session tab via AppleScript, polls `/status` every 1s for 10s. Falls back to daemon on timeout.
+- **Session page** (`GET /session`): Daemon-served HTML dashboard showing extension status, MCP connection, last command, uptime. Polls `/health` every 5s.
+- **Keepalive** (`content-isolated.js`): On the session page URL, content script sends `runtime.sendMessage({type:'keepalive'})` every 20s. This resets Safari's 30s event-page kill timer. Background.js forwards via `__keepalive__` sentinel to daemon's HealthStore.
+- **Fast status check** (`GET /status`): Returns `{ext, mcp, sessionTab, lastPingAge}` — sub-second response for server bootstrap.
+- **Self-healing**: If user closes session tab, next `ensureExtensionReady()` reopens it.
+- **Alarm backup**: 1-minute alarm (`browser.alarms`) still fires as belt-and-suspenders. Wakes extension even without session tab.
+- **MCP connection tracking**: Daemon sets `mcpConnected=true` on each TCP command, clears after 30s of silence. Session page shows this as "Connected to Claude Code" / "Disconnected".
 
 ### ExtensionBridge Command Queue
 - In-memory queue (not file-based — sandbox blocks filesystem access)
