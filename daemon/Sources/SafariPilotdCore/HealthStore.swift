@@ -26,6 +26,20 @@ public final class HealthStore: @unchecked Sendable {
         queue.sync { _lastExecutedResultTimestamp }
     }
 
+    // Session-tab tracking: resets on daemon restart
+    private var _sessionTabActive: Bool = false
+    public var sessionTabActive: Bool {
+        queue.sync { _sessionTabActive }
+    }
+    private var _lastKeepalivePing: Date? = nil
+    public var lastKeepalivePing: Date? {
+        queue.sync { _lastKeepalivePing }
+    }
+    private var _mcpConnected: Bool = false
+    public var mcpConnected: Bool {
+        queue.sync { _mcpConnected }
+    }
+
     public init(persistPath: URL) {
         self.persistPath = persistPath
         self._lastAlarmFireTimestamp = Date()  // default: init = Date.now()
@@ -67,6 +81,19 @@ public final class HealthStore: @unchecked Sendable {
 
     public func markReconcile() { queue.sync { _lastReconcileTimestamp = Date() } }
     public func markExecutedResult() { queue.sync { _lastExecutedResultTimestamp = Date() } }
+
+    public func recordSessionServed() { queue.sync { _sessionTabActive = true } }
+    public func recordKeepalivePing() { queue.sync { _lastKeepalivePing = Date() } }
+    public func setMcpConnected(_ connected: Bool) { queue.sync { _mcpConnected = connected } }
+
+    /// Returns true if a keepalive ping was received within `timeout` seconds.
+    /// Returns false if no ping has ever been recorded or the last ping is stale.
+    public func isSessionAlive(timeout: TimeInterval = 60) -> Bool {
+        queue.sync {
+            guard let last = _lastKeepalivePing else { return false }
+            return Date().timeIntervalSince(last) < timeout
+        }
+    }
 
     public func recordHttpBindFailure() {
         queue.sync {

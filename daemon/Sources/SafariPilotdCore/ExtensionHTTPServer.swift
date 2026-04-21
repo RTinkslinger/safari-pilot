@@ -129,6 +129,10 @@ public final class ExtensionHTTPServer: @unchecked Sendable {
             return try await self.handleResult(request: request, context: context)
         }
 
+        router.get("status") { [self] _, _ -> HBResponse in
+            return self.handleStatus()
+        }
+
         return router
     }
 
@@ -217,6 +221,33 @@ public final class ExtensionHTTPServer: @unchecked Sendable {
         )
 
         return jsonResponse(["ok": true])
+    }
+
+    /// GET /status — fast status check for MCP server bootstrap.
+    /// Returns {ext, mcp, sessionTab, lastPingAge} with no blocking I/O.
+    private func handleStatus() -> HBResponse {
+        let extConnected = bridge.isExtensionConnected
+        let mcpConn = healthStore.mcpConnected
+        let sessionTab = healthStore.sessionTabActive
+        let lastPingAge: Any
+        if let last = healthStore.lastKeepalivePing {
+            lastPingAge = Int(Date().timeIntervalSince(last) * 1000)
+        } else {
+            lastPingAge = NSNull()
+        }
+
+        Trace.emit("status", layer: "daemon-http", event: "status_polled", data: [
+            "ext": extConnected,
+            "mcp": mcpConn,
+            "sessionTab": sessionTab,
+        ])
+
+        return jsonResponse([
+            "ext": extConnected,
+            "mcp": mcpConn,
+            "sessionTab": sessionTab,
+            "lastPingAge": lastPingAge,
+        ])
     }
 
     // MARK: - Helpers

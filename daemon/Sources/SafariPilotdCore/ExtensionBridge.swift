@@ -33,11 +33,20 @@ public final class ExtensionBridge: @unchecked Sendable {
     private var executedLog: [ExecutedEntry] = []
     private var _ipcMechanism: String = "none"
 
+    /// Optional HealthStore reference for keepalive ping recording.
+    /// Set after init via `setHealthStore(_:)` to avoid circular initialisation.
+    private weak var _keepaliveStore: HealthStore?
+
     public var isExtensionConnected: Bool {
         queue.sync { _isConnected }
     }
 
     public init() {}
+
+    /// Wire up a HealthStore so keepalive sentinels can update `lastKeepalivePing`.
+    public func setHealthStore(_ store: HealthStore) {
+        queue.sync { _keepaliveStore = store }
+    }
 
     /// Check if a command ID exists in the executed log (pruning expired entries first).
     public func isInExecutedLog(_ commandID: String) -> Bool {
@@ -252,6 +261,14 @@ public final class ExtensionBridge: @unchecked Sendable {
     }
 
     public func handleResult(commandID: String, params: [String: AnyCodable]) -> Response {
+        // Handle keepalive sentinel — update lastKeepalivePing, no continuation to resume.
+        // Must be checked BEFORE __trace__ since keepalive is the most frequent sentinel.
+        if let requestId = params["requestId"]?.value as? String, requestId == "__keepalive__" {
+            _keepaliveStore?.recordKeepalivePing()
+            Trace.emit(commandID, layer: "daemon-bridge", event: "keepalive_received", data: [:])
+            return Response.success(id: commandID, value: AnyCodable("ok"))
+        }
+
         // Handle extension trace events — route to daemon-trace.ndjson, not to a continuation
         if let requestId = params["requestId"]?.value as? String, requestId == "__trace__" {
             if let result = params["result"]?.value as? [String: Any],
