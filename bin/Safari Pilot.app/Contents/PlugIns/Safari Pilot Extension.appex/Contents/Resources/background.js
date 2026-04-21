@@ -462,6 +462,8 @@ if (!listenersAttached) {
   });
   browser.alarms.onAlarm.addListener((alarm) => {
     if (alarm.name !== KEEPALIVE_ALARM_NAME) return;
+    // Report alarm fire to daemon for health telemetry
+    emitTrace('alarm', 'alarm_fire', {});
     // Wake sequence handles connect + poll loop via HTTP IPC.
     initialize('keepalive');
   });
@@ -476,6 +478,15 @@ if (!listenersAttached) {
     }
     if (message?.type === 'ping') {
       sendResponse({ ok: true, type: 'pong', extensionVersion: EXTENSION_VERSION });
+      return false;
+    }
+    if (message?.type === 'keepalive') {
+      emitTrace('session', 'keepalive_received', {});
+      httpPost('/result', {
+        requestId: '__keepalive__',
+        result: { type: 'keepalive', ts: Date.now() }
+      }).catch(() => {});
+      sendResponse({ ok: true });
       return false;
     }
     if (message?.type === 'session_start' || message?.type === 'session_end') {

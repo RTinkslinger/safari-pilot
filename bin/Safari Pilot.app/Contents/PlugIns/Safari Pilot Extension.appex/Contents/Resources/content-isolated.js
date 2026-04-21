@@ -182,3 +182,14 @@
     return true; // Keep the message channel open for async sendResponse
   });
 })();
+
+// ── Session tab keepalive ──────────────────────────────────────────────────
+// When on the daemon's session page, ping the background every 20s to prevent
+// Safari from killing the event page. This keeps the extension alive for the
+// entire duration of the agent session.
+if (location.href.startsWith('http://127.0.0.1:19475/session')) {
+  browser.runtime.sendMessage({ type: 'keepalive' }).catch(() => {});
+  setInterval(() => {
+    browser.runtime.sendMessage({ type: 'keepalive' }).catch(() => {});
+  }, 20000);
+}

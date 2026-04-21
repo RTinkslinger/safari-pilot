@@ -1,6 +1,6 @@
 {
   "name": "safari-pilot",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "description": "Native Safari browser automation for AI agents on macOS",
   "type": "module",
   "main": "dist/index.js",
