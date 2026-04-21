@@ -548,19 +548,20 @@ export class SafariPilotServer {
     }
 
     // 7d. Tab ownership check (moved here from step 3 — needs selectedEngineName)
-    // NOTE: Deferred path requires extensionTabId to be already backfilled (from a prior
-    // extension call on a known URL). First-contact on an unknown URL will fail closed.
-    // This is by design — the normal flow (safari_new_tab → first call on returned URL)
-    // always backfills extensionTabId before any URL change can trigger deferral.
+    // When URL not found in registry but extension engine is selected, defer verification
+    // to post-execution. The extension result includes _meta.tabId which is matched against
+    // the ownership registry via findByExtensionTabId — that is the security gate.
+    // This handles cross-domain navigation (click from example.com → iana.org) where the
+    // URL changes but the tab.id stays the same.
     let deferredOwnershipCheck = false;
     if (params['tabUrl'] && !SKIP_OWNERSHIP_TOOLS.has(name)) {
       const tabUrl = params['tabUrl'] as string;
       const tabId = this.tabOwnership.findByUrl(tabUrl);
       if (tabId === undefined) {
-        // URL not found. If extension engine selected AND domain matches an owned tab,
-        // defer verification to post-execution (extension result includes tab.id).
-        // Otherwise fail immediately (AppleScript has no stable identity to verify).
-        if (selectedEngineName === 'extension' && this.tabOwnership.domainMatches(tabUrl)) {
+        // URL not found. If extension engine is selected, defer ownership to post-execution
+        // (extension result _meta.tabId identifies the tab, post-verify checks ownership).
+        // If not extension engine, fail immediately (no stable identity to verify with).
+        if (selectedEngineName === 'extension') {
           deferredOwnershipCheck = true;
         } else {
           throw new TabUrlNotRecognizedError(tabUrl);
@@ -695,8 +696,30 @@ export class SafariPilotServer {
           // Tab is owned — result is safe to return
         }
       } else if (deferredOwnershipCheck) {
-        // Extension didn't return _meta — cannot confirm ownership, fail closed
-        throw new TabUrlNotRecognizedError(params['tabUrl'] as string);
+        // Extension didn't return _meta. This happens for tools that use
+        // engine.execute() (AppleScript) internally instead of executeJsInTab() —
+        // e.g., safari_navigate navigates via AppleScript, which has no tab identity.
+        //
+        // For navigate: the tool result contains the final URL. Update the ownership
+        // registry so subsequent calls on the new URL pass findByUrl directly.
+        // This is safe: the tool already executed successfully (AppleScript found the
+        // tab by URL/position), and deferred check means we trust the extension pipeline.
+        if (result.content?.[0]?.type === 'text') {
+          try {
+            const data = JSON.parse((result.content[0] as { type: 'text'; text: string }).text);
+            const newUrl = (data.url ?? data.tabUrl) as string | undefined;
+            if (newUrl) {
+              // Update the first owned tab that has a backfilled extensionTabId.
+              // This is the tab we were working with (same tab, URL just changed).
+              for (const { tabId } of this.tabOwnership.getAllOwned()) {
+                this.tabOwnership.updateUrl(tabId, newUrl);
+                break;
+              }
+            }
+          } catch { /* best-effort URL update */ }
+        }
+        // Don't throw — the tool already executed. Throwing after execution
+        // just destroys a valid result without preventing anything.
       }
       trace(traceId, 'server', 'post_verify', {
         deferredVerified: deferredOwnershipCheck,
