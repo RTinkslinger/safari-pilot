@@ -265,6 +265,10 @@ public final class ExtensionBridge: @unchecked Sendable {
         // Must be checked BEFORE __trace__ since keepalive is the most frequent sentinel.
         if let requestId = params["requestId"]?.value as? String, requestId == "__keepalive__" {
             _keepaliveStore?.recordKeepalivePing()
+            // Mark extension connected — keepalive proves the extension is alive.
+            // Without this, isConnected goes stale between keepalive pings
+            // (disconnect timeout 15s < keepalive interval 20s).
+            _ = handleConnected(commandID: commandID)
             Trace.emit(commandID, layer: "daemon-bridge", event: "keepalive_received", data: [:])
             return Response.success(id: commandID, value: AnyCodable("ok"))
         }
