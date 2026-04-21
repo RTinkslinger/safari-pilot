@@ -496,6 +496,7 @@ public final class ExtensionBridge: @unchecked Sendable {
 
         return [
             "isConnected": connected,
+            "mcpConnected": store.mcpConnected,
             "lastAlarmFireTimestamp": alarmMs,
             "lastReconcileTimestamp": reconcileMs,
             "lastExecutedResultTimestamp": execResultMs,

@@ -133,6 +133,10 @@ public final class ExtensionHTTPServer: @unchecked Sendable {
             return self.handleStatus()
         }
 
+        router.get("session") { [self] _, _ -> HBResponse in
+            return self.handleSession()
+        }
+
         return router
     }
 
@@ -249,6 +253,155 @@ public final class ExtensionHTTPServer: @unchecked Sendable {
             "lastPingAge": lastPingAge,
         ])
     }
+
+    /// GET /session — serves the user-facing session dashboard page.
+    /// Records session served in HealthStore and emits a trace event.
+    private func handleSession() -> HBResponse {
+        healthStore.recordSessionServed()
+
+        Trace.emit("session", layer: "daemon-http", event: "session_page_served", data: [:])
+
+        let html = Self.sessionPageHTML
+        guard let data = html.data(using: .utf8) else {
+            healthStore.recordHttpRequestError()
+            let fallback = ByteBuffer(string: "<html><body>Error</body></html>")
+            var headers = HTTPFields()
+            headers.append(HTTPField(name: .contentType, value: "text/html; charset=utf-8"))
+            return HBResponse(status: .internalServerError, headers: headers, body: .init(byteBuffer: fallback))
+        }
+        let buffer = ByteBuffer(data: data)
+        var headers = HTTPFields()
+        headers.append(HTTPField(name: .contentType, value: "text/html; charset=utf-8"))
+        headers.append(HTTPField(name: .contentLength, value: String(data.count)))
+        return HBResponse(status: .ok, headers: headers, body: .init(byteBuffer: buffer))
+    }
+
+    private static let sessionPageHTML: String = """
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>Safari Pilot — Active Session</title>
+      <style>
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+          background: #1a1a1a;
+          color: #e0e0e0;
+          font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+          font-size: 14px;
+          line-height: 1.5;
+          padding: 32px 24px;
+          max-width: 480px;
+          margin: 0 auto;
+        }
+        h1 { font-size: 18px; font-weight: 600; color: #ffffff; margin-bottom: 4px; }
+        .subtitle {
+          font-size: 12px;
+          color: #888;
+          margin-bottom: 28px;
+          line-height: 1.4;
+        }
+        .status-table { width: 100%; border-collapse: collapse; margin-bottom: 24px; }
+        .status-table tr { border-bottom: 1px solid #2a2a2a; }
+        .status-table tr:last-child { border-bottom: none; }
+        .status-table td { padding: 10px 0; vertical-align: middle; }
+        .label { color: #999; font-size: 13px; width: 50%; }
+        .value { font-size: 13px; color: #e0e0e0; text-align: right; display: flex; align-items: center; justify-content: flex-end; gap: 7px; }
+        .dot {
+          display: inline-block;
+          width: 9px;
+          height: 9px;
+          border-radius: 50%;
+          flex-shrink: 0;
+        }
+        .dot-green { background: #3fb950; box-shadow: 0 0 5px #3fb95066; }
+        .dot-red   { background: #f85149; box-shadow: 0 0 5px #f8514966; }
+        .dot-gray  { background: #555; }
+        footer {
+          font-size: 11px;
+          color: #666;
+          border-top: 1px solid #2a2a2a;
+          padding-top: 16px;
+          margin-top: 4px;
+        }
+      </style>
+    </head>
+    <body>
+      <h1>Safari Pilot — Active Session</h1>
+      <p class="subtitle">This tab keeps Safari Pilot connected. Do not close it while automation is running.</p>
+
+      <table class="status-table">
+        <tr>
+          <td class="label">Extension</td>
+          <td class="value" id="ext-status"><span class="dot dot-gray"></span>—</td>
+        </tr>
+        <tr>
+          <td class="label">Claude Code</td>
+          <td class="value" id="mcp-status"><span class="dot dot-gray"></span>—</td>
+        </tr>
+        <tr>
+          <td class="label">Last Command</td>
+          <td class="value" id="last-cmd">—</td>
+        </tr>
+        <tr>
+          <td class="label">Uptime</td>
+          <td class="value" id="uptime">—</td>
+        </tr>
+      </table>
+
+      <footer>Closing this tab may interrupt Safari Pilot automation.</footer>
+
+      <script>
+        const startTime = Date.now();
+
+        function fmt(ms) {
+          if (ms == null) return '—';
+          const ago = Math.floor((Date.now() - ms) / 1000);
+          if (ago < 60) return ago + 's ago';
+          const m = Math.floor(ago / 60), s = ago % 60;
+          return m + 'm ' + s + 's ago';
+        }
+
+        function uptime() {
+          const s = Math.floor((Date.now() - startTime) / 1000);
+          const m = Math.floor(s / 60), ss = s % 60;
+          return m + ':' + String(ss).padStart(2, '0');
+        }
+
+        function dot(connected) {
+          const cls = connected ? 'dot-green' : 'dot-red';
+          const label = connected ? 'Connected' : 'Disconnected';
+          return '<span class="dot ' + cls + '"></span>' + label;
+        }
+
+        async function poll() {
+          try {
+            const r = await fetch('/health');
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            const d = await r.json();
+
+            document.getElementById('ext-status').innerHTML = dot(!!d.isConnected);
+            document.getElementById('mcp-status').innerHTML = dot(!!d.mcpConnected);
+
+            const lastMs = d.lastExecutedResultTimestamp;
+            document.getElementById('last-cmd').textContent =
+              (lastMs && lastMs > 0) ? fmt(lastMs) : '—';
+          } catch (e) {
+            // silently ignore fetch errors — daemon may be restarting
+          }
+          document.getElementById('uptime').textContent = uptime();
+        }
+
+        poll();
+        setInterval(poll, 5000);
+        setInterval(() => {
+          document.getElementById('uptime').textContent = uptime();
+        }, 1000);
+      </script>
+    </body>
+    </html>
+    """
 
     // MARK: - Helpers
 
