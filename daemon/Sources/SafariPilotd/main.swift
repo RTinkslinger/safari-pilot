@@ -165,6 +165,9 @@ let dispatcher = CommandDispatcher(
     extensionBridge: ExtensionBridge(),
     healthStore: healthStore
 )
+// Wire HealthStore into the extension bridge so keepalive sentinels can
+// update lastKeepalivePing. Must be called after dispatcher is created.
+dispatcher.extensionBridge.setHealthStore(healthStore)
 
 // 7. Extension socket server — listens on TCP localhost for connections from the
 //    Safari extension handler (which proxies native messages from background.js).

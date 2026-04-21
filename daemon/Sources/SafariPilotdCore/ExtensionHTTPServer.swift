@@ -419,6 +419,8 @@ public final class ExtensionHTTPServer: @unchecked Sendable {
             Logger.info("ExtensionHTTPServer: no request in \(Int(elapsed))s — marking disconnected")
             _ = bridge.handleDisconnected(commandID: "http-disconnect-timeout")
         }
+        // Check MCP connection heartbeat — clears mcpConnected if no TCP command in 30s.
+        healthStore.checkMcpConnection()
     }
 
     /// Serialize a dictionary to a JSON HTTP response with application/json content type.

@@ -86,6 +86,28 @@ public final class HealthStore: @unchecked Sendable {
     public func recordKeepalivePing() { queue.sync { _lastKeepalivePing = Date() } }
     public func setMcpConnected(_ connected: Bool) { queue.sync { _mcpConnected = connected } }
 
+    // MARK: - MCP connection heartbeat
+
+    private var _lastTcpCommandTimestamp: Date? = nil
+
+    /// Called on every inbound TCP command. Marks MCP as connected.
+    public func recordTcpCommand() {
+        queue.sync {
+            _lastTcpCommandTimestamp = Date()
+            _mcpConnected = true
+        }
+    }
+
+    /// Called periodically (e.g. every 10s from the disconnect-detection task).
+    /// Clears `mcpConnected` if no TCP command has been received within `timeout` seconds.
+    public func checkMcpConnection(timeout: TimeInterval = 30) {
+        queue.sync {
+            if let last = _lastTcpCommandTimestamp, Date().timeIntervalSince(last) > timeout {
+                _mcpConnected = false
+            }
+        }
+    }
+
     /// Returns true if a keepalive ping was received within `timeout` seconds.
     /// Returns false if no ping has ever been recorded or the last ping is stale.
     public func isSessionAlive(timeout: TimeInterval = 60) -> Bool {

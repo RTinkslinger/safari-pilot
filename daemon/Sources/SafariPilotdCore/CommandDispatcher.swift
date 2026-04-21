@@ -93,6 +93,9 @@ public final class CommandDispatcher: @unchecked Sendable {
     // MARK: - Routing
 
     private func handle(command: Command) async -> Response {
+        // Record every inbound TCP command as a heartbeat for MCP connection tracking.
+        healthStore.recordTcpCommand()
+
         Trace.emit(command.id, layer: "daemon-dispatcher", event: "command_received", data: [
             "method": command.method,
         ])
