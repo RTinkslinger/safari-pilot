@@ -113,10 +113,23 @@ tell application "Safari"
   set URL of current tab of front window to "${escapedUrl}"
 end tell`;
     }
-    // Target session window by ID if available, else fall back to front window
-    const windowRef = windowId ? `window id ${windowId}` : 'front window';
+    // Target session window by ID if available. If the window was closed,
+    // AppleScript throws — the caller (handleNewTab) recovers by opening a new window.
+    if (windowId) {
+      return `tell application "Safari"
+  try
+    tell window id ${windowId}
+      set _tab to make new tab with properties {URL:"${escapedUrl}"}
+      set current tab to _tab
+    end tell
+  on error
+    -- Window was closed. Signal failure so the server can open a new one.
+    error "WINDOW_CLOSED"
+  end try
+end tell`;
+    }
     return `tell application "Safari"
-  tell ${windowRef}
+  tell front window
     set _tab to make new tab with properties {URL:"${escapedUrl}"}
     set current tab to _tab
   end tell

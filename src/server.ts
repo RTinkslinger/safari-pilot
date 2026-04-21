@@ -667,6 +667,21 @@ export class SafariPilotServer {
             );
             this.tabOwnership.registerTab(syntheticId, tabData.tabUrl);
           }
+          // If the session window was closed (WINDOW_CLOSED recovery happened in handler),
+          // the new tab opened in front window. Capture that window's ID as the new session window.
+          if (this._sessionWindowId !== undefined && !tabData.windowId) {
+            try {
+              const { execSync } = await import('node:child_process');
+              const winId = execSync(
+                `osascript -e 'tell application "Safari" to return id of front window'`,
+                { timeout: 3000, encoding: 'utf-8' },
+              ).trim();
+              const parsed = parseInt(winId, 10);
+              if (!isNaN(parsed)) {
+                this._sessionWindowId = parsed;
+              }
+            } catch { /* best effort */ }
+          }
         } catch { /* tab registration is best-effort — don't fail the tool call */ }
       }
 
@@ -912,8 +927,9 @@ export class SafariPilotServer {
     }
 
     // Open session tab in a NEW window and capture the window ID.
-    // All subsequent safari_new_tab calls will open in this window.
-    if (!status.sessionTab && !this._sessionTabOpened) {
+    // Each MCP session gets its own window — even if another session already has one.
+    // This ensures separate CC sessions don't share windows.
+    if (!this._sessionTabOpened) {
       try {
         const { execSync } = await import('node:child_process');
         const result = execSync(

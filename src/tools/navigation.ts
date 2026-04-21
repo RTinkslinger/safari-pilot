@@ -235,8 +235,15 @@ export class NavigationTools {
     const privateWindow = params['privateWindow'] === true;
     const sessionWindowId = typeof params['_sessionWindowId'] === 'number' ? params['_sessionWindowId'] : undefined;
 
-    const script = this.engine.buildNewTabScript(url, privateWindow, sessionWindowId);
-    const result = await this.engine.execute(script);
+    let script = this.engine.buildNewTabScript(url, privateWindow, sessionWindowId);
+    let result = await this.engine.execute(script);
+
+    // If the session window was closed, retry without windowId (opens in front window).
+    // The server will detect the missing windowId in the response and open a new session window.
+    if (!result.ok && result.error?.message?.includes('WINDOW_CLOSED')) {
+      script = this.engine.buildNewTabScript(url, privateWindow);
+      result = await this.engine.execute(script);
+    }
 
     if (!result.ok) {
       return this.errorResponse(result.error?.message ?? 'Failed to open new tab', start);
