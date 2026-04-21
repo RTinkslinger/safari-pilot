@@ -433,6 +433,11 @@ async function initialize(reason) {
   }
   isWakeRunning = true;
   try {
+    // Verify keepalive alarm exists — recreate if cleared by update/restart/bug
+    const alarms = await browser.alarms.getAll();
+    if (!alarms.some(a => a.name === KEEPALIVE_ALARM_NAME)) {
+      browser.alarms.create(KEEPALIVE_ALARM_NAME, { periodInMinutes: KEEPALIVE_PERIOD_MIN });
+    }
     await wakeSequence(reason);
     while (wakePending) {
       wakePending = false;
@@ -450,7 +455,11 @@ if (!listenersAttached) {
   browser.runtime.onStartup.addListener(() => { initialize('onStartup'); });
   browser.runtime.onInstalled.addListener(() => { initialize('onInstalled'); });
 
-  browser.alarms.create(KEEPALIVE_ALARM_NAME, { periodInMinutes: KEEPALIVE_PERIOD_MIN });
+  // Clear-then-create ensures the alarm is recreated even after extension updates
+  // (Safari may silently clear alarms during version transitions).
+  browser.alarms.clear(KEEPALIVE_ALARM_NAME).finally(() => {
+    browser.alarms.create(KEEPALIVE_ALARM_NAME, { periodInMinutes: KEEPALIVE_PERIOD_MIN });
+  });
   browser.alarms.onAlarm.addListener((alarm) => {
     if (alarm.name !== KEEPALIVE_ALARM_NAME) return;
     // Wake sequence handles connect + poll loop via HTTP IPC.
