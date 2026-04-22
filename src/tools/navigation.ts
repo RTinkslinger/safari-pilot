@@ -159,7 +159,11 @@ export class NavigationTools {
     const url = params['url'] as string;
     const timeout = typeof params['timeout'] === 'number' ? params['timeout'] : 30000;
 
-    const script = this.engine.buildNavigateScript(url);
+    // Positional targeting: server injects _windowId/_tabIndex from ownership registry
+    const windowId = typeof params['_windowId'] === 'number' ? params['_windowId'] : undefined;
+    const tabIndex = typeof params['_tabIndex'] === 'number' ? params['_tabIndex'] : undefined;
+
+    const script = this.engine.buildNavigateScript(url, windowId, tabIndex);
     const navResult = await this.engine.execute(script, timeout);
 
     if (!navResult.ok) {
@@ -250,21 +254,23 @@ export class NavigationTools {
     }
 
     // The engine result value contains the URL of the newly created tab.
-    // Parse "tabUrl|||windowId" if present, otherwise use the target url.
+    // Parse "tabUrl|||windowId|||tabIndex" — positional identity for subsequent operations.
     const raw = result.value ?? '';
     let tabUrl = url;
     let windowId: number | undefined;
+    let tabIndex: number | undefined;
 
     if (raw.includes('|||')) {
       const parts = raw.split('|||');
       tabUrl = parts[0]?.trim() ?? url;
       windowId = parts[1] ? parseInt(parts[1].trim(), 10) : undefined;
+      tabIndex = parts[2] ? parseInt(parts[2].trim(), 10) : undefined;
     } else if (raw.length > 0 && raw !== 'missing value') {
       tabUrl = raw.trim();
     }
 
     return {
-      content: [{ type: 'text', text: JSON.stringify({ tabUrl, windowId }) }],
+      content: [{ type: 'text', text: JSON.stringify({ tabUrl, windowId, tabIndex }) }],
       metadata: { engine: 'applescript', degraded: false, latencyMs: Date.now() - start },
     };
   }

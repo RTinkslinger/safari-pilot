@@ -10,6 +10,8 @@ import { TabNotOwnedError } from '../errors.js';
 interface OwnedTab {
   currentUrl: string;
   extensionTabId: number | null; // null until first extension-engine call backfills it
+  windowId: number | null;       // Safari window id — stable positional identity
+  tabIndex: number | null;       // 1-based position within the window
 }
 
 export class TabOwnership {
@@ -41,11 +43,18 @@ export class TabOwnership {
   /**
    * Register a tab as agent-opened. Call this immediately after safari_new_tab.
    * extensionTabId is null initially — backfilled on first extension-engine call.
+   * windowId + tabIndex provide positional identity for AppleScript targeting.
    */
-  registerTab(tabId: TabId, url: string, extensionTabId?: number): void {
+  registerTab(tabId: TabId, url: string, opts?: {
+    extensionTabId?: number;
+    windowId?: number;
+    tabIndex?: number;
+  }): void {
     this.ownedTabs.set(tabId, {
       currentUrl: url,
-      extensionTabId: extensionTabId ?? null,
+      extensionTabId: opts?.extensionTabId ?? null,
+      windowId: opts?.windowId ?? null,
+      tabIndex: opts?.tabIndex ?? null,
     });
   }
 
@@ -90,6 +99,18 @@ export class TabOwnership {
 
   getUrl(tabId: TabId): string | undefined {
     return this.ownedTabs.get(tabId)?.currentUrl;
+  }
+
+  /**
+   * Get positional identity for AppleScript targeting.
+   * Returns null if the tab isn't owned or identity wasn't captured.
+   */
+  getPosition(tabId: TabId): { windowId: number; tabIndex: number } | null {
+    const entry = this.ownedTabs.get(tabId);
+    if (entry?.windowId != null && entry?.tabIndex != null) {
+      return { windowId: entry.windowId, tabIndex: entry.tabIndex };
+    }
+    return null;
   }
 
   /**

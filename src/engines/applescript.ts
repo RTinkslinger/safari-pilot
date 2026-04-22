@@ -85,8 +85,18 @@ end tell`;
   /**
    * Build an AppleScript that navigates to a URL (opens new document if needed).
    */
-  public buildNavigateScript(url: string): string {
+  public buildNavigateScript(url: string, windowId?: number, tabIndex?: number): string {
     const escapedUrl = url.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+    // Positional targeting: address the exact tab by window id + tab position.
+    // This prevents navigating the wrong tab (e.g., session tab, user tab,
+    // or a second tab with the same URL).
+    if (windowId && tabIndex) {
+      return `tell application "Safari"
+  tell window id ${windowId}
+    set URL of tab ${tabIndex} to "${escapedUrl}"
+  end tell
+end tell`;
+    }
     return `tell application "Safari"
   if (count of windows) is 0 then
     make new document with properties {URL:"${escapedUrl}"}
@@ -115,12 +125,21 @@ end tell`;
     }
     // Target session window by ID if available. If the window was closed,
     // AppleScript throws — the caller (handleNewTab) recovers by opening a new window.
+    // Returns "tabUrl|||windowId|||tabIndex" so the server can store positional identity.
     if (windowId) {
       return `tell application "Safari"
   try
     tell window id ${windowId}
       set _tab to make new tab with properties {URL:"${escapedUrl}"}
       set current tab to _tab
+      set _idx to 0
+      repeat with i from 1 to count of tabs
+        if tab i is _tab then
+          set _idx to i
+          exit repeat
+        end if
+      end repeat
+      return (URL of _tab) & "|||" & ${windowId} & "|||" & _idx
     end tell
   on error
     -- Window was closed. Signal failure so the server can open a new one.
@@ -132,6 +151,15 @@ end tell`;
   tell front window
     set _tab to make new tab with properties {URL:"${escapedUrl}"}
     set current tab to _tab
+    set _winId to id
+    set _idx to 0
+    repeat with i from 1 to count of tabs
+      if tab i is _tab then
+        set _idx to i
+        exit repeat
+      end if
+    end repeat
+    return (URL of _tab) & "|||" & _winId & "|||" & _idx
   end tell
 end tell`;
   }
@@ -181,6 +209,33 @@ end tell`;
     const result = await this.execute(script, timeout);
 
     // Parse the JSON wrapper from wrapJavaScript
+    if (result.ok && result.value) {
+      const parsed = this.parseJsResult(result.value);
+      return { ...parsed, elapsed_ms: result.elapsed_ms };
+    }
+    return result;
+  }
+
+  /**
+   * Execute JavaScript in a tab identified by position (window id + tab index).
+   * Bypasses URL iteration — directly targets `tab N of window id M`.
+   * Used by EngineProxy when positional identity is available.
+   */
+  public async executeJsInTabByPosition(
+    windowId: number,
+    tabIndex: number,
+    jsCode: string,
+    timeout?: number,
+  ): Promise<EngineResult> {
+    const wrapped = this.wrapJavaScript(jsCode);
+    const escapedJs = wrapped.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+    const script = `tell application "Safari"
+  tell window id ${windowId}
+    set _result to do JavaScript "${escapedJs}" in tab ${tabIndex}
+    return _result
+  end tell
+end tell`;
+    const result = await this.execute(script, timeout);
     if (result.ok && result.value) {
       const parsed = this.parseJsResult(result.value);
       return { ...parsed, elapsed_ms: result.elapsed_ms };
