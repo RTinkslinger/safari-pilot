@@ -26,6 +26,7 @@ export const ERROR_CODES = {
   CIRCUIT_BREAKER_OPEN: 'CIRCUIT_BREAKER_OPEN',
   INTERNAL_ERROR: 'INTERNAL_ERROR',
   EXTENSION_UNCERTAIN: 'EXTENSION_UNCERTAIN',
+  SESSION_RECOVERY_FAILED: 'SESSION_RECOVERY_FAILED',
 } as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES];
@@ -308,6 +309,26 @@ export class ExtensionUncertainError extends SafariPilotError {
         : "Retry is the caller's decision — side effects may or may not have occurred",
       'Non-idempotent tools are never auto-retried on EXTENSION_UNCERTAIN',
       `Disconnect phase: ${uncertainResult.disconnectPhase}`,
+    ];
+  }
+}
+
+export class SessionRecoveryError extends SafariPilotError {
+  readonly code = ERROR_CODES.SESSION_RECOVERY_FAILED as ErrorCode;
+  readonly retryable = true;
+  readonly hints: string[];
+
+  constructor(details: { daemon: boolean; extension: boolean; window: boolean; durationMs: number }) {
+    const down: string[] = [];
+    if (!details.daemon) down.push('daemon not running');
+    if (!details.extension) down.push('extension not connected');
+    if (!details.window) down.push('session window closed');
+    super(`Session recovery failed after ${details.durationMs}ms: ${down.join(', ')}`);
+    this.name = 'SessionRecoveryError';
+    this.hints = [
+      'Check Safari is running',
+      'Check extension is enabled in Safari > Settings > Extensions',
+      'Try restarting the daemon: launchctl kickstart -k gui/$(id -u)/com.anthropic.safari-pilot',
     ];
   }
 }
