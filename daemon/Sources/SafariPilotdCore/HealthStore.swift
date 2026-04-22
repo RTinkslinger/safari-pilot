@@ -40,6 +40,15 @@ public final class HealthStore: @unchecked Sendable {
         queue.sync { _mcpConnected }
     }
 
+    // Session registry: tracks active MCP sessions
+    private var _activeSessions: [(sessionId: String, lastSeen: Date)] = []
+    public var activeSessionCount: Int {
+        queue.sync {
+            pruneStaleSessionsLocked()
+            return _activeSessions.count
+        }
+    }
+
     public init(persistPath: URL) {
         self.persistPath = persistPath
         self._lastAlarmFireTimestamp = Date()  // default: init = Date.now()
@@ -126,6 +135,35 @@ public final class HealthStore: @unchecked Sendable {
 
     public func recordHttpRequestError() {
         queue.sync { httpRequestErrorTimestamps.append(Date()) }
+    }
+
+    // MARK: - Session registry
+
+    /// Register an MCP session. If sessionId already exists, update lastSeen.
+    public func registerSession(_ sessionId: String) {
+        queue.sync {
+            if let idx = _activeSessions.firstIndex(where: { $0.sessionId == sessionId }) {
+                _activeSessions[idx].lastSeen = Date()
+            } else {
+                _activeSessions.append((sessionId: sessionId, lastSeen: Date()))
+            }
+            Logger.info("Session registered: \(sessionId) (total: \(_activeSessions.count))")
+        }
+    }
+
+    /// Update lastSeen for a session (called on each /status check as implicit heartbeat).
+    public func touchSession(_ sessionId: String) {
+        queue.sync {
+            if let idx = _activeSessions.firstIndex(where: { $0.sessionId == sessionId }) {
+                _activeSessions[idx].lastSeen = Date()
+            }
+        }
+    }
+
+    /// Remove sessions not seen in 60s.
+    private func pruneStaleSessionsLocked() {
+        let cutoff = Date(timeIntervalSinceNow: -60)
+        _activeSessions.removeAll(where: { $0.lastSeen < cutoff })
     }
 
     private func countInWindow(_ ts: [Date], seconds: TimeInterval) -> Int {
