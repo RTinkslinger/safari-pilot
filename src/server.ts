@@ -161,7 +161,18 @@ export class SafariPilotServer {
   private _nextTabIndex = 1;
   private _sessionTabOpened = false;
   private _sessionWindowId: number | undefined;
-  private readonly sessionTabUrl = 'http://127.0.0.1:19475/session';
+  private _extensionBootstrapAttempted = false;
+  private _initMeta: {
+    sessionId: string;
+    windowId: number | null;
+    existingSessions: number;
+    systems: { daemon: boolean; extension: boolean; sessionTab: boolean };
+    initDurationMs: number;
+  } | undefined;
+
+  private get sessionTabUrl(): string {
+    return `http://127.0.0.1:19475/session?id=${this.sessionId}`;
+  }
 
   constructor(config?: SafariPilotConfig) {
     this.config = config ?? DEFAULT_CONFIG;
@@ -203,10 +214,11 @@ export class SafariPilotServer {
     if (daemonAvailable) {
       this.engines.set('daemon', daemonEngine);
       const extensionEngine = new ExtensionEngine(daemonEngine);
+      // Always register — extension routes through daemon so the instance is always
+      // valid. It may not be *connected* yet (session tab hasn't opened), but
+      // ensureExtensionReady() will bootstrap it on first tool call.
+      this.engines.set('extension', extensionEngine);
       extensionAvailable = await extensionEngine.isAvailable();
-      if (extensionAvailable) {
-        this.engines.set('extension', extensionEngine);
-      }
     } else {
       await daemonEngine.shutdown();
     }
@@ -530,19 +542,6 @@ export class SafariPilotServer {
       degraded: false,
     });
 
-    // 7a.5: Ensure extension is ready (opens session tab if needed)
-    if (selectedEngineName === 'extension') {
-      const ready = await this.ensureExtensionReady(traceId);
-      if (!ready) {
-        selectedEngineName = 'daemon' as Engine;
-        const fallbackEngine = this.engines.get('daemon') || this._engine!;
-        if (this.engineProxy) {
-          this.engineProxy.setDelegate(fallbackEngine);
-        }
-        trace(traceId, 'server', 'engine_selected', { engine: 'daemon', degraded: true });
-      }
-    }
-
     // 7c. Reset engine meta to prevent stale reads from previous tool calls
     if (this.engineProxy) {
       this.engineProxy.resetMeta();
@@ -569,6 +568,17 @@ export class SafariPilotServer {
         }
       } else {
         this.tabOwnership.assertOwnership(tabId);
+        // Inject positional identity so tool handlers can target the exact tab
+        // by window id + tab index instead of URL matching.
+        const pos = this.tabOwnership.getPosition(tabId);
+        if (pos) {
+          params['_windowId'] = pos.windowId;
+          params['_tabIndex'] = pos.tabIndex;
+          // Set on proxy so executeJsInTab uses positional targeting too
+          if (this.engineProxy) {
+            this.engineProxy.setTabPosition(pos);
+          }
+        }
       }
     }
     trace(traceId, 'server', 'ownership_check', {
@@ -644,6 +654,12 @@ export class SafariPilotServer {
       params['_sessionWindowId'] = this._sessionWindowId;
     }
 
+    // 8pre. Snapshot tabs before click — used to detect website-opened tabs after
+    let preClickTabs: Array<{ windowId: number; tabIndex: number; url: string }> | undefined;
+    if (name === 'safari_click' && this._engine) {
+      preClickTabs = await this._snapshotTabPositions();
+    }
+
     // 8. Execute the tool, record circuit breaker outcome, and audit
     try {
       const result = await this.callTool(name, params);
@@ -665,7 +681,10 @@ export class SafariPilotServer {
               tabData.windowId ?? 1,
               this._nextTabIndex++,
             );
-            this.tabOwnership.registerTab(syntheticId, tabData.tabUrl);
+            this.tabOwnership.registerTab(syntheticId, tabData.tabUrl, {
+              windowId: tabData.windowId,
+              tabIndex: tabData.tabIndex,
+            });
           }
           // If the session window was closed (WINDOW_CLOSED recovery happened in handler),
           // the new tab opened in front window. Capture that window's ID as the new session window.
@@ -781,6 +800,33 @@ export class SafariPilotServer {
         (result.metadata as Record<string, unknown>).redactionApplied = true;
       }
 
+      // 8c. Post-click tab detection — detect tabs opened by website JS (window.open,
+      // target="_blank") and auto-register them in the ownership registry. Without
+      // this, the agent can't interact with website-opened tabs.
+      if (name === 'safari_click' && preClickTabs && this._engine) {
+        try {
+          // Brief delay for window.open / target=_blank to fire
+          await new Promise(r => setTimeout(r, 500));
+          const postClickTabs = await this._snapshotTabPositions();
+          const preSet = new Set(preClickTabs.map(t => `${t.windowId}:${t.tabIndex}:${t.url}`));
+          for (const tab of postClickTabs) {
+            const key = `${tab.windowId}:${tab.tabIndex}:${tab.url}`;
+            if (!preSet.has(key) && tab.url && tab.url !== 'about:blank') {
+              const syntheticId = TabOwnership.makeTabId(tab.windowId, this._nextTabIndex++);
+              this.tabOwnership.registerTab(syntheticId, tab.url, {
+                windowId: tab.windowId,
+                tabIndex: tab.tabIndex,
+              });
+              trace(traceId, 'server', 'tab_adopted', {
+                url: tab.url,
+                windowId: tab.windowId,
+                tabIndex: tab.tabIndex,
+              });
+            }
+          }
+        } catch { /* tab detection is best-effort */ }
+      }
+
       // 9. Audit log — success path
       this.auditLog.record({
         tool: name,
@@ -857,6 +903,10 @@ export class SafariPilotServer {
     return this.sessionId;
   }
 
+  getInitMeta(): typeof this._initMeta {
+    return this._initMeta;
+  }
+
   setClickContext(ctx: ClickContext): void {
     const key = ctx.tabUrl;
     const existing = this.clickContextTimers.get(key);
@@ -866,6 +916,36 @@ export class SafariPilotServer {
       this.clickContexts.delete(key);
       this.clickContextTimers.delete(key);
     }, 60_000));
+  }
+
+  /**
+   * Snapshot all open tabs with their positional identity.
+   * Returns {windowId, tabIndex, url} for each tab across all windows.
+   * Used for before/after diff to detect website-opened tabs.
+   */
+  private async _snapshotTabPositions(): Promise<Array<{ windowId: number; tabIndex: number; url: string }>> {
+    if (!this._engine) return [];
+    const script = `tell application "Safari"
+  set _output to ""
+  repeat with _window in every window
+    set _winId to id of _window
+    repeat with i from 1 to count of tabs of _window
+      set _url to URL of tab i of _window
+      set _output to _output & _winId & "|||" & i & "|||" & _url & "\\n"
+    end repeat
+  end repeat
+  return _output
+end tell`;
+    const result = await this._engine.execute(script, 3000);
+    if (!result.ok || !result.value) return [];
+    return result.value.split('\n').filter(Boolean).map(line => {
+      const [winId, idx, ...urlParts] = line.split('|||');
+      return {
+        windowId: parseInt(winId, 10),
+        tabIndex: parseInt(idx, 10),
+        url: urlParts.join('|||'), // URL might theoretically contain |||
+      };
+    }).filter(t => !isNaN(t.windowId) && !isNaN(t.tabIndex));
   }
 
   consumeClickContext(tabUrl?: string): ClickContext | null {
@@ -902,57 +982,108 @@ export class SafariPilotServer {
    * Fast connectivity check via daemon's /status HTTP endpoint.
    * Bypasses the NDJSON command channel — direct HTTP for sub-second response.
    */
-  private async checkExtensionStatus(): Promise<{ ext: boolean; mcp: boolean; sessionTab: boolean; lastPingAge: number | null }> {
+  private async checkExtensionStatus(): Promise<{ ext: boolean; mcp: boolean; sessionTab: boolean; lastPingAge: number | null; activeSessions: number }> {
     try {
-      const resp = await fetch('http://127.0.0.1:19475/status', { signal: AbortSignal.timeout(5000) });
-      if (!resp.ok) return { ext: false, mcp: false, sessionTab: false, lastPingAge: null };
+      const resp = await fetch(`http://127.0.0.1:19475/status?sessionId=${this.sessionId}`, { signal: AbortSignal.timeout(2000) });
+      if (!resp.ok) return { ext: false, mcp: false, sessionTab: false, lastPingAge: null, activeSessions: 0 };
       return await resp.json();
     } catch {
-      return { ext: false, mcp: false, sessionTab: false, lastPingAge: null };
+      return { ext: false, mcp: false, sessionTab: false, lastPingAge: null, activeSessions: 0 };
     }
   }
 
   /**
-   * Ensure the extension is connected before dispatching an extension-engine call.
-   * Opens the session tab if needed and waits up to 10s for connection.
-   * Returns true if extension is ready, false if caller should fall back to daemon.
+   * Register this session with the daemon and get existing session count.
    */
-  private async ensureExtensionReady(traceId: string): Promise<boolean> {
-    trace(traceId, 'server', 'extension_bootstrap_start', { alreadyConnected: false });
-
-    const status = await this.checkExtensionStatus();
-    if (status.ext) {
-      trace(traceId, 'server', 'extension_bootstrap_result', { outcome: 'already_connected', waitMs: 0 });
-      return true;
+  private async registerWithDaemon(): Promise<number> {
+    try {
+      const resp = await fetch('http://127.0.0.1:19475/session/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId: this.sessionId }),
+        signal: AbortSignal.timeout(3000),
+      });
+      if (!resp.ok) return 0;
+      const data = await resp.json() as { activeSessions?: number };
+      return (data.activeSessions ?? 1) - 1; // subtract self
+    } catch {
+      return 0;
     }
+  }
 
-    // Open session tab in a NEW window and capture the window ID.
-    // Each MCP session gets its own window — even if another session already has one.
-    // This ensures separate CC sessions don't share windows.
-    if (!this._sessionTabOpened) {
-      try {
-        const { execSync } = await import('node:child_process');
-        const result = execSync(
-          `osascript -e 'tell application "Safari"
+  /**
+   * Create a dedicated Safari window for this MCP session. Runs once per
+   * session, unconditionally — even if another session already connected the
+   * extension. Every session needs its own window for tab isolation.
+   *
+   * Opens the session dashboard page (127.0.0.1:19475/session) which also
+   * keeps the extension content script alive for keepalive pings.
+   */
+  private async ensureSessionWindow(traceId: string): Promise<void> {
+    if (this._sessionWindowId) return; // already have a window
+
+    trace(traceId, 'server', 'session_window_start', {});
+    try {
+      const { execSync } = await import('node:child_process');
+      const result = execSync(
+        `osascript -e 'tell application "Safari"
   make new document with properties {URL:"${this.sessionTabUrl}"}
   return id of window 1
 end tell'`,
-          { timeout: 5000, encoding: 'utf-8' },
-        ).trim();
-        const windowId = parseInt(result, 10);
-        if (!isNaN(windowId)) {
-          this._sessionWindowId = windowId;
-        }
-        this._sessionTabOpened = true;
-      } catch { /* AppleScript failed — proceed with wait anyway */ }
+        { timeout: 5000, encoding: 'utf-8' },
+      ).trim();
+      const windowId = parseInt(result, 10);
+      if (!isNaN(windowId)) {
+        this._sessionWindowId = windowId;
+        trace(traceId, 'server', 'session_window_created', { windowId });
+      }
+      this._sessionTabOpened = true;
+    } catch {
+      trace(traceId, 'server', 'session_window_failed', {}, 'error');
+    }
+  }
+
+  /**
+   * Bootstrap the extension connection. Called BEFORE engine selection on every
+   * tool call (when extension isn't yet available). Three-tier fast path:
+   *
+   *   1. engineAvailability.extension already true → return immediately (0ms)
+   *   2. Quick /status check finds extension connected → update availability (≤100ms)
+   *   3. First attempt: poll for 10s → update availability or give up
+   *
+   * Session window creation is handled separately by ensureSessionWindow().
+   * After the first full attempt (tier 3), _extensionBootstrapAttempted prevents
+   * re-running the 10s poll. Subsequent calls hit tier 1 or 2 only.
+   */
+  private async ensureExtensionReady(traceId: string): Promise<boolean> {
+    // Tier 1: already known available (set by a previous successful bootstrap)
+    if (this.engineAvailability.extension) {
+      return true;
     }
 
-    // Poll /status every 1s for up to 10s
+    // Tier 2: quick live check — handles late connection after a previous timeout
+    const status = await this.checkExtensionStatus();
+    if (status.ext) {
+      this.setEngineAvailability({ ...this.engineAvailability, extension: true });
+      trace(traceId, 'server', 'extension_bootstrap_result', { outcome: 'late_connect', waitMs: 0 });
+      return true;
+    }
+
+    // Tier 3: full bootstrap — only runs once per session
+    if (this._extensionBootstrapAttempted) {
+      return false;
+    }
+    this._extensionBootstrapAttempted = true;
+    trace(traceId, 'server', 'extension_bootstrap_start', {});
+
+    // Session window is already open (ensureSessionWindow runs first).
+    // Poll /status every 1s for up to 10s waiting for extension to connect.
     const start = Date.now();
     for (let i = 0; i < 10; i++) {
       await new Promise(r => setTimeout(r, 1000));
       const check = await this.checkExtensionStatus();
       if (check.ext) {
+        this.setEngineAvailability({ ...this.engineAvailability, extension: true });
         trace(traceId, 'server', 'extension_bootstrap_result', {
           outcome: 'tab_opened_connected',
           waitMs: Date.now() - start,
@@ -982,6 +1113,51 @@ end tell'`,
 
   async start(): Promise<void> {
     await this.initialize();
+
+    // ── Full startup sequence ─────────────────────────────────────────
+    // 1. Register session with daemon
+    const otherSessions = await this.registerWithDaemon();
+    if (otherSessions > 0) {
+      console.error(`Safari Pilot: found ${otherSessions} existing session(s), starting session ${otherSessions + 1} in new window`);
+    }
+
+    // 2. Open session window
+    await this.ensureSessionWindow('init');
+
+    // 3. Wait for extension to connect (up to 15s)
+    console.error('Safari Pilot: waiting for extension connection...');
+    const initStart = Date.now();
+    let extensionConnected = false;
+    for (let i = 0; i < 15; i++) {
+      await new Promise(r => setTimeout(r, 1000));
+      const status = await this.checkExtensionStatus();
+      if (status.ext) {
+        extensionConnected = true;
+        this.setEngineAvailability({ ...this.engineAvailability, extension: true });
+        break;
+      }
+    }
+    const initDuration = Date.now() - initStart;
+
+    if (extensionConnected) {
+      console.error(`Safari Pilot: all systems green (${initDuration}ms)`);
+    } else {
+      console.error(`Safari Pilot: extension not connected after ${initDuration}ms — tools will use daemon engine`);
+    }
+
+    // Store init metadata for MCP response enrichment
+    this._initMeta = {
+      sessionId: this.sessionId,
+      windowId: this._sessionWindowId ?? null,
+      existingSessions: otherSessions,
+      systems: {
+        daemon: this.engineAvailability.daemon,
+        extension: extensionConnected,
+        sessionTab: this._sessionTabOpened,
+      },
+      initDurationMs: initDuration,
+    };
+
     console.error('Safari Pilot MCP server started');
   }
 
