@@ -84,15 +84,16 @@ npm run build          # TypeScript → dist/
 npm run dev            # tsc --watch
 npm run lint           # tsc --noEmit (type-check only)
 npm test               # all tests via vitest
-npm run test:unit      # 1428 unit tests (no Safari needed)
-npm run test:integration
 npm run test:e2e       # needs Safari running + JS from Apple Events enabled
-npm run test:security
 ```
 
-Run a single test file: `npx vitest run test/unit/tools/navigation.test.ts`
+Run a single test file: `npx vitest run test/e2e/initialization.test.ts`
+
+Run all e2e tests: `npx vitest run test/e2e/`
 
 Run tests matching a name: `npx vitest run -t "navigate"`
+
+**Note:** Unit and integration tests were purged (2026-04-23) — they were mock-based fakes. Only real e2e tests exist now (19 tests, 4 files). See `docs/ROADMAP.md` for the validation plan.
 
 Build the Swift daemon: `bash scripts/update-daemon.sh`
 
@@ -121,13 +122,14 @@ AppleScript (80ms p50) →  Always available fallback, basic navigation/forms
 Seven pre-execution layers + three post-execution checks run on every tool call in `server.ts executeToolWithSecurity()`:
 
 **Pre-execution (block before tool runs):**
-1. **KillSwitch** — global emergency stop (server.ts:391)
-2. **TabOwnership** — agent can only touch tabs it created via `safari_new_tab`; fails CLOSED on unrecognized URLs (server.ts:403)
-3. **DomainPolicy** — per-domain trust levels and rules (server.ts:414)
-4. **HumanApproval** — flags sensitive actions on untrusted domains (server.ts:418)
-5. **RateLimiter** — 120 actions/min global, per-domain buckets (server.ts:452)
-6. **CircuitBreaker** — 5 errors on a domain → 120s cooldown (server.ts:459)
-7. **Engine Selection** — picks best available engine for tool's requirements (server.ts:463)
+0. **Pre-call Health Gate** — live HTTP `/status` + window-exists check. If anything down, transparent recovery (10s) or `SessionRecoveryError`
+1. **KillSwitch** — global emergency stop
+2. **TabOwnership** — agent can only touch tabs it created via `safari_new_tab`; fails CLOSED on unrecognized URLs
+3. **DomainPolicy** — per-domain trust levels and rules
+4. **HumanApproval** — flags sensitive actions on untrusted domains
+5. **RateLimiter** — 120 actions/min global, per-domain buckets
+6. **CircuitBreaker** — 5 errors on a domain → 120s cooldown
+7. **Engine Selection** — picks best available engine for tool's requirements
 
 **Post-execution (annotate/audit after tool runs):**
 8. **IdpiScanner** — indirect prompt injection detection on extraction tool results only (server.ts:575)

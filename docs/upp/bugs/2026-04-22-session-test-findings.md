@@ -4,12 +4,13 @@ Findings from running two headless Claude CLI sessions with three tasks each (X 
 
 ---
 
-## BUG 1: engineAvailability.extension set once at startup, never refreshed (ROOT CAUSE)
+## BUG 1: engineAvailability.extension set once at startup, never refreshed (ROOT CAUSE) — FIXED 2026-04-22
 
 **File:** `src/server.ts` — `start()` method
 **Severity:** Critical — blocks the entire extension engine pipeline
+**Fix:** Pre-call health gate checks `/status` live before every tool call. `start()` blocks until extension connects. `engineAvailability` is refreshed on every tool call, never stale.
 
-`engineAvailability` is set during `start()` and never updated:
+`engineAvailability` was set during `start()` and never updated:
 ```typescript
 private engineAvailability = { daemon: false, extension: false };
 // Set once in start():
@@ -22,10 +23,11 @@ If the extension isn't connected at the moment the MCP server starts (which is a
 
 ---
 
-## BUG 2: ensureExtensionReady() gated by selectedEngineName === 'extension' (chicken-and-egg)
+## BUG 2: ensureExtensionReady() gated by selectedEngineName === 'extension' (chicken-and-egg) — FIXED 2026-04-22
 
 **File:** `src/server.ts` — `executeToolWithSecurity()` ~line 537
 **Severity:** Critical — the bootstrap can never fire
+**Fix:** Bootstrap moved to `start()` — runs before any tool call. Chicken-and-egg eliminated.
 
 ```typescript
 if (selectedEngineName === 'extension') {
@@ -81,14 +83,16 @@ The Hummingbird HTTP server serializes requests. When the extension's `GET /poll
 
 ---
 
-## BUG 6: Storage bus timeout after navigation (content script not ready)
+## BUG 6: Storage bus timeout after navigation (content script not ready) — FIXED 2026-04-23
 
-**File:** Filed as `docs/upp/specs/2026-04-21-storage-bus-timeout-after-navigation.md`
-**Severity:** Medium — blocks interaction-tools e2e tests 2 and 3
+**File:** `extension/content-isolated.js`
+**Severity:** Medium — was blocking all extension engine JS execution in new tabs
 
-After `safari_navigate` loads a fresh page, the content script hasn't injected yet. The next `safari_evaluate` writes `sp_cmd` to storage but no content script is listening → 30s timeout.
+**Root cause:** `storage.onChanged` only fires for FUTURE changes. Content scripts inject at `document_idle` (1-5s after tab opens). Commands written to `sp_cmd` before the content script loads are invisible — the listener never fires.
 
-**Fix needed:** Content-script-ready probe, or retry logic with shorter timeout.
+**Fix:** After tabId registration, content-isolated.js reads current `sp_cmd` from `browser.storage.local` and processes if it targets this tab. Dedup guard (`processedCommandIds` Set) prevents double-execution.
+
+**Proof:** `safari_evaluate` through extension engine in a new tab completes in 3.3s. `test/e2e/initialization.test.ts` passes.
 
 ---
 

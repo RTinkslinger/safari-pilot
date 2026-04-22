@@ -1,6 +1,6 @@
 # Safari Pilot Architecture — Canonical Source of Truth
 
-*Last verified: 2026-04-21 | Branch: feat/persistent-session-tab*
+*Last verified: 2026-04-23 | Branch: feat/persistent-session-tab*
 
 **This document describes how Safari Pilot ACTUALLY works as shipped. Every statement is backed by verified evidence. If code changes contradict this document, either the code is wrong or this document must be updated — never silently diverge.**
 
@@ -73,7 +73,7 @@ background.js extracts commands from response.commands
   ▼
 Storage bus IPC (browser.storage.local as message transport):
   │ background.js writes command to storage key 'sp_cmd'
-  │ content-isolated.js reads via storage.onChanged listener
+  │ content-isolated.js reads via storage.onChanged listener OR init read
   │ content-isolated.js relays to content-main.js via window.postMessage
   │ content-main.js evaluates script in MAIN world (new Function())
   │ result flows back: content-main.js → postMessage → content-isolated.js
@@ -84,6 +84,13 @@ Storage bus IPC (browser.storage.local as message transport):
   │ browser.scripting.executeScript return undefined/null in alarm-woken
   │ event page context. browser.storage.local is the only reliable
   │ cross-context channel that survives event page lifecycle transitions.
+  │
+  │ Bug 6 fix (2026-04-23): storage.onChanged only fires for FUTURE
+  │ changes. In newly opened tabs (content scripts inject at document_idle),
+  │ commands written before injection are invisible to the listener.
+  │ Fix: content-isolated.js reads current sp_cmd from storage after tabId
+  │ registration and processes if it targets this tab. Dedup guard
+  │ (processedCommandIds Set) prevents double-execution.
   ▼
 Result persisted to storage.local (status:completed), then sent:
   background.js → POST /result {requestId, result}
@@ -257,6 +264,10 @@ Dual-key registry: tabs are tracked by both positional `TabId` (windowIndex * 10
   - `POST /connect {executedIds, pendingIds}` → reconcile response (5 categories)
   - `GET /poll` → 5s long-poll hold → `{commands:[...]}` or 204
   - `POST /result {requestId, result}` → resumes continuation
+  - `GET /status?sessionId=X` → `{ext, mcp, sessionTab, lastPingAge, activeSessions}` (touches session heartbeat)
+  - `POST /session/register {sessionId}` → `{ok, activeSessions}` (registers MCP session)
+  - `GET /session?id=X` → session dashboard HTML
+  - `GET /health` → `{isConnected, mcpConnected, lastExecutedResultTimestamp}`
 - CORS: `Access-Control-Allow-Origin: *` (extension origin is `safari-web-extension://...`)
 - CSP: manifest.json allows `connect-src http://127.0.0.1:19475`
 - Handler (SafariWebExtensionHandler.swift) is a stub — never called by background.js
@@ -280,17 +291,31 @@ Dual-key registry: tabs are tracked by both positional `TabId` (windowIndex * 10
 - Pending-command persistence uses `storage.local` key `safari_pilot_pending_commands` (status `executing` → `completed`); profile identity persisted under `safari_pilot_profile_id`.
 - **DEBUG_HARNESS force-unload hook:** A `browser.runtime.onMessage` listener responds to `{type: '__safari_pilot_test_force_unload__'}` by calling `browser.runtime.reload()` after a 50ms delay — used by e2e tests to simulate cold-wake. Gated inside `/*@DEBUG_HARNESS_BEGIN@*/ … /*@DEBUG_HARNESS_END@*/` markers; stripped from release builds by `build-extension.sh`.
 
-### Persistent Session Tab & Extension Keepalive (2026-04-21)
+### Initialization System (2026-04-23)
 
-The MCP server maintains a "session tab" at `http://127.0.0.1:19475/session` that keeps the extension alive indefinitely via content script keepalive pings.
+MCP `initialize()` blocks until all systems are green. Every tool call does a live health check. Transparent recovery on disconnect.
 
-- **Bootstrap flow** (`server.ts:ensureExtensionReady()`): Before dispatching to extension engine, server calls `GET /status`. If `ext: false`, opens session tab via AppleScript, polls `/status` every 1s for 10s. Falls back to daemon on timeout.
-- **Session page** (`GET /session`): Daemon-served HTML dashboard showing extension status, MCP connection, last command, uptime. Polls `/health` every 5s.
-- **Keepalive** (`content-isolated.js`): On the session page URL, content script sends `runtime.sendMessage({type:'keepalive'})` every 20s. This resets Safari's 30s event-page kill timer. Background.js forwards via `__keepalive__` sentinel to daemon's HealthStore.
-- **Fast status check** (`GET /status`): Returns `{ext, mcp, sessionTab, lastPingAge}` — sub-second response for server bootstrap.
-- **Self-healing**: If user closes session tab, next `ensureExtensionReady()` reopens it.
-- **Alarm backup**: 1-minute alarm (`browser.alarms`) still fires as belt-and-suspenders. Wakes extension even without session tab.
-- **MCP connection tracking**: Daemon sets `mcpConnected=true` on each TCP command, clears after 30s of silence. Session page shows this as "Connected to Claude Code" / "Disconnected".
+- **Startup sequence** (`server.ts:start()`): Runs BEFORE any tool is available.
+  1. `registerWithDaemon()` — POST `/session/register` with sessionId. Returns count of existing sessions.
+  2. `ensureSessionWindow()` — Opens new Safari window with session dashboard (`127.0.0.1:19475/session?id=<sessionId>`). Captures `_sessionWindowId`.
+  3. Poll `GET /status` every 1s for 15s until `ext: true`. Updates `engineAvailability`.
+  4. Store `_initMeta` (sessionId, windowId, existingSessions, systems, initDurationMs).
+  5. Log progress to stderr: "found N existing sessions", "waiting for extension", "all systems green (Nms)".
+
+- **Pre-call health gate** (`executeToolWithSecurity()` top): Runs BEFORE every tool call.
+  1. `checkExtensionStatus()` — HTTP GET `/status?sessionId=X` (2s timeout). Returns `{ext, mcp, sessionTab, lastPingAge, activeSessions}`.
+  2. `checkWindowExists()` — AppleScript: `exists window id N` (2s timeout).
+  3. If both green → update `engineAvailability`, proceed.
+  4. If anything down → `recoverSession()`: reopen window if gone, poll for extension up to 10s.
+  5. If recovery fails → throw `SessionRecoveryError` with details of what's down.
+
+- **Multi-session isolation**: Each MCP session gets its own Safari window. Daemon's `HealthStore.activeSessions` tracks registered sessions (60s stale pruning). `/status?sessionId=X` heartbeats the session implicitly.
+
+- **Session dashboard** (`GET /session?id=<sessionId>`): Shows session ID, extension status, MCP connection, last command, uptime. Polls `/health` every 5s.
+
+- **Keepalive** (`content-isolated.js`): On the session page URL, content script sends `runtime.sendMessage({type:'keepalive'})` every 20s. Background.js forwards via `__keepalive__` sentinel to daemon's HealthStore.
+
+- **Alarm backup**: 1-minute `browser.alarms` fires as belt-and-suspenders.
 
 ### ExtensionBridge Command Queue
 - In-memory queue (not file-based — sandbox blocks filesystem access)
@@ -376,29 +401,27 @@ Every tool declares `requirements.idempotent: boolean` (required field — no de
 
 ## Test Architecture
 
-### E2E Tests (test/e2e/) — 17 files, 74+ tests
-- Spawn real `node dist/index.js`, talk JSON-RPC
-- Zero mocks, zero source imports
-- Verify `_meta.engine` on every tool response (architecture test, not just functional)
-- Extension-required tools assert engine='extension' or proper rejection with degraded=true
-- Tests create own tabs, clean up in afterAll, never touch user tabs
-- Litmus: deleting SafariWebExtensionHandler.swift would fail extension-engine and engine-selection tests
+**Status (2026-04-23):** All previous unit, integration, and e2e tests were deleted — they were mock-based fakes that provided false confidence while the product was broken. Tests are being rebuilt from zero with live-only validation.
 
-### Integration Tests (test/integration/) — including extension-build (10 tests)
-- Verify built artifacts: entitlements, code signing, handler is not stub
-- Gate tests verify tool count (76 — pre-extension-diagnostics baseline; the 2 extension-diagnostics tools are registered at server startup but not yet reflected in gate test constants)
+### E2E Tests (test/e2e/) — 4 files, 19 tests
+- Spawn real `node dist/index.js`, send JSON-RPC over stdin/stdout
+- Zero mocks, zero source imports, real Safari, real extension
+- `McpTestClient` (test/helpers/mcp-client.ts) handles protocol + trace capture
+- Every test run captures: `tool-calls.jsonl`, `stderr.log`, `server-trace.ndjson`, `daemon-trace.ndjson` to `test-results/traces/<timestamp>/`
 
-### Unit Tests (test/unit/) — 55 files, 1427 tests
-- Extension unit tests verify protocol contracts (sentinel format, payload structure)
-- Engine selector tests cover all requirement combinations
-- Security layer tests cover each layer in isolation
+| File | Tests | What it proves |
+|------|-------|---------------|
+| `initialization.test.ts` | 5 | Init blocks until green, health check returns metadata, new_tab + evaluate through extension engine, pre-call gate |
+| `phase1-core-navigation.test.ts` | 4+2skip | navigate, list_tabs, screenshot, close_tab. Skip: back/forward (stale URL) |
+| `phase2-page-understanding.test.ts` | 6 | ARIA snapshot with refs, get_text, get_html, extract_links, extract_metadata, engine verification |
+| `phase3-interaction.test.ts` | 4 | fill (verified readback), click, wait_for, engine verification |
 
 ### Daemon Tests (daemon/Tests/) — 51 tests
-- ExtensionSocketServer: TCP accept, ping dispatch, concurrent connections, invalid JSON
-- ExtensionBridge: queue/poll/result cycle, timeout, disconnect flip-back redelivery
-- CommandDispatcher: routing, NDJSON parsing, extension_poll, extension_log, extension_health
-- HealthStore: persistence to `~/.safari-pilot/health.json`, alarm-fire timestamp, rolling window counters
-- SleepWakeMemoryRecovery: memory pressure + sleep/wake resilience
+- ExtensionSocketServer, ExtensionBridge, CommandDispatcher, HealthStore, SleepWakeMemoryRecovery
+- These are real Swift tests, not mocked — kept from before the purge
+
+### Trace Capture (mandatory)
+All test runs capture structured JSONL traces for the recipe system's learning pipeline. See CLAUDE.md "Trace capture" section for format and rules.
 
 ---
 
@@ -408,13 +431,21 @@ If any of these would NOT fail a test, the test suite is incomplete:
 
 | What if... | Which test should fail |
 |------------|----------------------|
-| Delete SafariWebExtensionHandler.swift | e2e/extension-engine, e2e/engine-selection |
-| Remove selectEngine() call from server | e2e/engine-selection (engine field wrong) |
-| Remove HumanApproval from pipeline | e2e/security-pipeline (OAuth test) |
-| Remove IdpiScanner.scan() call | e2e/security-pipeline (IDPI metadata) |
-| Remove network.client entitlement | integration/extension-build (entitlements check) |
-| Change daemon socket port | Extension can't connect → extension status = disconnected |
+| Extension engine never connects | initialization.test.ts (init blocks until green) |
+| Session window doesn't open | initialization.test.ts (health check has no windowId) |
+| safari_new_tab doesn't work | initialization.test.ts + all phase tests (beforeAll fails) |
+| safari_evaluate times out in new tabs | initialization.test.ts (evaluate test) |
+| ARIA snapshot returns no refs | phase2 (snapshot test checks ref=) |
+| safari_fill doesn't set value | phase3 (fill test reads value back) |
+| Engine selector always picks daemon | initialization.test.ts + phase2 (engine verification tests) |
 | Remove executeJsInTab from IEngine | Compile error in 12 tool modules |
+
+**Coverage gaps (known, to be addressed in later phases):**
+- No test proves security pipeline fires (tab ownership, IDPI, rate limiter)
+- No test proves extension→daemon fallback
+- No test proves shadow DOM access
+- No test proves multi-session isolation
+- No test proves navigate_back/forward
 
 ---
 
@@ -433,6 +464,9 @@ If any of these would NOT fail a test, the test suite is incomplete:
 
 ### v0.1.5 (Commit 1a) — 2026-04-17
 Event-page lifecycle pivot: service_worker → non-persistent event page, storage-backed command queue, 1-minute alarm keepalive, drain-on-wake via sendNativeMessage. HealthStore observability + safari_extension_health/debug_dump tools. Per-tool idempotent flag (76→78 tools). Per-engine CircuitBreaker. Extension kill-switch via config. Pre-publish verify harness + LaunchAgent health-check cron.
+
+### v0.1.10 — 2026-04-23 (Saving the Project)
+All 1470 mock-based tests deleted. Initialization system: MCP init blocks until all systems green, pre-call live health gate, transparent 10s recovery, multi-session detection + session registry, SessionRecoveryError. Bug 6 fix: content script reads sp_cmd on init (storage bus timeout in new tabs). 19 real e2e tests across 4 files — all against real Safari through extension engine. Trace capture for all test runs (tool-calls.jsonl, stderr.log, server/daemon NDJSON). Phases 1-3 validated: navigate, new_tab, close_tab, list_tabs, evaluate, screenshot, ARIA snapshot with refs, get_text, get_html, extract_links, extract_metadata, fill, click, wait_for.
 
 ### v0.1.6 (Commit 2) — 2026-04-18
 HTTP short-poll IPC pivot: sendNativeMessage → fetch() to daemon HTTP:19475 (Hummingbird). Reconcile protocol (5-case classification: acked/uncertain/reQueued/inFlight/pushNew). executedLog with 5-min TTL. Disconnect detection (15s poll-gap timeout). Handler stripped to stub. TCP:19474 preserved for DaemonEngine/health-checks/benchmarks. Extension version 0.1.6. HTTP observability: `httpBindFailureCount` (persisted), `httpRequestErrorCount1h` (rolling 1h), `HTTP_READY` / `HTTP_SELF_TEST` startup logs, `onServerRunning` callback. Test result capture: JUnit XML + JSON to `test-results/` (last 10 runs retained via vitest globalSetup). Benchmark data: `benchmark/history.json` + `benchmark/reports/` + `benchmark/traces/` (unchanged).
