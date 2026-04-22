@@ -33,7 +33,7 @@ import { CircuitBreaker } from './security/circuit-breaker.js';
 import { IdpiScanner } from './security/idpi-scanner.js';
 import { HumanApproval } from './security/human-approval.js';
 import { ScreenshotRedaction } from './security/screenshot-redaction.js';
-import { RateLimitedError, HumanApprovalRequiredError, TabUrlNotRecognizedError } from './errors.js';
+import { RateLimitedError, HumanApprovalRequiredError, TabUrlNotRecognizedError, SessionRecoveryError } from './errors.js';
 import { loadConfig, DEFAULT_CONFIG, type SafariPilotConfig } from './config.js';
 import { trace } from './trace.js';
 
@@ -409,6 +409,27 @@ export class SafariPilotServer {
     name: string,
     params: Record<string, unknown>,
   ): Promise<ToolResponse> {
+    // 0. Pre-call health gate — live check before every tool call
+    const preStatus = await this.checkExtensionStatus();
+    const windowOk = await this.checkWindowExists();
+    this.setEngineAvailability({
+      daemon: this.engineAvailability.daemon,
+      extension: preStatus.ext,
+    });
+
+    if (!preStatus.ext || !windowOk) {
+      const recoveryTraceId = `trace_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+      const recovered = await this.recoverSession(recoveryTraceId);
+      if (!recovered) {
+        throw new SessionRecoveryError({
+          daemon: this.engineAvailability.daemon,
+          extension: preStatus.ext,
+          window: windowOk,
+          durationMs: 10000,
+        });
+      }
+    }
+
     const start = Date.now();
     const traceId = nextTraceId();
     trace(traceId, 'server', 'tool_received', {
@@ -990,6 +1011,58 @@ end tell`;
     } catch {
       return { ext: false, mcp: false, sessionTab: false, lastPingAge: null, activeSessions: 0 };
     }
+  }
+
+  /**
+   * Fast check whether the session window still exists in Safari.
+   */
+  private async checkWindowExists(): Promise<boolean> {
+    if (!this._sessionWindowId) return false;
+    try {
+      const { execSync } = await import('node:child_process');
+      const result = execSync(
+        `osascript -e 'tell application "Safari" to return (exists window id ${this._sessionWindowId})'`,
+        { timeout: 2000, encoding: 'utf-8' },
+      ).trim();
+      return result === 'true';
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Attempt transparent session recovery. Called when pre-call gate finds
+   * a component down. Blocks up to 10s. Returns true if recovered.
+   */
+  private async recoverSession(traceId: string): Promise<boolean> {
+    const start = Date.now();
+    trace(traceId, 'server', 'recovery_start', {
+      windowId: this._sessionWindowId,
+    });
+
+    // Re-open window if gone
+    const windowOk = await this.checkWindowExists();
+    if (!windowOk) {
+      this._sessionWindowId = undefined;
+      await this.ensureSessionWindow(traceId);
+    }
+
+    // Poll for extension connection (up to 10s)
+    for (let i = 0; i < 10; i++) {
+      const status = await this.checkExtensionStatus();
+      if (status.ext) {
+        this.setEngineAvailability({ ...this.engineAvailability, extension: true });
+        const duration = Date.now() - start;
+        trace(traceId, 'server', 'recovery_success', { durationMs: duration });
+        console.error(`Safari Pilot: session recovered in ${duration}ms`);
+        return true;
+      }
+      await new Promise(r => setTimeout(r, 1000));
+    }
+
+    const duration = Date.now() - start;
+    trace(traceId, 'server', 'recovery_failed', { durationMs: duration });
+    return false;
   }
 
   /**
