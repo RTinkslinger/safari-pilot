@@ -129,7 +129,11 @@ public final class ExtensionHTTPServer: @unchecked Sendable {
             return try await self.handleResult(request: request, context: context)
         }
 
-        router.get("status") { [self] _, _ -> HBResponse in
+        router.get("status") { [self] request, _ -> HBResponse in
+            // Extract sessionId from query string for implicit heartbeat
+            if let sessionId = request.uri.queryParameters.get("sessionId") {
+                self.healthStore.touchSession(sessionId)
+            }
             return self.handleStatus()
         }
 
@@ -139,6 +143,22 @@ public final class ExtensionHTTPServer: @unchecked Sendable {
 
         router.get("health") { [self] _, _ -> HBResponse in
             return self.handleHealth()
+        }
+
+        router.post("session/register") { [self] request, context -> HBResponse in
+            self.touchLastRequestTime()
+            let buffer = try await request.body.collect(upTo: context.maxUploadSize)
+            guard buffer.readableBytes > 0,
+                  let data = buffer.getData(at: buffer.readerIndex, length: buffer.readableBytes),
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let sessionId = json["sessionId"] as? String else {
+                throw HTTPError(.badRequest, message: "Missing sessionId in body")
+            }
+            self.healthStore.registerSession(sessionId)
+            return self.jsonResponse([
+                "ok": true,
+                "activeSessions": self.healthStore.activeSessionCount,
+            ])
         }
 
         return router
@@ -255,6 +275,7 @@ public final class ExtensionHTTPServer: @unchecked Sendable {
             "mcp": mcpConn,
             "sessionTab": sessionTab,
             "lastPingAge": lastPingAge,
+            "activeSessions": healthStore.activeSessionCount,
         ])
     }
 
@@ -369,11 +390,20 @@ public final class ExtensionHTTPServer: @unchecked Sendable {
           <td class="label">Uptime</td>
           <td class="value" id="uptime">—</td>
         </tr>
+        <tr>
+          <td class="label">Session</td>
+          <td class="value" id="session-id">—</td>
+        </tr>
       </table>
 
       <footer>Closing this tab may interrupt Safari Pilot automation.</footer>
 
       <script>
+        const sessionId = new URLSearchParams(location.search).get('id') || '—';
+        document.addEventListener('DOMContentLoaded', () => {
+          document.getElementById('session-id').textContent = sessionId;
+        });
+
         const startTime = Date.now();
 
         function fmt(ms) {
