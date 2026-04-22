@@ -98,6 +98,12 @@
 **Context:** Root causes found: (1) Extension alarm WAS working but telemetry was broken (background.js never sent "alarm_fire" to daemon). (2) Safari caches extensions by manifest.json "version" not Info.plist — all rebuilds at same version were invisible. (3) Engine selector already preferred extension but isAvailable() returned false during 15s dead windows between alarm cycles. Fix: persistent session tab with 20s content script keepalive ping → extension stays alive continuously. Verified: 36/36 checks over 3 minutes, zero dead windows. Version: 0.1.9.
 ---
 
+### Iteration 20 - 2026-04-22/23
+**What:** "Saving the project" — deleted all 104 fake tests, wrote new roadmap, built initialization system (spec→plan→execute), fixed Bug 6, validated Phases 1-3 with 19 real e2e tests against real Safari.
+**Changes:** Deleted `test/unit/` (58 files), `test/e2e/*.test.ts` (20 files), `test/integration/` (23 files), `test/security/` (2 files), `test/canary/` (1 file). Created `docs/ROADMAP.md` (saving-the-project roadmap), `docs/upp/specs/2026-04-22-initialization-system-design.md`, `docs/upp/plans/2026-04-23-initialization-system.md`. Modified `src/server.ts` (init in start(), pre-call health gate, recovery, registerWithDaemon, sessionTabUrl getter), `src/errors.ts` (+SessionRecoveryError), `daemon/Sources/SafariPilotdCore/HealthStore.swift` (+session registry), `daemon/Sources/SafariPilotdCore/ExtensionHTTPServer.swift` (+/session/register, extended /status, dashboard session ID), `extension/content-isolated.js` (Bug 6 fix: read sp_cmd on init + dedup guard). Created `test/e2e/initialization.test.ts` (5/5), `phase1-core-navigation.test.ts` (4/4+2 skip), `phase2-page-understanding.test.ts` (6/6), `phase3-interaction.test.ts` (4/4).
+**Context:** Bug 6 root cause: `storage.onChanged` only fires for future changes. Content scripts inject at `document_idle` — commands written before injection are invisible. Fix: read current `sp_cmd` after tabId registration. Extension rebuilt + notarized (build 202604230054). All 19 e2e tests proven through extension engine against real Safari. navigate_back/forward deferred (stale URL query — backlog #3).
+---
+
 <!-- Iterations 5-6 archived to traces/archive/milestone-2.md -->
 
 <!-- Iterations 7-9 archived to traces/archive/milestone-3.md -->
