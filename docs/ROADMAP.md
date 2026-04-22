@@ -1,307 +1,178 @@
-# Safari Pilot — Roadmap
+# Safari Pilot — Saving The Project Roadmap
 
-## Shipped (v0.1.0)
+## Objective
 
-- 74 MCP tools across 14 categories
-- Three engine tiers: AppleScript (fallback) → Swift Daemon (1ms p50) → Safari Web Extension (deep DOM)
-- 9-layer security pipeline (tab ownership, domain policy, rate limiter, circuit breaker, IDPI scanner, human approval, screenshot redaction, kill switch, audit logging)
-- Signed and notarized Safari Web Extension (Developer ID, persists across restarts)
-- Published to npm (`safari-pilot`) and GitHub Releases
-- CI/CD via GitHub Actions
-- Live tested against Hacker News and X.com (authenticated bookmarks)
+**Replace Playwright + Chrome as Claude Code's browser automation.** No Mac user running Claude Code should need Chrome. Safari Pilot matches or exceeds every Playwright MCP capability, with structural advantages Playwright can never have (real authenticated sessions, native WebKit, zero CPU overhead, macOS-native lifecycle).
 
----
+## Shipped
 
-## Vision: Full Playwright Replacement for Mac Safari Users
+| # | Capability | Date | Proof |
+|---|---|---|---|
+| 0.1 | Initialization system — session window on MCP init, all-green gate, pre-call live health check, transparent 10s recovery, multi-session detection | 2026-04-23 | `test/e2e/initialization.test.ts` — 4 tests pass against real Safari. Init blocks until extension connects (1.8s). Health check confirms all systems. new_tab routes through extension engine. Pre-call gate verified. |
 
-The goal: **no Mac user running Claude Code should ever need Playwright or Chrome for browser automation.** Safari Pilot should match or exceed every Playwright capability, while adding what Playwright fundamentally can't do (real authenticated sessions, native WebKit, zero CPU overhead).
+### Known blockers for next phases
+- **Bug 6:** `safari_evaluate` via extension engine times out in newly opened tabs (content script not ready). Storage bus command never reaches the tab. This blocks Phase 1 item 1.5 (evaluate) and Phase 2+ (all extraction/interaction tools that use JS execution). Must be fixed before any tool beyond navigate/new_tab/list_tabs can be validated.
 
 ---
 
-## P0 — Must Have (Foundations + Closes 80% of the Playwright Gap)
+## Current State (honest)
 
-### Daemon Lifecycle + Configuration File (NEXT UP)
+Code exists for most P0 and P1 capabilities from the original roadmap. But execution was catastrophically flawed:
 
-**Plugin commands for daemon management + user-editable config file.** Currently the daemon has no lifecycle management and all settings (rate limits, circuit breaker, polling) are hardcoded in TypeScript source.
+- **Tests were fake.** 1200+ unit tests ran against mocks. 33 "e2e" tests called server classes directly, skipping the MCP protocol entirely. 64/74 tools never touched real Safari. The extension engine — the core differentiator — was dead code for the entire project history.
+- **Claims were false.** Features were marked "shipped" based on unit tests passing. The MCP server was broken from v0.1.0-v0.1.4 (STDIO transport never wired). The extension engine never executed a single real command.
+- **TDD was impossible.** Mock-based tests pass when the product is broken. The test suite provided false confidence that blocked real debugging.
 
-**What to build:**
-- `safari-pilot.config.json` — ships with sensible defaults, user-editable and Claude Code-editable. MCP server reads config on startup. Settings include rate limits, circuit breaker thresholds, polling intervals, domain policies, kill switch, audit logging.
-- `/safari-pilot start` — starts SafariPilotd, outputs PID, confirms running (idempotent)
-- `/safari-pilot stop` — stops daemon gracefully; if shutdown fails, outputs `kill <PID>` fallback
-- Both commands note that the extension is managed in Safari > Settings > Extensions
-- Fix postinstall to properly `launchctl load` the LaunchAgent
-- Conversational config: user says "set rate limit to 60/min" → Claude Code edits the config file
+**All existing unit tests and e2e tests are deleted.** They were liabilities, not assets. Development restarts from zero with live-validated tests only.
 
-**Hardcoded (not configurable):** tab ownership, IDPI scanner patterns, protocol version, extension bundle ID.
+## How This Works
 
-**Mac app stays unchanged** — extension container only.
+Each Playwright capability is an independent work item. For each one:
 
-**Research:** `mcp-plugin-config-best-practices.md` (plugin root)
-**Plan:** `.claude/plans/daemon-lifecycle-config-plan.md`
-**Estimated effort:** 1 session.
+1. **Validate** — Does the code path actually work through the real stack? Spawn the MCP server, send JSON-RPC, verify Safari does the thing.
+2. **Fix** — If broken, use `upp:systematic-debugging`. No guessing, no band-aids.
+3. **Test** — Write ONE real test that proves it works. Real MCP process, real Safari, Real extension, real result. No mocks.
+4. **Prove** — Run the test. Show the output. If it fails, go back to step 2.
+5. **Ship** — Only marked shipped when the live test passes and the user is satisfied.
 
----
-
-### Structured Accessibility Snapshots
-
-**The single biggest gap.** This is how Claude Code's Playwright MCP actually works — `browser_snapshot()` returns a structured ARIA tree with refs:
-
-```
-[button "Submit" ref=e42]
-[textbox "Email" ref=e43 value=""]
-[link "Sign in" ref=e44]
-```
-
-Claude uses `ref=e42` to click, fill, etc. It's the PRIMARY way the agent understands page structure. Without this, the agent falls back to CSS selectors which are fragile and require more reasoning.
-
-**What to build:**
-- Enhance `safari_snapshot` to return Playwright-compatible ARIA tree format
-- Walk the accessibility tree via JS (`TreeWalker` + ARIA role computation)
-- Assign stable element refs (hash of xpath + role + name)
-- All interaction tools accept `ref` as a targeting strategy alongside `selector`
-- Output format: YAML or structured text matching Playwright's snapshot format
-
-**Research:** `docs/research/p0-accessibility-snapshots-research.md`
-**Key findings:** Safari supports `computedRole`/`computedName` since 16.4. Refs are monotonic counters (not hashes). ~300-400 lines JS. Native macOS AX APIs not recommended (too slow, can't correlate to DOM).
-**Estimated effort:** 2-3 sessions (revised from research).
+Full UPP pipeline (brainstorm → spec → plan → TDD → verify) for any capability that needs new code. For capabilities where code exists but is unproven, steps 1-4 above.
 
 ---
 
-### Auto-Waiting on All Actions
+## Phase 1: Core Navigation + Evaluation (Must Work First)
 
-Every Playwright action auto-waits for the target element to be visible, enabled, and stable before executing. Safari Pilot requires manual `safari_wait_for` before each action — more round-trips, more tokens, more timing bugs.
+Everything else depends on these. If navigate/evaluate/new_tab don't work through the real stack, nothing else matters.
 
-**What to build:**
-- Add built-in polling to every interaction tool (click, fill, type, select, check, hover, drag)
-- Before executing, poll for: element exists, element visible, element not disabled, element stable (bounding rect unchanged for 2 frames)
-- Configurable timeout per action (default 5s)
-- If element never becomes actionable, return structured error with hints
+| # | Capability | Playwright equivalent | Safari Pilot tool | Code exists? |
+|---|---|---|---|---|
+| 1.1 | Navigate to URL | `browser_navigate(url)` | `safari_navigate` | Yes |
+| 1.2 | Open new tab | `browser_new_tab(url)` | `safari_new_tab` | Yes |
+| 1.3 | Close tab | `browser_close_tab` | `safari_close_tab` | Yes |
+| 1.4 | List tabs | `browser_tab_list` | `safari_list_tabs` | Yes |
+| 1.5 | Evaluate JavaScript | `browser_evaluate(js)` | `safari_evaluate` | Yes |
+| 1.6 | Take screenshot | `browser_take_screenshot` | `safari_take_screenshot` | Yes |
+| 1.7 | Navigate back/forward | `browser_navigate_back` | `safari_navigate_back/forward` | Yes |
 
-**Not a new tool — a behavior change in existing tools.**
-
-**Research:** `docs/research/p0-auto-waiting-research.md`
-**Key findings:** Entire wait+action executes in one JS injection (no round-trips). rAF-based stability check. Playwright uses backoff schedule `[0, 20, 50, 100, 100, 500]ms`. Must verify Safari's `do JavaScript` awaits Promises.
-**Estimated effort:** 1 session.
-
----
-
-## P1 — Important (Resilience + Common Workflows)
-
-### Locator-Style Element Targeting
-
-Playwright has `getByRole('button', {name: 'Submit'})`, `getByText('Sign in')`, `getByLabel('Email')`, `getByTestId('submit-btn')`. CSS selectors are fragile — they break when HTML restructures. Role/text/label targeting is resilient.
-
-**What to build:**
-- Extend all interaction/extraction tools to accept: `role` + `name`, `text` (visible text match), `label` (associated label text), `testId` (data-testid attribute), `placeholder`
-- Internal resolver: locator → CSS selector → DOM element
-- Combine with auto-waiting: resolve locator → wait for actionable → execute
-
-**Research:** `docs/research/p1-locator-targeting-research.md`
-**Key findings:** CSS pre-filter + AccName post-filter. ~300 lines JS, no external libs. Substring matching is default (not exact). Playwright's retry backoff: `[0, 20, 100, 100, 500]ms`.
-**Estimated effort:** 1-2 sessions (research done).
+**Validation approach:** Spawn `node dist/index.js`, send MCP `tools/call` for each tool, verify Safari actually does it. Must work through extension engine (not just AppleScript fallback).
 
 ---
 
-### File Download Handling
+## Phase 2: Page Understanding (The Playwright Gap Closer)
 
-Playwright has `page.waitForDownload()` — intercepts downloads, saves to path, returns metadata. Safari Pilot can't detect or handle downloads at all.
+This is how Claude Code actually uses Playwright — snapshot returns ARIA tree with refs, agent uses refs to interact.
 
-**What to build:**
-- `safari_wait_for_download` tool
-- Monitor `~/Downloads/` (or configured path) for new files after a triggering action
-- Use macOS FSEvents via the daemon for fast file-appearance detection
-- Return `{filename, path, size, mimeType, duration}`
-- Option to move the downloaded file to a specified location
+| # | Capability | Playwright equivalent | Safari Pilot tool | Code exists? |
+|---|---|---|---|---|
+| 2.1 | ARIA tree snapshot with refs | `browser_snapshot` | `safari_snapshot` | Yes (aria.ts) |
+| 2.2 | Get page text | `browser_snapshot` (text mode) | `safari_get_text` | Yes |
+| 2.3 | Get page HTML | N/A (Playwright uses snapshot) | `safari_get_html` | Yes |
+| 2.4 | Extract tables | N/A | `safari_extract_tables` | Yes |
+| 2.5 | Extract links | N/A | `safari_extract_links` | Yes |
+| 2.6 | Extract images | N/A | `safari_extract_images` | Yes |
+| 2.7 | Extract metadata | N/A | `safari_extract_metadata` | Yes |
+| 2.8 | Smart scrape | N/A (Safari Pilot extra) | `safari_smart_scrape` | Yes |
 
-**Research:** `docs/research/p1-file-downloads-research.md`
-**Key findings:** FSEvents + DispatchSource hybrid. Safari's `.download` bundle rename = completion signal. ~50ms detection latency. `kMDItemWhereFroms` xattr for source URL.
-**Estimated effort:** 1 session.
-
----
-
-### PDF Generation
-
-Playwright has `page.pdf()` with margins, scale, headers/footers. Safari CAN print to PDF via AppleScript but we haven't exposed it.
-
-**What to build:**
-- `safari_export_pdf` tool
-- Uses AppleScript print command with PDF destination
-- Parameters: path, margins, scale, paperSize, landscape
-- Returns `{path, pageCount, fileSize}`
-
-**Research:** `docs/research/p1-pdf-generation-research.md`
-**Key findings:** Playwright can't do PDF from WebKit at all (structural advantage). `WKWebView.printOperationWithPrintInfo` via daemon is the path. AppleScript print has no output path control. CSS `@page` supported since Safari 18.2.
-**Estimated effort:** 2-3 sessions (revised up — WKWebView daemon path needed for full Playwright parity).
+**Validation approach:** Navigate to a real page, call each tool, verify the output contains real content from the page. ARIA snapshot must return refs that can be used in Phase 3.
 
 ---
 
-## P2 — Valuable (Testing Infrastructure)
+## Phase 3: Interaction (Click, Fill, Type)
 
-### CI Browser Testing
+The agent acts on the page. Every interaction must work with both CSS selectors AND ref-based targeting from Phase 2.
 
-**Already on roadmap.** Test runner CLI, JUnit/TAP output, fixture serving, screenshot-on-failure, parallel execution.
+| # | Capability | Playwright equivalent | Safari Pilot tool | Code exists? |
+|---|---|---|---|---|
+| 3.1 | Click element | `browser_click(ref)` | `safari_click` | Yes |
+| 3.2 | Fill input | `browser_fill(ref, value)` | `safari_fill` | Yes |
+| 3.3 | Type text | `browser_type(text)` | `safari_type` | Yes |
+| 3.4 | Press key | `browser_press_key(key)` | `safari_press_key` | Yes |
+| 3.5 | Select option | `browser_select_option` | `safari_select_option` | Yes |
+| 3.6 | Hover | `browser_hover` | `safari_hover` | Yes |
+| 3.7 | Drag and drop | `browser_drag` | `safari_drag` | Yes |
+| 3.8 | Double click | N/A | `safari_double_click` | Yes |
+| 3.9 | Wait for condition | `browser_wait_for` | `safari_wait_for` | Yes |
 
-**Research:** `docs/research/p2-ci-browser-testing-research.md`
-**Key findings:** Safari Pilot doesn't need safaridriver. Daemon/extension engines avoid TCC. No headless Safari exists. Tab-level isolation with AppleScript mutex for parallelism. `sudo safaridriver --enable` is the only reliable CI setup.
-**Estimated effort:** 4-5 sessions (revised — 3 phases: MVP, parallel+retries, CI templates).
-
----
-
-### Visual Regression Testing
-
-**Already on roadmap.** Pixel-level diffing, baseline management, threshold config, Retina handling, diff image generation.
-
-**Research:** `docs/research/p2-visual-regression-research.md`
-**Key findings:** pixelmatch + pHash triage + SSIM on failure. Store baselines at native 2x. macOS version must be part of baseline key (font smoothing changes). Threshold 0.15-0.2 for Safari (default 0.1 too strict).
-**Estimated effort:** 2-3 sessions.
+**Validation approach:** Navigate to a form page (local fixture or live), snapshot to get refs, click/fill/type using refs, verify the page state changed. Must prove auto-waiting works (element not ready → wait → succeed).
 
 ---
 
-### Video Recording
+## Phase 4: Multi-Tab Workflows
 
-Playwright records video of entire browser sessions for debugging test failures.
+The scenario that exposed all the architectural bugs: agent works across multiple tabs, website opens tabs, session isolation.
 
-**What to build:**
-- `safari_start_recording` / `safari_stop_recording` tools
-- Use macOS ScreenCaptureKit (available since macOS 12.3) via the Swift daemon
-- Record only the Safari window (not entire screen)
-- Output as .mp4 or .mov
-- Return `{path, duration, fileSize, resolution}`
+| # | Capability | What to prove | Code exists? |
+|---|---|---|---|
+| 4.1 | Session window isolation | Each CC session gets its own Safari window | Yes (today's fix) |
+| 4.2 | Tab targeting by position | Navigate/evaluate hits the RIGHT tab, not URL match | Yes (today's fix) |
+| 4.3 | Website-opened tab adoption | Click opens new tab → agent can interact with it | Yes (today's fix) |
+| 4.4 | Multi-session parallel work | Two CC sessions working simultaneously without interference | Partially |
 
-**Research:** `docs/research/p2-video-recording-research.md`
-**Key findings:** ScreenCaptureKit with `SCContentFilter(desktopIndependentWindow:)` for window-specific capture. H.264 via VideoToolbox (hardware-accelerated). 8-25% CPU on Apple Silicon at 720p/20fps. No viable alternatives (screencapture CLI can't do window-specific video).
-**Estimated effort:** 1-2 sessions.
+**Validation approach:** Open multiple tabs, navigate between them, verify operations hit the correct tab. Open a link that spawns a new tab, verify the agent can read the new tab's content.
 
 ---
 
-## P3 — Nice to Have (Edge Cases)
+## Phase 5: Extension Engine Proof
 
-### Full Request/Response Route Modification
+The entire differentiator. If extension engine doesn't work, Safari Pilot is just an AppleScript wrapper.
 
-Upgrade from basic mocking (`safari_mock_request`) to full route modification — modify headers, rewrite URLs, transform response bodies in flight.
+| # | Capability | What to prove | Code exists? |
+|---|---|---|---|
+| 5.1 | Extension bootstrap | Session tab opens → extension connects → engine available | Yes (today's fix) |
+| 5.2 | Extension command execution | JS executes through storage bus, result flows back | Yes |
+| 5.3 | Shadow DOM access | Query/click inside shadow roots (impossible via AppleScript) | Yes |
+| 5.4 | Engine selection metadata | Tool responses include which engine ran | Yes |
+| 5.5 | Extension → daemon fallback | Extension down → daemon engine takes over gracefully | Yes |
 
-**What to build:**
-- `safari_route_request` tool — register a handler that intercepts matching requests
-- Parameters: urlPattern, modifyHeaders?, rewriteUrl?, transformResponse?
-- Extension's MAIN world interceptor handles the modification before the page sees the response
-
-**Research:** `docs/research/p3-route-modification-research.md`
-**Key findings:** DNR + MAIN world JS interceptor hybrid achieves ~85% Playwright coverage. Full engine-level interception impossible (no WebKit Inspector Protocol). Existing extension infra already supports DNR rules and MAIN world monkey-patching.
-**Estimated effort:** 1 session.
-
----
-
-### HTTP Authentication
-
-Playwright handles Basic/NTLM auth prompts via `page.authenticate()`. Safari shows a native dialog.
-
-**What to build:**
-- Extend `safari_handle_dialog` to detect and fill HTTP auth dialogs
-- Or: inject credentials via the extension before the auth challenge fires
-- Parameters: username, password, urlPattern
-
-**Research:** `docs/research/p3-http-auth-research.md`
-**Key findings:** DNR header injection (`Authorization: Basic`) is the primary path — existing `dnr_add_rule`/`dnr_remove_rule` in background.js already supports it. Manifest may need `declarativeNetRequestWithHostAccess`. NTLM needs multi-step challenge-response (different approach).
-**Estimated effort:** Half session.
+**Validation approach:** Verify engine metadata in tool responses shows `engine: "extension"`. Execute on a page with shadow DOM. Kill extension, verify fallback works.
 
 ---
 
-## What Safari Pilot Will Always Beat Playwright On
+## Phase 6: Advanced Capabilities
 
-These are structural advantages — no amount of Playwright development can match them:
+Only after Phases 1-5 are proven live.
 
-| Advantage | Why Playwright Can't Match It |
+| # | Capability | Safari Pilot tool | Code exists? |
+|---|---|---|---|
+| 6.1 | File downloads | `safari_wait_for_download` | Yes |
+| 6.2 | PDF export | `safari_export_pdf` | Yes |
+| 6.3 | Cookie management | `safari_get/set/delete_cookie` | Yes |
+| 6.4 | Local/session storage | `safari_local_storage_get/set` | Yes |
+| 6.5 | Network request monitoring | `safari_list_network_requests` | Yes |
+| 6.6 | Request interception/mocking | `safari_mock_request` | Yes |
+| 6.7 | Geolocation/timezone override | `safari_override_*` | Yes |
+| 6.8 | Frame handling | `safari_list_frames`, `safari_eval_in_frame` | Yes |
+| 6.9 | Service workers | `safari_sw_list`, `safari_sw_unregister` | Yes |
+| 6.10 | Performance tracing | `safari_begin/end_trace` | Yes |
+
+---
+
+## Phase 7: Benchmark
+
+Only after Phases 1-6 are proven. Run the benchmark suite against real sites, measure against Playwright. The benchmark runner and task definitions exist but have never been validated.
+
+---
+
+## What Safari Pilot Beats Playwright On (Structural)
+
+These are architectural advantages — not claims to verify, they're inherent to the design:
+
+| Advantage | Why |
 |---|---|
-| **Real authenticated sessions** | Playwright uses isolated contexts by design |
-| **60% less CPU** | Chromium is inherently heavier than WebKit-native |
-| **No focus stealing** | Playwright's headed mode steals focus too |
-| **Real Safari rendering** | Playwright's WebKit is a fork, not actual Safari |
-| **Security pipeline** | Playwright has no concept of tab ownership or IDPI defense |
-| **macOS-native lifecycle** | launchd, Keychain integration, ScreenCaptureKit — native OS integration |
-| **Session persistence across restarts** | Playwright contexts are ephemeral by design |
+| Real authenticated sessions | Uses actual Safari cookies/sessions, not isolated contexts |
+| 60% less CPU | WebKit-native, no Chromium overhead |
+| No focus stealing | AppleScript + extension don't activate Safari |
+| Real Safari rendering | Actual Safari WebKit, not Playwright's fork |
+| macOS-native lifecycle | launchd, ScreenCaptureKit, system integration |
+| Session persistence | Survives restarts, uses real browser state |
 
 ---
 
-## P1 — Benchmark Suite & Eval Framework
+## Rules (Non-Negotiable)
 
-### Task-Completion Benchmark (NEW)
-
-**The measurement system.** Before optimizing, measure. A structured benchmark that runs after every roadmap item ships, tracking whether Safari Pilot is actually getting better at real-world tasks.
-
-**What to build:**
-- 120 task definitions across 11 categories (JSON schema, programmatic eval)
-- Task categories: navigation, forms, extraction, multi-step workflows, DOM complexity, auth flows, accessibility-first, error recovery, Safari-specific, **intelligence-tier** (12 tasks requiring human-like inference), **competitive dual-mode** (12 tasks run on both Safari Pilot and Playwright MCP)
-- Benchmark runner: `npx safari-pilot-bench` — reads tasks, executes via MCP, evaluates, generates delta report
-- Trace capture: every run emits structured JSON traces per task (tools called, timing, domain observations)
-- Environment: 30% local fixtures, 40% stable live sites, 20% authenticated (X, Reddit, LinkedIn), 10% competitive
-- Delta reports: per-category success rates, intelligence-tier KPI, competitive win rate, regression detection
-
-**Intelligence-tier tasks** (the future recipe system's KPI): real-world goals like "Find 3 engineers at Anthropic on LinkedIn and list their titles" or "Find the most discussed HN post today and summarize its top comments." Low success rates initially — climbing as the roadmap progresses and recipes are built.
-
-**Design spec:** `docs/superpowers/specs/2026-04-13-benchmark-recipe-system-design.md`
-**Research:** `docs/research/competitive-browser-benchmarks.md`, `docs/research/competitive-classic-automation-tools.md`
-**Estimated effort:** 2-3 sessions.
-
----
-
-## P3 — Learnability & Recipe System
-
-### Domain Learning & Recipes (NEW — Back-end of Roadmap)
-
-**The moat.** Every competitor (Playwright, Browser Use, Stagehand, Skyvern) is stateless — each session starts from scratch. Safari Pilot should get better with every use, accumulating domain knowledge that makes it faster and more reliable over time. No production browser tool has cross-session learning. This would be first-in-industry.
-
-**What to build — 3-layer architecture:**
-
-**Layer 1 — Domain Knowledge (curated facts):**
-Per-domain JSON files with timestamped, confidence-scored facts: "LinkedIn search requires click-to-focus," "X feed loads dynamically on scroll," "Reddit comments need click-to-expand." Facts have ExpeL-style voting (ADD/UPVOTE/DOWNVOTE/EDIT) — cross-site patterns get promoted, site-specific quirks get scoped.
-
-**Layer 2 — Recorded Workflows (AWM-style):**
-Abstracted, parameterized multi-step procedures extracted from successful benchmark traces. "Search and extract results" with `{query}` and `{result_count}` parameters. Applicable across domains. Based on Agent Workflow Memory (ICML 2025) — 24-51% improvement on Mind2Web/WebArena.
-
-**Layer 3 — Learned Heuristics (ExpeL-style):**
-Universal behavioral rules extracted from success/failure patterns: "On SPAs, always re-snapshot after navigation," "When fill fails with not-editable, click element first." Confidence-scored via voting across benchmark runs.
-
-**MCP-native delivery:**
-When `safari_snapshot` runs on a known domain, the response includes `domain_hints[]`, `applicable_workflows[]`, and `heuristics[]` — zero extra tool calls. Claude sees the knowledge inline and adjusts behavior.
-
-**Seeding pipeline:**
-Benchmark traces → auto-extract domain observations → candidate recipes → human review + manual input → active recipes → next benchmark measures impact → feedback loop.
-
-**Design spec:** `docs/superpowers/specs/2026-04-13-benchmark-recipe-system-design.md`
-**Research:**
-- `docs/research/competitive-ai-native-browser-agents.md` — Browser Use, Stagehand, AgentQL, Skyvern competitive analysis
-- `docs/research/competitive-computer-use-visual-agents.md` — Claude CU, OpenAI CUA, UI-TARS, WebArena/Mind2Web benchmarks
-- `docs/research/competitive-adaptive-learning-systems.md` — Letta, Voyager, ExpeL, AWM, WALT, SkillWeaver architectures
-- `docs/research/competitive-browser-benchmarks.md` — WebArena, Mind2Web, WebVoyager, BrowserGym analysis
-- `docs/research/competitive-classic-automation-tools.md` — Playwright, Puppeteer, Selenium, Cypress feature matrix
-
-**Key research findings:**
-- AWM (ICML 2025): abstract parameterized workflows, 24-51% improvement
-- WALT (Salesforce): reverse-engineers site functionality into tools, 50% WebArena
-- ExpeL: insight extraction from success/failure pairs with confidence voting
-- Voyager (NVIDIA): skill library as executable code, indexed by description embeddings
-- Letta/MemGPT: tiered memory (core/archival/recall) with sleeptime consolidation
-- Zep: temporal knowledge graphs with fact validity windows
-
-**Estimated effort:** 4-6 sessions (after benchmark suite is running).
-
----
-
-## Estimated Total Effort to Full Parity + Beyond
-
-| Priority | Items | Sessions (revised) |
-|---|---|---|
-| P0 | ~~Daemon lifecycle~~ + ~~a11y snapshots~~ + ~~auto-waiting~~ | ~~4-5~~ **SHIPPED** |
-| P1 | ~~Locators~~ + downloads + PDF + **benchmark suite** | ~~1-2~~ + 1 + 2-3 + 2-3 = **5-8** |
-| P2 | CI runner + visual regression + video | 4-5 + 2-3 + 1-2 = **7-10** |
-| P3 | Route modification + HTTP auth + **recipe system** | 1 + 0.5 + 4-6 = **5.5-7.5** |
-| **Total** | **14 items** | **~18-26 sessions** |
-
-After P0 + P1: 95%+ Playwright parity + measurable benchmarks.
-After P2: full testing infrastructure.
-After P3: **self-improving tool that gets better with every use — first-in-industry.**
-
-**Additional research (post-roadmap):**
-- Auth strategy: `docs/research/auth-strategy-research.md` + `.claude/plans/auth-strategy-assessment.md`
-- Extension enablement: `docs/research/safari-extension-enablement-research.md`
-- Extension RCA: `docs/research/extension-rca-audit.md`
+1. **No mocks in any test.** If it can't be tested against real Safari, document it as untested.
+2. **No claiming shipped without live proof.** "Unit tests pass" means nothing.
+3. **No fixing tests to match broken code.** If the test fails, the product is wrong.
+4. **No building new features before existing ones are proven.** Phase order matters.
+5. **Full UPP pipeline for new code.** Brainstorm → spec → plan → TDD → verify.
+6. **Systematic debugging only.** No ad-hoc fixes, no "let me try this quick change."
+7. **Extension engine is the default.** If a test works through AppleScript but not extension, it's not done.
