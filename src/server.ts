@@ -375,6 +375,7 @@ export class SafariPilotServer {
             checks,
             failedChecks,
             sessionId: this.sessionId,
+            ...(this._initMeta ? { init: this._initMeta } : {}),
           }),
         },
       ],
