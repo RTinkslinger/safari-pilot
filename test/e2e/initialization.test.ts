@@ -49,19 +49,20 @@ describe('Initialization system', () => {
     expect(raw.meta?.engine).toBe('extension');
   }, 20000);
 
-  // NOTE: safari_evaluate via extension engine has a known timing issue (Bug 6).
-  // Content script isn't ready in newly opened tabs — storage bus command times out.
-  // Tracked in docs/upp/bugs/2026-04-22-session-test-findings.md.
-  // This test is skipped until Bug 6 is fixed.
-  it.skip('safari_evaluate routes through extension engine', async () => {
+  it('safari_evaluate routes through extension engine in new tab', async () => {
+    // Bug 6 fix: content-isolated.js now reads current sp_cmd on init,
+    // catching commands written before the content script loaded.
+    // Wait 3s after new_tab for content script to inject (document_idle).
+    await new Promise(r => setTimeout(r, 3000));
     const raw = await rawCallTool(
       client, 'safari_evaluate',
       { tabUrl: 'https://example.com/', script: 'return document.title' },
       nextId++,
       30000,
     );
+    expect(raw.payload).toBeDefined();
     expect(raw.meta?.engine).toBe('extension');
-  }, 35000);
+  }, 40000);
 
   it('pre-call gate detects and reports system status', async () => {
     // Just calling a tool proves the gate runs (it checks /status before executing).

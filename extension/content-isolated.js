@@ -25,9 +25,14 @@
   let myTabId = null;
   let pendingStorageCmd = null;
 
+  const processedCommandIds = new Set();
+
   function processStorageCommand(cmd) {
     if (cmd.tabId !== myTabId) return;
     if (cmd.deadline && cmd.deadline < Date.now()) return;
+    // Guard against processing the same command twice (init read + onChanged race)
+    if (cmd.commandId && processedCommandIds.has(cmd.commandId)) return;
+    if (cmd.commandId) processedCommandIds.add(cmd.commandId);
 
     const requestId = `sp_${++nextRequestId}_${Date.now()}`;
 
@@ -83,6 +88,16 @@
         const cmd = pendingStorageCmd;
         pendingStorageCmd = null;
         processStorageCommand(cmd);
+      }
+      // Check for commands written to storage BEFORE this content script loaded.
+      // storage.onChanged only fires for future changes — commands written while
+      // the page was loading (document_idle) are invisible to the listener.
+      // Read the current sp_cmd value and process if it's for this tab.
+      if (myTabId !== null) {
+        const stored = await browser.storage.local.get('sp_cmd');
+        if (stored.sp_cmd && stored.sp_cmd.tabId === myTabId) {
+          processStorageCommand(stored.sp_cmd);
+        }
       }
     } catch {
       // Background not available on first load — retry on visibility change
