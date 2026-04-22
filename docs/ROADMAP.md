@@ -8,10 +8,15 @@
 
 | # | Capability | Date | Proof |
 |---|---|---|---|
-| 0.1 | Initialization system — session window on MCP init, all-green gate, pre-call live health check, transparent 10s recovery, multi-session detection | 2026-04-23 | `test/e2e/initialization.test.ts` — 4 tests pass against real Safari. Init blocks until extension connects (1.8s). Health check confirms all systems. new_tab routes through extension engine. Pre-call gate verified. |
+| 0.1 | Initialization system — session window, all-green gate, pre-call health check, transparent recovery, multi-session | 2026-04-23 | `test/e2e/initialization.test.ts` — 5/5 pass |
+| 0.2 | Bug 6 fix — content script reads sp_cmd on init for new tabs | 2026-04-23 | safari_evaluate in new tab: 3.3s via extension engine |
+| 1.x | Phase 1: Core Navigation — navigate, new_tab, close_tab, list_tabs, evaluate, screenshot | 2026-04-23 | `test/e2e/phase1-core-navigation.test.ts` — 4/4 pass + 2 from init. Skip: back/forward (stale URL, backlog #3) |
+| 2.x | Phase 2: Page Understanding — snapshot (ARIA+refs), get_text, get_html, extract_links, extract_metadata | 2026-04-23 | `test/e2e/phase2-page-understanding.test.ts` — 6/6 pass, all extension engine |
+| 3.x | Phase 3: Interaction — fill, click, wait_for | 2026-04-23 | `test/e2e/phase3-interaction.test.ts` — 4/4 pass, all extension engine |
 
-### Known blockers for next phases
-- **Bug 6:** `safari_evaluate` via extension engine times out in newly opened tabs (content script not ready). Storage bus command never reaches the tab. This blocks Phase 1 item 1.5 (evaluate) and Phase 2+ (all extraction/interaction tools that use JS execution). Must be fixed before any tool beyond navigate/new_tab/list_tabs can be validated.
+### Known issues
+- **navigate_back/forward:** Stale URL query after history.back() — tool queries page info by old URL. Roadmap backlog #3.
+- **NDJSON line split:** Long click JS payloads with newlines can break daemon's line-based JSON parser when running in parallel with other tests. Intermittent.
 
 ---
 
