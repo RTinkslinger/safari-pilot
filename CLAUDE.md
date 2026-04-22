@@ -304,6 +304,19 @@ If a test does any of these, it belongs in `test/integration/`, not `test/e2e/`.
 
 Ask: "Does a real e2e test exercise the path a user would take?" If not, the feature is not tested and must not ship.
 
+### Trace capture (MANDATORY for all test runs)
+
+Every e2e test run, benchmark run, validation run, or manual test session MUST capture traces. The `McpTestClient` in `test/helpers/mcp-client.ts` handles this automatically:
+
+- **`test-results/traces/<timestamp>/tool-calls.jsonl`** — every tool call: name, args, full result, engine used, latency. This is the primary input for the recipe system's learning pipeline.
+- **`test-results/traces/<timestamp>/stderr.log`** — MCP server init progress, warnings, errors.
+- **`test-results/traces/<timestamp>/server-trace.ndjson`** — TypeScript server trace events (security pipeline, engine selection, ownership checks).
+- **`test-results/traces/<timestamp>/daemon-trace.ndjson`** — Swift daemon trace events (command dispatch, bridge, HTTP).
+
+These traces are NOT test artifacts to be cleaned up. They are the raw data that feeds domain learning, recipe extraction, and benchmark analysis. Never delete `test-results/traces/`. The directory is gitignored but must persist on the developer's machine.
+
+Any new test harness, benchmark runner, or validation script that executes Safari Pilot tools MUST capture equivalent trace data. If building a new runner outside of `McpTestClient`, write `tool-calls.jsonl` in the same format.
+
 ## Canonical Architecture Document
 
 **`ARCHITECTURE.md`** is the single source of truth for how Safari Pilot works as shipped. Every data flow, IPC protocol, security layer, and engine selection path is documented there with verification evidence.
