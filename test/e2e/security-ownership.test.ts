@@ -11,6 +11,22 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { initClient, rawCallTool, callTool, type McpTestClient } from '../helpers/mcp-client.js';
+import { readFileSync, existsSync } from 'node:fs';
+import { join } from 'node:path';
+import { homedir } from 'node:os';
+
+// Server writes trace events in real-time to ~/.safari-pilot/trace.ndjson.
+// McpTestClient only COPIES this file into its per-test trace dir on close(),
+// so mid-test assertions must read from the live location.
+const LIVE_SERVER_TRACE = join(homedir(), '.safari-pilot', 'trace.ndjson');
+
+function readServerTraceEvents(): Array<Record<string, unknown>> {
+  if (!existsSync(LIVE_SERVER_TRACE)) return [];
+  return readFileSync(LIVE_SERVER_TRACE, 'utf-8')
+    .split('\n')
+    .filter((l) => l.trim().length > 0)
+    .map((l) => { try { return JSON.parse(l) as Record<string, unknown>; } catch { return {}; } });
+}
 
 describe('Security: Tab ownership enforcement', () => {
   let client: McpTestClient;
@@ -85,6 +101,42 @@ describe('Security: Tab ownership enforcement', () => {
       ),
     ).rejects.toThrow(/tabUrl/);
   }, 15000);
+
+  // ── T7: registry evicts tabs on safari_close_tab ─────────────────────────
+
+  it('T7: closing an owned tab removes it from the ownership registry', async () => {
+    // Open a tab — agent owns it at a unique URL (unique-per-run to avoid
+    // collisions with tabs left behind by earlier test runs).
+    const unique = `https://example.org/?sp_t7=${Date.now()}`;
+    const tab = await callTool(
+      client, 'safari_new_tab', { url: unique }, nextId++,
+    );
+    const closedUrl = tab.tabUrl as string;
+    await new Promise((r) => setTimeout(r, 1500));
+
+    // Close it — T7's fix fires `tabOwnership.removeTab()` in step 8.post1
+    // and emits `ownership_tab_removed` into server-trace.ndjson precisely
+    // when the registry entry is dropped.
+    const closeRes = await callTool(
+      client, 'safari_close_tab', { tabUrl: closedUrl }, nextId++,
+    );
+    expect(closeRes.closed).toBe(true);
+
+    // Give the server tracer a beat to flush.
+    await new Promise((r) => setTimeout(r, 500));
+
+    // Direct evidence: trace file contains the eviction event with this URL.
+    // Pre-T7: no event was ever emitted because removeTab() was never called.
+    // The deferred-ownership path (T8) would silently absorb missing-registry
+    // calls anyway, so "try stale tool and expect throw" wouldn't discriminate.
+    // The trace-level check IS the discriminating assertion for T7.
+    const events = readServerTraceEvents();
+    const removeEvent = events.find((e) =>
+      (e as { event?: string }).event === 'ownership_tab_removed' &&
+      ((e as { data?: Record<string, unknown> }).data?.['tabUrl'] as string | undefined) === closedUrl,
+    );
+    expect(removeEvent, `server-trace.ndjson must contain ownership_tab_removed for ${closedUrl}`).toBeDefined();
+  }, 30000);
 
   // ── T5: safari_switch_frame deleted — was a no-op tool ───────────────────
 

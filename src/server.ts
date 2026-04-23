@@ -760,6 +760,27 @@ export class SafariPilotServer {
         } catch { /* tab registration is best-effort — don't fail the tool call */ }
       }
 
+      // 8.post1: Tab ownership removal — after safari_close_tab succeeds, drop
+      // the tab from the registry. Without this, the URL stays owned by the
+      // agent and if the user later opens a tab at the same URL, the agent
+      // would gain unauthorized ownership of the user's new tab.
+      if (name === 'safari_close_tab' && result.content?.[0]?.type === 'text') {
+        try {
+          const payload = JSON.parse((result.content[0] as { type: 'text'; text: string }).text);
+          if (payload.closed === true) {
+            const closedTabUrl = params['tabUrl'] as string;
+            const tabId = this.tabOwnership.findByUrl(closedTabUrl);
+            if (tabId !== undefined) {
+              this.tabOwnership.removeTab(tabId);
+              trace(traceId, 'server', 'ownership_tab_removed', {
+                tabUrl: closedTabUrl,
+                tabId,
+              });
+            }
+          }
+        } catch { /* best-effort; parse errors shouldn't fail the tool call */ }
+      }
+
       // 8.post2: Post-execution ownership — read engine meta for tab identity.
       // Extension results include _meta.tabId (stable) + _meta.tabUrl (current URL).
       // Use this to: (a) backfill extensionTabId, (b) refresh URL, (c) verify deferred ownership.
