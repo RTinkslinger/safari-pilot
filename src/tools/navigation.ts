@@ -186,11 +186,17 @@ export class NavigationTools {
   private async handleNavigateBack(params: Record<string, unknown>): Promise<ToolResponse> {
     const start = Date.now();
     const tabUrl = params['tabUrl'] as string;
+    const windowId = typeof params['_windowId'] === 'number' ? params['_windowId'] : undefined;
+    const tabIndex = typeof params['_tabIndex'] === 'number' ? params['_tabIndex'] : undefined;
 
     await this.executeJsInTab(tabUrl, 'history.back()');
     await sleep(WAIT_HISTORY_MS);
 
-    const pageInfo = await this.executeJsInTab(tabUrl, PAGE_INFO_JS);
+    // After history.back(), the tab URL has changed — query by position if available,
+    // otherwise fall back to stale URL (may fail).
+    const pageInfo = windowId && tabIndex
+      ? await this.executeJsInTabByPosition(windowId, tabIndex, PAGE_INFO_JS)
+      : await this.executeJsInTab(tabUrl, PAGE_INFO_JS);
     const data = pageInfo ?? { url: tabUrl, title: '' };
 
     return {
@@ -202,11 +208,16 @@ export class NavigationTools {
   private async handleNavigateForward(params: Record<string, unknown>): Promise<ToolResponse> {
     const start = Date.now();
     const tabUrl = params['tabUrl'] as string;
+    const windowId = typeof params['_windowId'] === 'number' ? params['_windowId'] : undefined;
+    const tabIndex = typeof params['_tabIndex'] === 'number' ? params['_tabIndex'] : undefined;
 
     await this.executeJsInTab(tabUrl, 'history.forward()');
     await sleep(WAIT_HISTORY_MS);
 
-    const pageInfo = await this.executeJsInTab(tabUrl, PAGE_INFO_JS);
+    // After history.forward(), the tab URL has changed — query by position if available.
+    const pageInfo = windowId && tabIndex
+      ? await this.executeJsInTabByPosition(windowId, tabIndex, PAGE_INFO_JS)
+      : await this.executeJsInTab(tabUrl, PAGE_INFO_JS);
     const data = pageInfo ?? { url: tabUrl, title: '' };
 
     return {
@@ -320,6 +331,25 @@ export class NavigationTools {
   ): Promise<Record<string, unknown> | undefined> {
     const script = this.engine.buildTabScript(tabUrl, jsCode);
     const result = await this.engine.execute(script);
+    if (!result.ok || !result.value) return undefined;
+    try {
+      const parsed = JSON.parse(result.value);
+      return typeof parsed === 'object' && parsed !== null ? (parsed as Record<string, unknown>) : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * Execute JavaScript in a tab identified by position (window id + tab index).
+   * Used after history.back()/forward() where the URL has changed and can't be matched.
+   */
+  private async executeJsInTabByPosition(
+    windowId: number,
+    tabIndex: number,
+    jsCode: string,
+  ): Promise<Record<string, unknown> | undefined> {
+    const result = await this.engine.executeJsInTabByPosition(windowId, tabIndex, jsCode);
     if (!result.ok || !result.value) return undefined;
     try {
       const parsed = JSON.parse(result.value);
