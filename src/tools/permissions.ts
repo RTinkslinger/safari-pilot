@@ -280,7 +280,7 @@ export class PermissionTools {
     const tabUrl = params['tabUrl'] as string;
     const timezone = params['timezone'] as string;
 
-    const escapedTimezone = timezone.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    const escapedTimezone = escapeForJsSingleQuote(timezone);
 
     const js = `
       var _OriginalDateTimeFormat = Intl.DateTimeFormat;
@@ -313,7 +313,7 @@ export class PermissionTools {
     const tabUrl = params['tabUrl'] as string;
     const locale = params['locale'] as string;
 
-    const escapedLocale = locale.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    const escapedLocale = escapeForJsSingleQuote(locale);
 
     const js = `
       Object.defineProperty(navigator, 'language', {
@@ -343,7 +343,7 @@ export class PermissionTools {
     const tabUrl = params['tabUrl'] as string;
     const userAgent = params['userAgent'] as string;
 
-    const escapedUserAgent = userAgent.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    const escapedUserAgent = escapeForJsSingleQuote(userAgent);
 
     const js = `
       Object.defineProperty(navigator, 'userAgent', {

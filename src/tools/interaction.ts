@@ -375,7 +375,7 @@ export class InteractionTools {
     const force = params['force'] === true;
 
     const selector = await this.resolveElement(tabUrl, params);
-    const escapedSelector = selector.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    const escapedSelector = escapeForJsSingleQuote(selector);
 
     const actionJs = `
       var el = document.querySelector('${escapedSelector}');
@@ -455,7 +455,7 @@ export class InteractionTools {
     const force = params['force'] === true;
 
     const selector = await this.resolveElement(tabUrl, params);
-    const escapedSelector = selector.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    const escapedSelector = escapeForJsSingleQuote(selector);
 
     const actionJs = `
       var el = document.querySelector('${escapedSelector}');
@@ -492,8 +492,8 @@ export class InteractionTools {
     const force = params['force'] === true;
 
     const selector = await this.resolveElement(tabUrl, params);
-    const escapedSelector = selector.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-    const escapedValue = value.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    const escapedSelector = escapeForJsSingleQuote(selector);
+    const escapedValue = escapeForJsSingleQuote(value);
 
     const actionJs = `
       var el = document.querySelector('${escapedSelector}');
@@ -564,7 +564,7 @@ export class InteractionTools {
     const optionIndex = params['optionIndex'] as number | undefined;
 
     const selector = await this.resolveElement(tabUrl, params);
-    const escapedSelector = selector.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    const escapedSelector = escapeForJsSingleQuote(selector);
 
     const actionJs = `
       var el = document.querySelector('${escapedSelector}');
@@ -572,8 +572,8 @@ export class InteractionTools {
       if (el.tagName !== 'SELECT') throw new Error('Element is not a <select>');
 
       var option;
-      ${optionValue !== undefined ? `option = Array.from(el.options).find(function(o) { return o.value === '${optionValue.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'; });` : ''}
-      ${optionLabel !== undefined ? `if (!option) option = Array.from(el.options).find(function(o) { return o.textContent.trim() === '${optionLabel.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'; });` : ''}
+      ${optionValue !== undefined ? `option = Array.from(el.options).find(function(o) { return o.value === '${escapeForJsSingleQuote(optionValue)}'; });` : ''}
+      ${optionLabel !== undefined ? `if (!option) option = Array.from(el.options).find(function(o) { return o.textContent.trim() === '${escapeForJsSingleQuote(optionLabel)}'; });` : ''}
       ${optionIndex !== undefined ? `if (!option) option = el.options[${optionIndex}];` : ''}
       if (!option) throw Object.assign(new Error('Option not found'), { name: 'ELEMENT_NOT_FOUND' });
 
@@ -597,7 +597,7 @@ export class InteractionTools {
     const force = params['force'] === true;
 
     const selector = await this.resolveElement(tabUrl, params);
-    const escapedSelector = selector.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    const escapedSelector = escapeForJsSingleQuote(selector);
 
     const actionJs = `
       var el = document.querySelector('${escapedSelector}');
@@ -623,7 +623,7 @@ export class InteractionTools {
     const force = params['force'] === true;
 
     const selector = await this.resolveElement(tabUrl, params);
-    const escapedSelector = selector.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    const escapedSelector = escapeForJsSingleQuote(selector);
 
     const actionJs = `
       var el = document.querySelector('${escapedSelector}');
@@ -651,8 +651,8 @@ export class InteractionTools {
     const content = params['content'] as string;
 
     const selector = await this.resolveElement(tabUrl, params);
-    const escapedSelector = selector.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-    const escapedText = content.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    const escapedSelector = escapeForJsSingleQuote(selector);
+    const escapedText = escapeForJsSingleQuote(content);
 
     const js = `
       var el = document.querySelector('${escapedSelector}');
@@ -690,10 +690,10 @@ export class InteractionTools {
     let escapedSelector = '';
     if (hasTarget) {
       const selector = await this.resolveElement(tabUrl, params);
-      escapedSelector = selector.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+      escapedSelector = escapeForJsSingleQuote(selector);
     }
 
-    const escapedKey = key.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    const escapedKey = escapeForJsSingleQuote(key);
 
     const js = `
       ${escapedSelector ? `var el = document.querySelector('${escapedSelector}'); if (el) el.focus();` : ''}
@@ -736,10 +736,10 @@ export class InteractionTools {
     let escapedSelector = '';
     if (hasTarget) {
       const selector = await this.resolveElement(tabUrl, params);
-      escapedSelector = selector.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+      escapedSelector = escapeForJsSingleQuote(selector);
     }
 
-    const escapedToElement = toElement ? toElement.replace(/\\/g, '\\\\').replace(/'/g, "\\'") : '';
+    const escapedToElement = toElement ? escapeForJsSingleQuote(toElement) : '';
 
     const js = `
       var target = ${escapedSelector ? `document.querySelector('${escapedSelector}')` : 'document.documentElement'};
@@ -802,8 +802,8 @@ export class InteractionTools {
       throw new Error('No target element specified. Use targetRef or targetSelector.');
     }
 
-    const escapedSource = resolvedSource.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-    const escapedTarget = resolvedTarget.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    const escapedSource = escapeForJsSingleQuote(resolvedSource);
+    const escapedTarget = escapeForJsSingleQuote(resolvedTarget);
 
     const actionJs = `
       var source = document.querySelector('${escapedSource}');

@@ -1,6 +1,7 @@
 import type { ToolResponse, ToolRequirements } from '../types.js';
 import type { IEngine } from '../engines/engine.js';
 import type { Engine } from '../types.js';
+import { escapeForJsSingleQuote, escapeForTemplateLiteral } from '../escape.js';
 
 export interface ToolDefinition {
   name: string;
@@ -121,7 +122,7 @@ export class FrameTools {
     const tabUrl = params['tabUrl'] as string;
     const frameSelector = params['frameSelector'] as string;
 
-    const escapedSelector = frameSelector.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    const escapedSelector = escapeForJsSingleQuote(frameSelector);
 
     // Verify the frame exists before recording the switch
     const js = `
@@ -155,9 +156,9 @@ export class FrameTools {
     const frameSelector = params['frameSelector'] as string;
     const script = params['script'] as string;
 
-    const escapedSelector = frameSelector.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    const escapedSelector = escapeForJsSingleQuote(frameSelector);
     // Escape the user script for embedding inside a JS string template
-    const escapedScript = script.replace(/\\/g, '\\\\').replace(/`/g, '\\`').replace(/\$/g, '\\$');
+    const escapedScript = escapeForTemplateLiteral(script);
 
     const js = `
       var frame = document.querySelector('${escapedSelector}');

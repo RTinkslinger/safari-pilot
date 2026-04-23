@@ -1,6 +1,7 @@
 import type { ToolResponse, ToolRequirements } from '../types.js';
 import type { IEngine } from '../engines/engine.js';
 import type { Engine } from '../types.js';
+import { escapeForJsSingleQuote } from '../escape.js';
 
 export interface ToolDefinition {
   name: string;
@@ -76,8 +77,8 @@ export class ShadowTools {
     const hostSelector = params['hostSelector'] as string;
     const shadowSelector = params['shadowSelector'] as string;
 
-    const escapedHost = hostSelector.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-    const escapedShadow = shadowSelector.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    const escapedHost = escapeForJsSingleQuote(hostSelector);
+    const escapedShadow = escapeForJsSingleQuote(shadowSelector);
 
     const js = `
       var host = document.querySelector('${escapedHost}');
@@ -112,8 +113,8 @@ export class ShadowTools {
     const hostSelector = params['hostSelector'] as string;
     const shadowSelector = params['shadowSelector'] as string;
 
-    const escapedHost = hostSelector.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-    const escapedShadow = shadowSelector.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    const escapedHost = escapeForJsSingleQuote(hostSelector);
+    const escapedShadow = escapeForJsSingleQuote(shadowSelector);
 
     const js = `
       var host = document.querySelector('${escapedHost}');
