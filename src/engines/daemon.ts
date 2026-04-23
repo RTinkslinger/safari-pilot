@@ -410,6 +410,12 @@ export class DaemonEngine extends BaseEngine {
 
       const timer = setTimeout(() => {
         sock.destroy();
+        // T9: a TCP timeout means the daemon endpoint is unhealthy for this
+        // process's point of view. Without clearing useTcp, every subsequent
+        // command would route to the same dead endpoint and hit the same
+        // timeout. Clearing lets ensureRunning() re-probe on the next call
+        // and fall back to spawning a local daemon if TCP is still down.
+        this.useTcp = false;
         settle(() => reject(new DaemonTimeoutError(method, effectiveTimeout)));
       }, effectiveTimeout);
 
@@ -427,6 +433,11 @@ export class DaemonEngine extends BaseEngine {
             const resp = JSON.parse(buf.split('\n')[0]) as DaemonResponse;
             settle(() => resolve(resp));
           } catch {
+            // T9: an unparseable response means the endpoint we reached is
+            // not speaking our protocol (wrong daemon version, wrong port
+            // taken by a squatter). Same reasoning as the timeout path —
+            // clear useTcp so the next call can re-probe and fall back.
+            this.useTcp = false;
             settle(() => reject(new Error('Invalid JSON response from daemon TCP')));
           }
         }

@@ -145,6 +145,8 @@ echo '{"id":"t","method":"ping"}' | ./bin/SafariPilotd
 # Expected: {"id":"t","ok":true,"value":"pong"}
 ```
 
+**TCP mode self-healing (2026-04-24, T9):** when the LaunchAgent daemon is live on `TCP:19474`, `DaemonEngine` sets `useTcp=true` after a successful probe and routes subsequent commands through `sendCommandViaTcp()` instead of its own stdin pipe. If a command fails via socket 'error', timeout, or unparseable JSON response, `useTcp` is reset to `false` so the next `ensureRunning()` call can re-probe or fall back to spawning a local daemon. Pre-T9 only the 'error' path reset the flag — timeouts and parse failures left the engine stuck on the dead TCP endpoint indefinitely. Unit-tested in `test/unit/engines/daemon.test.ts` with mocked `node:net`.
+
 ### Tier 3: AppleScript Engine (80ms p50)
 **Capabilities:** Basic navigation, form filling, text extraction, JS evaluation — always available fallback
 
