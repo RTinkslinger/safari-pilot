@@ -23,7 +23,6 @@ export class FrameTools {
 
   private registerHandlers(): void {
     this.handlers.set('safari_list_frames', this.handleListFrames.bind(this));
-    this.handlers.set('safari_switch_frame', this.handleSwitchFrame.bind(this));
     this.handlers.set('safari_eval_in_frame', this.handleEvalInFrame.bind(this));
   }
 
@@ -44,24 +43,6 @@ export class FrameTools {
           required: ['tabUrl'],
         },
         requirements: { idempotent: true },
-      },
-      {
-        name: 'safari_switch_frame',
-        description:
-          'Set the active frame context for subsequent commands. Records the frame selector so ' +
-          'future tool calls targeting this tab are scoped to the specified iframe.',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            tabUrl: { type: 'string', description: 'Current URL of the tab' },
-            frameSelector: {
-              type: 'string',
-              description: 'CSS selector for the iframe element to switch into (e.g. "#my-iframe", "iframe[name=chat]")',
-            },
-          },
-          required: ['tabUrl', 'frameSelector'],
-        },
-        requirements: { idempotent: false },
       },
       {
         name: 'safari_eval_in_frame',
@@ -115,39 +96,6 @@ export class FrameTools {
     if (!result.ok) throw new Error(result.error?.message ?? 'List frames failed');
 
     return this.makeResponse(result.value ? JSON.parse(result.value) : { count: 0, frames: [] }, Date.now() - start);
-  }
-
-  private async handleSwitchFrame(params: Record<string, unknown>): Promise<ToolResponse> {
-    const start = Date.now();
-    const tabUrl = params['tabUrl'] as string;
-    const frameSelector = params['frameSelector'] as string;
-
-    const escapedSelector = escapeForJsSingleQuote(frameSelector);
-
-    // Verify the frame exists before recording the switch
-    const js = `
-      var frame = document.querySelector('${escapedSelector}');
-      if (!frame) throw Object.assign(new Error('Frame not found: ${escapedSelector}'), { name: 'ELEMENT_NOT_FOUND' });
-      if (frame.tagName !== 'IFRAME') throw new Error('Element is not an iframe: ${escapedSelector}');
-
-      return {
-        switched: true,
-        frame: {
-          selector: '${escapedSelector}',
-          src: frame.src || null,
-          name: frame.name || null,
-          id: frame.id || null,
-        },
-      };
-    `;
-
-    const result = await this.engine.executeJsInTab(tabUrl, js);
-    if (!result.ok) throw new Error(result.error?.message ?? 'Switch frame failed');
-
-    return this.makeResponse(
-      result.value ? JSON.parse(result.value) : { switched: true, frame: { selector: frameSelector } },
-      Date.now() - start,
-    );
   }
 
   private async handleEvalInFrame(params: Record<string, unknown>): Promise<ToolResponse> {

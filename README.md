@@ -139,8 +139,8 @@ Open my X.com bookmarks and extract the top 5 posts with author profiles
 ### Shadow DOM (2)
 `safari_query_shadow` | `safari_click_shadow`
 
-### Frames (3)
-`safari_list_frames` | `safari_switch_frame` | `safari_eval_in_frame`
+### Frames (2)
+`safari_list_frames` | `safari_eval_in_frame`
 
 ### Permissions & Overrides (6)
 `safari_permission_get` | `safari_permission_set` | `safari_override_geolocation` | `safari_override_timezone` | `safari_override_locale` | `safari_override_useragent`

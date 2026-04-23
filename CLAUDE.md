@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-Safari Pilot is a native Safari browser automation framework for AI agents on macOS. It exposes 78 tools via MCP (stdio), letting Claude Code control Safari directly through AppleScript, a persistent Swift daemon, or a Safari Web Extension — no Chrome needed.
+Safari Pilot is a native Safari browser automation framework for AI agents on macOS. It exposes 76 tools via MCP (stdio), letting Claude Code control Safari directly through AppleScript, a persistent Swift daemon, or a Safari Web Extension — no Chrome needed.
 
 ## Ways of Working
 

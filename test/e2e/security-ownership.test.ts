@@ -86,6 +86,41 @@ describe('Security: Tab ownership enforcement', () => {
     ).rejects.toThrow(/tabUrl/);
   }, 15000);
 
+  // ── T5: safari_switch_frame deleted — was a no-op tool ───────────────────
+
+  it('T5: safari_switch_frame is NOT advertised in tools/list (removed as no-op)', async () => {
+    // T5 audit: handler stored no frame context; description lied about
+    // "records the frame selector so future tool calls are scoped".
+    // Real frame scoping is via safari_eval_in_frame — the no-op was deleted.
+    const resp = (await client.send({
+      jsonrpc: '2.0', id: nextId++, method: 'tools/list', params: {},
+    })) as Record<string, unknown>;
+    const result = resp['result'] as Record<string, unknown>;
+    const tools = result['tools'] as Array<Record<string, unknown>>;
+    const names = tools.map((t) => t['name'] as string);
+    expect(names).not.toContain('safari_switch_frame');
+    // safari_eval_in_frame is the replacement and MUST remain advertised
+    expect(names).toContain('safari_eval_in_frame');
+    expect(names).toContain('safari_list_frames');
+  }, 10000);
+
+  it('T5: calling safari_switch_frame fails rather than silently returning {switched: true}', async () => {
+    // Pre-fix behavior: handler returned {switched: true} without storing any
+    // frame context — a lie to the agent. Post-fix: the tool isn't registered
+    // at all, so any attempt fails at the security pipeline or handler dispatch.
+    // (Here, the ownership check fires first and rejects the unowned tabUrl —
+    // which is ALSO evidence that the no-op path is gone.)
+    await expect(
+      rawCallTool(
+        client,
+        'safari_switch_frame',
+        { tabUrl: 'https://example.com', frameSelector: 'iframe' },
+        nextId++,
+        5000,
+      ),
+    ).rejects.toThrow(); // any error is acceptable — the silent {switched:true} is not
+  }, 10000);
+
   // ── T2: registry URL refreshed after AppleScript navigation ──────────────
 
   it('T2: registry URL updates after safari_navigate — subsequent call with new URL succeeds', async () => {

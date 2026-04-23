@@ -109,7 +109,7 @@ All 15 telemetry points fire on the happy path.
 `safari_select_option`, `safari_session_storage_get`, `safari_session_storage_set`,
 `safari_set_cookie`, `safari_smart_scrape`, `safari_snapshot`,
 `safari_storage_state_export`, `safari_storage_state_import`, `safari_sw_list`,
-`safari_sw_unregister`, `safari_switch_frame`, `safari_take_screenshot`,
+`safari_sw_unregister`, `safari_take_screenshot`,
 `safari_test_flow`, `safari_type`, `safari_wait_for`, `safari_websocket_filter`,
 `safari_websocket_listen`
 
@@ -551,7 +551,6 @@ All 75 tools. A tool can have multiple classes (comma-separated).
 | safari_storage_state_import | 1, 5 | extension | checked | |
 | safari_sw_list | 1, 5 | extension | checked | |
 | safari_sw_unregister | 1, 5 | extension | checked | |
-| safari_switch_frame | 1, 5 | extension | checked | |
 | safari_take_screenshot | 1, 5 | extension | checked | Screenshot redaction applied |
 | safari_test_flow | 1, 5 | extension | checked | |
 | safari_type | 1, 5 | extension | checked | |

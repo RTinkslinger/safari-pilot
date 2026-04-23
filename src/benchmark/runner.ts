@@ -96,7 +96,6 @@ const ALL_SAFARI_TOOLS: string[] = [
   'safari_end_trace',
   'safari_get_console_messages',
   'safari_list_frames',
-  'safari_switch_frame',
   'safari_eval_in_frame',
   'safari_query_shadow',
   'safari_click_shadow',
