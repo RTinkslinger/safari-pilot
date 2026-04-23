@@ -45,7 +45,9 @@ let initPromise: Promise<SharedState> | null = null;
  * instance with a shared monotonic `nextId()` counter.
  *
  * Concurrent callers wait on a single in-flight promise so we never spawn
- * two servers if two test files race on the first call.
+ * two servers if two test files race on the first call. On init failure,
+ * the cached promise is cleared so a subsequent call can retry from scratch;
+ * the original caller still sees the original rejection (they asked first).
  */
 export async function getSharedClient(): Promise<{ client: McpTestClient; nextId: () => number }> {
   if (shared) {
@@ -53,9 +55,16 @@ export async function getSharedClient(): Promise<{ client: McpTestClient; nextId
   }
   if (!initPromise) {
     initPromise = (async () => {
-      const { client, nextId } = await initClient('dist/index.js');
-      shared = { client, counter: nextId };
-      return shared;
+      try {
+        const { client, nextId } = await initClient('dist/index.js');
+        shared = { client, counter: nextId };
+        return shared;
+      } catch (err) {
+        // Clear the cached rejection so the next caller can retry rather
+        // than permanently await the same rejected promise.
+        initPromise = null;
+        throw err;
+      }
     })();
   }
   const s = await initPromise;
