@@ -1286,8 +1286,32 @@ end tell'`,
   }
 
   async shutdown(): Promise<void> {
+    // Close the session window BEFORE tearing down engines so the user doesn't
+    // see stray `example.com` windows accumulate across MCP server lifecycles.
+    // Uses direct execSync with a short timeout so an unresponsive Safari can't
+    // deadlock the shutdown path.
+    await this.closeSessionWindow();
     for (const engine of this.engines.values()) {
       await engine.shutdown();
+    }
+  }
+
+  private async closeSessionWindow(): Promise<void> {
+    const wid = this._sessionWindowId;
+    if (wid === undefined) return;
+    this._sessionWindowId = undefined;
+    trace('shutdown', 'server', 'session_window_close_start', { windowId: wid });
+    try {
+      const { execSync } = await import('node:child_process');
+      execSync(
+        `osascript -e 'tell application "Safari" to if (exists window id ${wid}) then close window id ${wid}'`,
+        { timeout: 3000, encoding: 'utf-8' },
+      );
+      trace('shutdown', 'server', 'session_window_closed', { windowId: wid });
+    } catch (err) {
+      trace('shutdown', 'server', 'session_window_close_failed', {
+        windowId: wid, error: String(err),
+      }, 'error');
     }
   }
 }

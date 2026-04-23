@@ -314,6 +314,16 @@ MCP `initialize()` blocks until all systems are green. Every tool call does a li
 
 - **Alarm backup**: 1-minute `browser.alarms` fires as belt-and-suspenders.
 
+### Shutdown Lifecycle (2026-04-23, T10)
+
+The MCP server runs one Safari window per process lifetime (`_sessionWindowId`). A crash or exit without cleanup leaves that window behind, and vitest — which spawns a new server per test file — accumulates hundreds of orphans.
+
+- **Signal handlers** (`src/index.ts`): `SIGINT` and `SIGTERM` are registered BEFORE `safariPilot.start()`, because `start()` blocks up to ~10s waiting for the extension. If the harness sends SIGTERM during that interval (exactly when vitest tears down a test file) and the handler isn't wired yet, Node's default termination path fires and the window leaks. Handlers are idempotent (guarded by `shuttingDown`), race shutdown against a 3s hard timeout, and exit with 130 (SIGINT) / 143 (SIGTERM).
+- **`SafariPilotServer.shutdown()`**: closes the session window first, then calls `engine.shutdown()` for each engine. Order matters: closing via AppleScript is independent of the engine pool, but running it first ensures we don't burn the 3s budget on engine teardown and leave the window open.
+- **`closeSessionWindow()`**: `osascript -e 'tell application "Safari" to if (exists window id N) then close window id N'` with a 3s execSync timeout. Traces `session_window_close_start` / `session_window_closed` / `session_window_close_failed`.
+- **AppleScript ghost-reference quirk**: after `close window id N` succeeds, Safari keeps the AppleScript dictionary entry alive, so `exists window id N` returns `true` indefinitely. `visible of window id N` is the truthful signal — it flips to `false` at close. The T10 test asserts on `visible`, not `exists` (see `test/e2e/signal-shutdown.test.ts`).
+- **Uncatchable signals**: `SIGKILL` and process crashes bypass this path by design. The next session's `registerWithDaemon()` is responsible for surfacing stale state; there is no userspace way to close a Safari window after process death.
+
 ### ExtensionBridge Command Queue
 - In-memory queue (not file-based — sandbox blocks filesystem access)
 - handleExecute: queues command + suspends via CheckedContinuation; fast-paths a waiting long-poll if one is registered

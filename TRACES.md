@@ -110,6 +110,12 @@
 **Context:** Audit methodology: 8 specialist agents (security pipeline, engine system, extension IPC, daemon core, tool modules, tab ownership, init/session, distribution) → unified gap map (7C + 24H + 30M) → 61 per-finding deep-trace agents (6-slot concurrency) each tracing full git history. 2 findings rejected (M15 primitive _meta unreachable, M27 keepalive works), 1 corrected (H7 serializer sound — real issue is silent catch{}). 7 recurring patterns identified (build-then-wire gap, spec-as-truth, mock false confidence, catch-and-swallow, forward declarations, URL as identity, asymmetric handling). 7 rules codified. UPP test-reviewer hardening proposed (2 new checks + mandatory gate).
 ---
 
+### Iteration 22 - 2026-04-23
+**What:** T10 (P0) — SIGTERM/SIGINT handlers in `src/index.ts` close the session window before process exit, stopping the hundreds-of-Safari-windows leak across vitest test runs.
+**Changes:** `src/index.ts` (SIGINT/SIGTERM handlers registered BEFORE `start()` so mid-init signals are caught; 3s shutdown race; exits 130/143), `src/server.ts` (`shutdown()` now calls new `closeSessionWindow()` first; uses `osascript` with 3s exec timeout; traces close_start / closed / close_failed), `test/e2e/signal-shutdown.test.ts` (2 tests — SIGTERM + SIGINT, isolated `SAFARI_PILOT_TRACE_DIR` per run to read `session_window_created`, assert on `visible of window id` rather than `exists` because Safari keeps ghost dict entries), `ARCHITECTURE.md` (+Shutdown Lifecycle section documenting ordering, ghost-reference quirk, SIGKILL caveat).
+**Context:** Root cause found via systematic debugging: initial handler registration was AFTER `await safariPilot.start()`, and start() blocks ~10s waiting for extension; SIGTERM from vitest during that window hit Node's default terminator before any handler existed. Second-order discovery: Safari's AppleScript dictionary retains `window id N` with `exists=true` after close — `visible=false` is the truthful "user-facing closed" signal. This commit is standalone per advisor directive; T-Harness refactor (single-spawn harness) is next. SIGKILL / hard crashes are intentionally out of scope.
+---
+
 <!-- Iterations 5-6 archived to traces/archive/milestone-2.md -->
 
 <!-- Iterations 7-9 archived to traces/archive/milestone-3.md -->
