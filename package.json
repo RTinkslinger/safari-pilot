@@ -36,6 +36,7 @@
     "benchmark:dry": "node dist/benchmark/runner.js --dry-run",
     "lint": "tsc --noEmit",
     "postinstall": "bash scripts/postinstall.sh",
+    "preuninstall": "bash scripts/preuninstall.sh",
     "verify:extension:smoke": "bash scripts/verify-extension-smoke.sh",
     "verify:extension:full": "npm run verify:extension:smoke && npx vitest run test/e2e/",
     "prepublishOnly": "bash hooks/pre-publish-verify.sh"
