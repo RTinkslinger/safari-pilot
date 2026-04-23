@@ -693,6 +693,40 @@ export class SafariPilotServer {
         metaTabUrl: this.engineProxy?.getLastMeta()?.tabUrl ?? null,
       }, 'event', Date.now() - start);
 
+      // 8.post0: Navigation URL refresh — AppleScript-routed navigation tools
+      // (safari_navigate, _back, _forward, _reload) change the tab's URL but
+      // don't produce _meta, so the extension-path URL update at step 8.post2
+      // never fires for them. Without this sync, the registry keeps the OLD URL
+      // and the next tool call with the NEW URL hits TabUrlNotRecognizedError.
+      //
+      // Scope: only tools that can change a tab's URL AND are covered by the
+      // ownership check (tabUrl in params). safari_new_tab is handled separately
+      // at step 8.post because it REGISTERS a new tab rather than updating one.
+      const NAV_URL_CHANGING_TOOLS = new Set([
+        'safari_navigate',
+        'safari_navigate_back',
+        'safari_navigate_forward',
+        'safari_reload',
+      ]);
+      if (NAV_URL_CHANGING_TOOLS.has(name) && result.content?.[0]?.type === 'text') {
+        try {
+          const parsed = JSON.parse((result.content[0] as { type: 'text'; text: string }).text);
+          const oldTabUrl = params['tabUrl'] as string | undefined;
+          const newUrl = typeof parsed.url === 'string' ? parsed.url : undefined;
+          if (oldTabUrl && newUrl && oldTabUrl !== newUrl) {
+            const tabId = this.tabOwnership.findByUrl(oldTabUrl);
+            if (tabId !== undefined) {
+              this.tabOwnership.updateUrl(tabId, newUrl);
+              trace(traceId, 'server', 'ownership_url_refreshed', {
+                tool: name,
+                oldUrl: oldTabUrl,
+                newUrl,
+              });
+            }
+          }
+        } catch { /* best-effort; don't fail the tool call on parse errors */ }
+      }
+
       // 8.post: Tab ownership registration — after safari_new_tab succeeds,
       // register the new tab URL so subsequent tool calls pass ownership checks.
       if (name === 'safari_new_tab' && result.content?.[0]?.type === 'text') {

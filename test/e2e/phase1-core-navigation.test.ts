@@ -67,11 +67,12 @@ describe('Phase 1: Core Navigation', () => {
   }, 20000);
 
   // ── 1.7 Navigate back/forward ────────────────────────────────────────────
-  // Known limitation: navigate_back/forward query page info using the stale tabUrl
-  // (the URL before history.back). After back(), the URL changes but the tool can't
-  // find the tab by the old URL. Returns stale data.
-  // Tracked in ROADMAP backlog item #3.
-  it.skip('1.7 safari_navigate_back returns to previous page (KNOWN: stale URL query)', async () => {
+  // Requires two fixes working together:
+  //  - positional page-info query after history.back/forward (commit 8cf4d3f,
+  //    so PAGE_INFO_JS runs against the right tab after its URL changed);
+  //  - post-navigation ownership URL refresh (T2, server.ts step 8.post0, so
+  //    the registry tracks the new URL and the next call still finds the tab).
+  it('1.7 safari_navigate_back returns to previous page', async () => {
     const result = await callTool(
       client, 'safari_navigate_back',
       { tabUrl },
@@ -82,7 +83,7 @@ describe('Phase 1: Core Navigation', () => {
     tabUrl = result.url;
   }, 20000);
 
-  it.skip('1.7 safari_navigate_forward (depends on back working)', async () => {
+  it('1.7 safari_navigate_forward returns to next page', async () => {
     const result = await callTool(
       client, 'safari_navigate_forward',
       { tabUrl },
