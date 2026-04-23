@@ -104,6 +104,12 @@
 **Context:** Bug 6 root cause: `storage.onChanged` only fires for future changes. Content scripts inject at `document_idle` — commands written before injection are invisible. Fix: read current `sp_cmd` after tabId registration. Extension rebuilt + notarized (build 202604230054). All 19 e2e tests proven through extension engine against real Safari. navigate_back/forward deferred (stale URL query — backlog #3).
 ---
 
+### Iteration 21 - 2026-04-23
+**What:** Full codebase audit — 8 specialist agents + 61 per-finding deep-trace agents. Produced `docs/AUDIT-TASKS.md` (58 verified tasks, P0-P3). Also fixed 6 issues: escaping migration (26 sites), navigate_back/forward positional targeting, domainMatches ccTLD, Bug 9 alarm_fire, orphaned daemon cleanup, ARCHITECTURE.md branch ref.
+**Changes:** `src/tools/interaction.ts` (17 escaping sites → escapeForJsSingleQuote), `src/tools/shadow.ts` (4 sites + import), `src/tools/permissions.ts` (3 sites), `src/tools/frames.ts` (2 sites + import + escapeForTemplateLiteral), `src/tools/navigation.ts` (navigate_back/forward use executeJsInTabByPosition + new helper method), `src/security/tab-ownership.ts` (extractRegistrableDomain + TWO_PART_TLDS for ccTLD fix), `daemon/Sources/SafariPilotdCore/ExtensionBridge.swift` (alarm_fire → recordAlarmFire in __trace__ handler), `scripts/update-daemon.sh` (pkill orphaned daemons), `ARCHITECTURE.md` (branch ref, escaping contract, domainMatches description, ccTLD limitation removed), `CLAUDE.md` (SKIP_OWNERSHIP_TOOLS updated). Created `docs/AUDIT-TASKS.md` (58 tasks). UPP proposal at `~/Claude Projects/Skills Factory/Ultra Product Powers/docs/upp/specs/2026-04-23-test-reviewer-hardening-proposal.md`.
+**Context:** Audit methodology: 8 specialist agents (security pipeline, engine system, extension IPC, daemon core, tool modules, tab ownership, init/session, distribution) → unified gap map (7C + 24H + 30M) → 61 per-finding deep-trace agents (6-slot concurrency) each tracing full git history. 2 findings rejected (M15 primitive _meta unreachable, M27 keepalive works), 1 corrected (H7 serializer sound — real issue is silent catch{}). 7 recurring patterns identified (build-then-wire gap, spec-as-truth, mock false confidence, catch-and-swallow, forward declarations, URL as identity, asymmetric handling). 7 rules codified. UPP test-reviewer hardening proposed (2 new checks + mandatory gate).
+---
+
 <!-- Iterations 5-6 archived to traces/archive/milestone-2.md -->
 
 <!-- Iterations 7-9 archived to traces/archive/milestone-3.md -->

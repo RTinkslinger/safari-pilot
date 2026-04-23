@@ -1,0 +1,348 @@
+# Safari Pilot Audit Task List
+
+*Generated: 2026-04-23 | Method: 8 specialist audit agents + 61 per-finding deep-trace agents | 89 commits analyzed*
+
+**This document is the authoritative list of work to be done before any new feature development.** Every item has been traced through the full git history, cross-referenced against specs/plans/research, and verified with commit citations. Items are grouped by component and ordered by priority within each group.
+
+**Rejected findings (2):** M15 (primitive results lose _meta) — false positive, storage bus always wraps as object; M27 (isSessionAlive always false) — false positive, keepalive path is correctly wired through content script -> background.js -> POST /result -> ExtensionBridge.
+
+**Corrected finding (1):** H7 (NDJSON line-split) — daemon serializer correctly escapes newlines via JSONSerialization. Real issue is the silent `catch {}` at daemon.ts:330 that discards malformed lines without logging or rejecting the pending request.
+
+---
+
+## Priority Tiers
+
+| Tier | Criteria | Count |
+|------|----------|-------|
+| **P0** | Security bypass, data loss, or core workflow broken | 12 |
+| **P1** | Reliability/correctness — silent wrong behavior | 16 |
+| **P2** | Dead code, documentation lies, quality debt | 15 |
+| **P3** | Missing features, cosmetic, low-probability | 16 |
+
+---
+
+## P0: Security Bypass / Core Workflow Broken
+
+### T1. Make `tabUrl` required on `safari_navigate`
+**Findings:** C1 (security + tab-ownership audit, confirmed by 2 independent agents)
+**Root cause:** `safari_navigate` schema declares `required: ['url']` — `tabUrl` is optional. Ownership check at `server.ts:579` is gated on `params['tabUrl']` being truthy. Without it, agent can navigate ANY user tab (banking, email).
+**Origin:** `aa1c302` (2026-04-11) — navigation tools created with optional tabUrl as UX convenience ("omit to use front tab"). Security was added later (`316feed`, 2026-04-12) without questioning the optional design.
+**Traces:** C1 agent traced through 9 commits. The `if (params['tabUrl'] && ...)` gate was carried through 5 subsequent refactors (`68fb1ed`, `75177e8`, `3cf95d8`) without re-examination.
+
+### T2. Update registry URL after `safari_navigate` via AppleScript
+**Findings:** C2 (tab-ownership audit, confirmed by cross-reference with H3, Bug 7)
+**Root cause:** NavigationTools is hardwired to raw `AppleScriptEngine` (not EngineProxy) at `server.ts:257`. After navigation, no `_meta` flows back, so the post-execution URL update at `server.ts:732-785` never fires. Registry keeps old URL. All subsequent tool calls fail with `TabUrlNotRecognizedError`.
+**Origin:** `7c4fd2a` (2026-04-16) explicitly excluded NavigationTools from EngineProxy. `68fb1ed` (2026-04-21) removed the old `NAVIGATION_URL_TRACKING_TOOLS` mechanism that had correctly updated URLs. The replacement (`_meta`-based) is architecturally incapable of handling NavigationTools.
+**Traces:** C2 agent traced through 10 commits including the removal of the only working URL-update mechanism.
+
+### T3. Wire `preuninstall` in `package.json`
+**Findings:** C3 (distribution audit)
+**Root cause:** `scripts/preuninstall.sh` exists and is complete (handles both daemon and health-check LaunchAgents) but `package.json` has never had a `"preuninstall"` key. `npm uninstall` leaves daemon running and restarting via `KeepAlive` forever.
+**Origin:** `9220fbf` (2026-04-12) created the script. `75cd0c8` (3 minutes later) fixed postinstall wiring but didn't wire preuninstall. Never caught in 20 subsequent commits.
+**Traces:** C3 agent confirmed zero `grep` hits for "preuninstall" in any version of `package.json`.
+
+### T4. Ship universal daemon binary in npm package
+**Findings:** C4 (distribution audit)
+**Root cause:** `release.yml` builds universal binary to `dist-bin/SafariPilotd` but `npm publish` packages `bin/SafariPilotd` (populated by postinstall's `swift build` — arm64-only on CI runner). Missing `cp dist-bin/SafariPilotd bin/SafariPilotd` step.
+**Origin:** `9220fbf` (2026-04-12) created release.yml without the copy step. Never added across 5 tag pushes (v0.1.0-v0.1.4).
+**Traces:** C4 agent verified npm tarball contains arm64-only binary via `file` command.
+
+### T5. Remove or fix `safari_switch_frame` (no-op tool)
+**Findings:** C5 (tool-modules audit)
+**Root cause:** Handler verifies iframe exists and returns `{ switched: true }` but stores no frame context. No subsequent tool is affected by the "switch." Description promises "Records the frame selector so future tool calls targeting this tab are scoped to the specified iframe" — completely false.
+**Origin:** `b3b83a1` (2026-04-12) — created as part of a batch, never had frame context storage.
+**Traces:** C5 agent confirmed zero `grep` hits for `frameContext`, `currentFrame`, `activeFrame` in any source file.
+
+### T6. Fix IDB tools (`safari_idb_list`, `safari_idb_get`) — broken on all engines
+**Findings:** C6 (tool-modules audit)
+**Root cause:** Both use `return new Promise(...)` in injected JS. AppleScript's `do JavaScript` doesn't await — returns `[object Promise]` as string. Extension's `content-main.js` also doesn't await (`result = fn()` not `result = await fn()`). Need `requiresAsyncJs` capability flag + `await` in content-main.js.
+**Origin:** `aa34541` (2026-04-12) — IDB tools created with async JS. No engine supported async at the time or since.
+**Traces:** C6 agent verified both the AppleScript and extension paths fail, and the mock tests that "passed" bypassed execution entirely.
+
+### T7. Call `removeTab()` after `safari_close_tab`
+**Findings:** H5 (tab-ownership audit)
+**Root cause:** `TabOwnership.removeTab()` exists but is never called. Closed tabs remain in registry. Stale URL could match a user's tab later, granting the agent ownership of a user tab.
+**Origin:** `630526e` (2026-04-12) created `removeTab()`. `316feed` wired `registerTab()` for new_tab but never wired `removeTab()` for close_tab. Identity spec (`2026-04-20`) explicitly listed tab closure as a "Non-Goal" based on incorrect assessment that "orphaned entries are harmless."
+**Traces:** H5 agent confirmed zero `grep` hits for `removeTab` in `src/server.ts` across all commits.
+
+### T8. Fix deferred ownership no-_meta path — update ARCHITECTURE.md or restore throw
+**Findings:** H3 (security + tab-ownership audit, confirmed by 2 agents)
+**Root cause:** `server.ts:760-784` — when deferred ownership check has no `_meta`, code silently succeeds and updates the FIRST owned tab's URL. ARCHITECTURE.md line 222 says "throw (fail closed)" — code explicitly does NOT throw. Change was deliberate (`75177e8`, "Don't throw — the tool already executed").
+**Traces:** H3 agent traced the spec → implementation → reversal across 7 commits.
+
+### T9. Reset `useTcp` on timeout and parse failure in DaemonEngine
+**Findings:** H8 + M5 (engine audit)
+**Root cause:** `sendCommandViaTcp()` resets `useTcp = false` on socket error but NOT on timeout or JSON parse failure. After either, the engine is permanently stuck in TCP mode with 30s timeout on every call until MCP restart.
+**Origin:** `1937c80` (2026-04-16) introduced TCP. `2737f6d` audit fix added reset on error only — missed timeout/parse paths.
+**Traces:** H8 agent traced all 4 exit paths and confirmed the asymmetric reset.
+
+### T10. Add SIGTERM/SIGINT handlers to `index.ts`
+**Findings:** H21 (init-session audit)
+**Root cause:** `src/index.ts` has zero signal handlers. Process death orphans: session window, daemon child process, session registration. `SafariPilotServer.shutdown()` exists but is never called. Shutdown itself doesn't close the session window either.
+**Origin:** `b012d06` (2026-04-11) — never added. Init spec explicitly deferred as "Out of scope (v1)."
+**Traces:** H21 agent confirmed no `process.on('SIGTERM')` in any version of `index.ts`.
+
+### T11. Propagate `ensureSessionWindow()` failure
+**Findings:** H20 (init-session audit)
+**Root cause:** Catch block traces error but doesn't propagate. `_sessionWindowId` stays undefined. Every subsequent tool call triggers recovery (10s delay) then `SessionRecoveryError`. Server is effectively dead but reported successful startup.
+**Origin:** `388a79c` (2026-04-21) — catch pattern was appropriate when session tab was optional. `4ddbffb` made it load-bearing without updating error handling.
+**Traces:** H20 agent traced the catch pattern through 5 refactors where it went from "safe to swallow" to "catastrophic to swallow."
+
+### T12. Wire `recordEngineFailure()` into server error path
+**Findings:** H4 (security audit)
+**Root cause:** Per-engine circuit breaker API exists, `isEngineTripped('extension')` is checked in engine-selector, but `recordEngineFailure()` is never called. The breaker can never trip. Designed for commit 1c (v0.1.7) which was never built.
+**Origin:** `78938fb` (2026-04-18) built the API. Commit 1c plan was abandoned during scope pivot to HTTP IPC and initialization system.
+**Traces:** H4 agent confirmed zero `grep` hits for `recordEngineFailure` in `src/` and traced the orphaned commit 1c plan.
+
+---
+
+## P1: Reliability / Correctness — Silent Wrong Behavior
+
+### T13. Fix `parseJsResult` empty-string CSP detection
+**Findings:** M8 (engine audit)
+**Root cause:** Triple-nested conditional drops `raw === ''` case. Comment says "Bare empty = CSP" but code treats empty as success `{ ok: true, value: '' }`. CSP-protected pages silently return empty data instead of `CSP_BLOCKED` error.
+**Origin:** `96064f6` (2026-04-11) — never modified since creation.
+
+### T14. Fix tab position staleness after reorder/close
+**Findings:** H6 (tab-ownership audit)
+**Root cause:** `windowId`/`tabIndex` captured once at tab creation, never updated. Tab reorder or sibling close shifts indices. Positional targeting silently executes in wrong tab.
+**Origin:** `3cf95d8` (2026-04-23) — introduced positional identity without position refresh mechanism. Safari AppleScript has no stable tab ID (only positional `tab N`).
+
+### T15. Fix `safari_new_tab` idempotent flag (should be false)
+**Findings:** H13 (tool-modules audit)
+**Root cause:** Marked `idempotent: true` — retry creates duplicate tabs. Currently inert (NavigationTools never routes through extension engine) but architecturally wrong.
+**Origin:** `78938fb` (2026-04-18) bulk migration. Spec didn't categorize `safari_new_tab`. Migration error (same batch that broke `safari_eval_in_frame` at `368cbe2`).
+
+### T16. Fix `safari_hover` description — CSS `:hover` not triggered
+**Findings:** H14 (tool-modules audit)
+**Root cause:** Synthetic `dispatchEvent(new MouseEvent(...))` fires JS handlers but does NOT activate CSS `:hover`. Web platform limitation. Description falsely claims "Triggers CSS :hover states."
+**Origin:** `d65c461` (2026-04-11) — false claim from day one, never verified.
+
+### T17. Fix `safari_take_screenshot` — remove dead params or implement them
+**Findings:** H15 (tool-modules audit)
+**Root cause:** `fullPage`, `tabUrl`, `quality` defined in schema but completely ignored by handler. `screencapture -x` captures frontmost window only.
+**Origin:** `115c762` (2026-04-11) — schema-first, implementation-never pattern. Competitive analysis marks fullPage as "RD" (roadmap).
+
+### T18. Fix `safari_export_pdf` tab targeting
+**Findings:** H18 (tool-modules audit)
+**Root cause:** `extractHtml()` hardcodes `current tab of front window` regardless of `tabUrl`. Code review at `e6c7682` deliberately removed tab-aware branches and renamed param to `_tabUrl`.
+**Origin:** `016ff8c` → `e6c7682` (2026-04-14) — review chose "always front tab" over fixing the targeting.
+
+### T19. Fix `safari_paginate_scrape` stale URL after click
+**Findings:** H17 (tool-modules audit)
+**Root cause:** After clicking "next", queries new page using OLD `currentUrl`. URL lookup fails. `currentUrl` becomes `""` (empty string from `??`). All subsequent pages silently fail.
+**Origin:** `35e3c58` (2026-04-12). CompoundTools receives raw `engine` not `proxy` — no positional identity.
+
+### T20. Fix `safari_eval_in_frame` — replace `eval()` with `new Function()`
+**Findings:** H16 (tool-modules audit)
+**Root cause:** Only tool using explicit `eval()`. Fails on any page with CSP `script-src` without `'unsafe-eval'`. `content-main.js` uses `new _Function()` (pre-captured constructor) which survives CSP.
+**Origin:** `b3b83a1` (2026-04-12). Security audit `162e5a5` removed the engine routing flag but didn't fix the `eval()` itself.
+
+### T21. Add content script `history.pushState` patching
+**Findings:** M10 (extension-ipc audit)
+**Root cause:** Tab cache stale after SPA client-side navigation. `tabs.onUpdated` doesn't fire for pushState. Fix: monkey-patch `history.pushState`/`replaceState` in `content-main.js` to emit URL change events through relay.
+**Origin:** Documented as non-goal in spec `3d89865` (2026-04-21). `content-main.js` already patches `fetch`, `XMLHttpRequest`, `alert/confirm/prompt`, `attachShadow` — same pattern.
+
+### T22. Fix `pollLoop` error handling — retry on transient failures
+**Findings:** M12 (extension-ipc audit)
+**Root cause:** `while(true)` exits on ANY catch (including `AbortError` from normal 10s timeout). Extension goes deaf for up to 60s until next alarm wake. No retry logic.
+**Origin:** `78938fb` (2026-04-18).
+
+### T23. Fix 15s disconnect timeout vs 20s keepalive interval
+**Findings:** M14 (extension-ipc audit)
+**Root cause:** Daemon marks extension disconnected at 15s, keepalive fires at 20s. 5s false-disconnect window (25% of cycle) triggers unnecessary recovery.
+**Fix:** Lower keepalive to 10s or raise timeout to 25s.
+
+### T24. Fix `domainMatches()` — either wire it or delete it
+**Findings:** M1 (security audit)
+**Root cause:** Method exists, ARCHITECTURE.md claims it's used as a DoS guard, but it was removed from server.ts at `75177e8` because it broke cross-domain link clicks. Dead code with stale documentation.
+
+### T25. Fix shutdown detection in CommandDispatcher
+**Findings:** M17 (daemon-core audit)
+**Root cause:** `main.swift` uses `trimmed.contains("\"shutdown\"")` on raw NDJSON line. Page content containing the word "shutdown" could crash the daemon. Should use parsed `command.method == "shutdown"`.
+**Origin:** `c5ab358` (2026-04-12) — never modified.
+
+### T26. Add thread safety to `Trace.swift`
+**Findings:** M19 (daemon-core audit)
+**Root cause:** `seekToEndOfFile()` + `write()` without synchronization. Concurrent calls from bridge/HTTP/dispatcher queues can corrupt trace NDJSON.
+**Origin:** `6dcbeed` (2026-04-21) — single commit, never modified.
+
+### T27. Fix `findTargetTab` active-tab fallback
+**Findings:** M11 (extension-ipc audit)
+**Root cause:** Falls through to active tab when URL not found. Should return null when `tabUrl` was explicitly provided but unmatched, only fall through when `tabUrl` is absent.
+**Origin:** `9e8ad6f` (2026-04-12) legacy pattern. URL matching added in `14f37f5` but fallback preserved.
+
+### T28. Fix health gate to skip extension recovery for AppleScript-only tools
+**Findings:** M24 (init-session audit)
+**Root cause:** Gate at `server.ts:413` runs before engine selection at line 520. Has zero awareness of which engine the tool needs. `safari_list_tabs` triggers 10s extension recovery it will never use.
+**Origin:** `5fb94fa` (2026-04-23).
+
+---
+
+## P2: Dead Code / Documentation Lies / Quality Debt
+
+### T29. Wire `killSwitch.recordError()` into error path
+**Findings:** M2 (security audit)
+**Root cause:** Method exists, config pipeline built (`autoActivation`), but `recordError()` never called from `executeToolWithSecurity()` error handler.
+**Origin:** `15aaec2` (2026-04-12). `316feed` wired `checkBeforeAction()` but not `recordError()`.
+
+### T30. Set `isError: true` on HumanApproval responses
+**Findings:** M3 (security audit)
+**Root cause:** `HumanApprovalRequiredError` caught and returned as content with `approvalRequired: true` — MCP client sees it as a successful tool call. Other security layers (KillSwitch, RateLimiter, CircuitBreaker) all throw hard errors. MCP protocol has `isError` field for tool-level errors — never set.
+**Origin:** `c1d3b92` (2026-04-15) copied the `EngineUnavailableError` soft-return pattern.
+
+### T31. Remove `extensionAllowed` from DomainPolicy or wire into engine selector
+**Findings:** M4 (security audit)
+**Root cause:** Computed per-domain (`false` for banking) but `selectEngine()` never reads domain policy. Extension can execute against `chase.com` despite `extensionAllowed: false`.
+**Origin:** `7adb53d` (2026-04-12) — forward declaration never connected.
+
+### T32. Eliminate DaemonEngine `executeJsInTab` duplication
+**Findings:** M6 (engine audit)
+**Root cause:** `daemon.ts:226-246` inlines wrapping, escaping, and template from `AppleScriptEngine`. The two diverge — DaemonEngine misses CSP detection, ShadowDOM signals, and uses different template formatting.
+**Origin:** `5d037dc` (2026-04-15).
+
+### T33. Fix Shadow DOM closed heuristic ordering
+**Findings:** M9 (engine audit)
+**Root cause:** Heuristic runs before JSON parsing. Any page text containing "shadow" AND "closed" triggers false `SHADOW_DOM_CLOSED` error. Should only run on parse-failure or error envelopes.
+**Origin:** `96064f6` (2026-04-11) — never modified.
+
+### T34. Remove "cross-origin frames" from Extension Engine capabilities
+**Findings:** H10 (extension-ipc audit)
+**Root cause:** Manifest lacks `all_frames: true`. Content scripts only inject into top-level frame. `framesCrossOrigin` in ENGINE_CAPS is dead code. ARCHITECTURE.md, CLAUDE.md, SKILL.md all claim the capability.
+**Origin:** `1d875f4` (2026-04-11) — Day 1 forward declaration, never implemented.
+
+### T35. Fix IDPI scanner — decide block vs annotate
+**Findings:** H1 (security audit)
+**Root cause:** `scan()` only returns data, `server.ts:799-814` only sets metadata flags. Injected content flows through to agent unchanged. EXECUTION-FLOWS.md honestly says "annotates metadata, no block."
+**Origin:** `15aaec2` (2026-04-12) — designed as detector, wired as annotator at `c1d3b92`.
+
+### T36. Fix screenshot redaction — inject before capture or remove
+**Findings:** H2 (security audit)
+**Root cause:** Redaction script attached to result metadata AFTER screenshot captured. `screencapture -x` is immune to CSS blur. File header says "injected before capture" — code does opposite.
+**Origin:** `2ccdc87` created module. `c1d3b92` wired post-execution (wrong timing).
+
+### T37. Delete `recordPreExisting` / `isPreExisting` dead code
+**Findings:** M23 (tab-ownership audit)
+**Root cause:** Created in `630526e`, never called. The positive-ownership model (fail-closed on unknown tabs) makes pre-existing tracking redundant.
+
+### T38. Fix `recoverSession()` to re-register with daemon
+**Findings:** M25 (init-session audit)
+**Root cause:** Recovery re-opens window and polls extension but doesn't call `registerWithDaemon()`. After daemon restart, session is unregistered.
+**Origin:** `5fb94fa` (2026-04-23).
+
+### T39. Prune HealthStore timestamp arrays
+**Findings:** M18 (daemon-core audit)
+**Root cause:** `roundtripTimestamps`, `timeoutTimestamps`, `uncertainTimestamps`, `httpRequestErrorTimestamps` grow unbounded. `forceReloadTimestamps` IS pruned — same pattern not applied.
+**Origin:** `78938fb` (2026-04-18).
+
+### T40. Update ARCHITECTURE.md — 8 documented claims that contradict code
+**Findings:** Cross-referenced from C1, C2, H3, H4, H10, M1, M24, and others.
+**Discrepancies:**
+1. Line 222: "no _meta -> throw (fail closed)" — code does NOT throw (`75177e8`)
+2. Line 216: domainMatches as deferral condition — removed at `75177e8`
+3. Line 40: "cross-origin frames" capability — manifest lacks `all_frames`
+4. Line 197-199: per-engine circuit breaker described as functional — `recordEngineFailure` never called
+5. Escaping contract section — already updated in this session but needs re-verification
+6. `SKIP_OWNERSHIP_TOOLS` — already updated in this session
+7. Last verified branch — already updated in this session
+8. Navigate_back/forward handling — updated in this session but verify against T2
+
+---
+
+## P3: Missing Features / Low-Probability / Cosmetic
+
+### T41. Build `safari_file_upload` tool
+**Findings:** H19 (tool-modules audit)
+**Root cause:** Playwright gap. Competitive analysis rates it "Gap #2 (High Impact)." No research doc exists. Browser security prevents JS from setting file inputs. May need System Events / CGEvent approach.
+
+### T42. Write e2e tests for recovery/degradation paths
+**Findings:** H22 (init-session audit), C7 (tool-modules audit)
+**Root cause:** Zero tests for: daemon crash recovery, window close recovery, extension disconnect fallback, circuit breaker trip/recovery, multi-session isolation. Init spec criteria #4, #5, #7 are unmet.
+
+### T43. Write e2e tests for 61 untested tools
+**Findings:** C7 (tool-modules audit)
+**Root cause:** Only 15 tools have live e2e tests. 61 have zero. Phases 4-7 of the roadmap exist to address this but are unstarted.
+
+### T44. Add stale `sp_result` recovery on event page re-wake
+**Findings:** H9 (extension-ipc audit)
+**Root cause:** If event page suspends during storage bus await, `storage.onChanged` listener is lost. Content script writes `sp_result` but nobody reads it. Storage bus spec section 6.1 prescribed stale cleanup in `wakeSequence()` — never implemented.
+
+### T45. Fix TCP port conflict — crash instead of random port fallback
+**Findings:** H11 (daemon-core audit)
+**Root cause:** `ExtensionSocketServer.swift` falls back to random OS-assigned port on bind failure. No client can discover it. Original `try!` crash was defensibly correct.
+**Origin:** `a468977` → `f8915f3` (2026-04-15) — audit "fix" introduced the problem.
+
+### T46. Fix PdfGenerator CheckedContinuation leak
+**Findings:** H12 (daemon-core audit)
+**Root cause:** `waitForNavigation()` task group race doesn't resume continuation when timeout wins. Swift runtime violation: "leaked its continuation."
+**Origin:** `e6c7682` (2026-04-14) code review fix introduced the leak while adding a timeout.
+
+### T47. Fix `release.yml` — add extension verification before upload
+**Findings:** H23 + H24 (distribution audit)
+**Root cause:** Extension `.zip` uploaded from git checkout with zero verification. Daemon gets full CI build + sign + notarize; extension is a stale artifact. Spec designed CI-level defense that was never implemented.
+
+### T48. Protect session dashboard tab from agent navigation
+**Findings:** M21 (tab-ownership audit)
+**Root cause:** Session tab not registered in ownership. `safari_navigate` without `tabUrl` can navigate it away, killing the keepalive.
+**Fix depends on:** T1 (making tabUrl required on navigate).
+
+### T49. Fix `safari_type` delay parameter (currently ignored)
+**Findings:** From tool-modules audit (part of H14 agent analysis)
+**Root cause:** `delay` param defined in schema (default 50ms) but handler fires all keystrokes synchronously. Dead param.
+
+### T50. Fix `safari_scroll` conflicting modes
+**Findings:** From tool-modules audit
+**Root cause:** `toTop: true` + `direction: 'down'` both execute — scrolls to top then immediately scrolls down 500px.
+
+### T51. Fix `safari_reload` `bypassCache` (deprecated API)
+**Findings:** From tool-modules audit
+**Root cause:** `location.reload(true)` — the `true` arg is deprecated and does nothing in modern Safari.
+
+### T52. Standardize launchctl API usage
+**Findings:** M28 (distribution audit)
+**Root cause:** Daemon uses legacy `load/unload`, health-check uses modern `bootstrap/bootout`. Written 6 days apart, never reconciled.
+
+### T53. Fix postinstall download failure handling
+**Findings:** M29 (distribution audit)
+**Root cause:** 9 `|| true` guards swallow all download/extraction failures. Script exits 0 on complete failure. npm reports success.
+
+### T54. Fix `pkill -f` to `pkill -x` in update-daemon.sh
+**Findings:** M30 (distribution audit)
+**Root cause:** `-f` matches full command line (including editors, grep). `-x` matches exact process name. Added in this session's uncommitted changes.
+
+### T55. Add `all_frames: true` to extension manifest (or document limitation)
+**Findings:** H10 (extension-ipc audit)
+**Root cause:** Content scripts only inject into top-level frame. Adding `all_frames` requires frame-aware storage bus (frameId routing), not just a manifest change.
+
+### T56. Fix `safari_handle_dialog` / `safari_network_throttle` overstated engine requirements
+**Findings:** From tool-modules audit
+**Root cause:** These tools patch `window.*` globals via JS — works fine via AppleScript. But `requiresDialogIntercept`/`requiresNetworkIntercept` force Extension engine routing unnecessarily.
+
+### T57. Add silent-catch logging to NDJSON parser
+**Findings:** H7-corrected (engine audit)
+**Root cause:** `daemon.ts:330-332` `catch {}` silently discards malformed lines. Pending request hangs for 30s. Add logging of the malformed line and parse error.
+
+### T58. Fix HTTP server bind failure handling
+**Findings:** M20 (daemon-core audit)
+**Root cause:** On port 19475 bind failure, server silently stops. Extension can never connect. No retry, no signal to MCP server. `HealthStore.recordHttpBindFailure()` records it but nobody checks.
+
+---
+
+## Rules and Learnings (consolidated from all 61 analyses)
+
+### Patterns that caused bugs repeatedly
+1. **Build-then-wire gap:** Code built in isolation (class, method, module) but integration wiring omitted or incomplete. Found in: T3, T7, T12, T29, T31, T37.
+2. **Spec-as-truth without verification:** Documentation (ARCHITECTURE.md, CLAUDE.md, tool descriptions) treated as proof that features work. Found in: T5, T16, T17, T34, T40.
+3. **Mock tests as false confidence:** 1470 mock-based tests passed while the product was broken. Purge was correct but left 61 tools unverified. Found in: C7, T42, T43.
+4. **Catch-and-swallow in lifecycle code:** Silent error swallowing appropriate in v1 context became catastrophic as the code became load-bearing. Found in: T11, T53.
+5. **Forward declarations never wired:** Capability flags, config options, and API methods created for "commit 1c" or "future work" that never shipped. Found in: T12, T29, T31, T34, M4.
+6. **URL as identity:** URL-based tab matching breaks on every navigation. Positional identity breaks on reorder. Extension tab.id is the only stable identity but only works through the extension engine. Found in: T2, T14, T19, T21.
+
+### Rules for future work
+1. **Every tool param in the schema must be read by the handler.** Dead params are lies to the AI agent.
+2. **Every security layer must throw, not return.** Soft errors are ignorable by the consumer.
+3. **NavigationTools must update the ownership registry after any URL change.**
+4. **No `|| true` on acquisition commands in postinstall.** Exit non-zero on critical failures.
+5. **Test the failure path, not just the happy path.** Recovery code with zero test coverage is hope, not engineering.
+6. **Engine-layer changes must be applied to both AppleScriptEngine and DaemonEngine.** Or eliminate the duplication.
+7. **Document what the code DOES, not what it SHOULD do.** ARCHITECTURE.md must be updated in the same commit as code changes.

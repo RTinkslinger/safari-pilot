@@ -1,6 +1,6 @@
 # Safari Pilot Architecture — Canonical Source of Truth
 
-*Last verified: 2026-04-23 | Branch: feat/persistent-session-tab*
+*Last verified: 2026-04-23 | Branch: main*
 
 **This document describes how Safari Pilot ACTUALLY works as shipped. Every statement is backed by verified evidence. If code changes contradict this document, either the code is wrong or this document must be updated — never silently diverge.**
 
@@ -221,10 +221,9 @@ Dual-key registry: tabs are tracked by both positional `TabId` (windowIndex * 10
   3. Refresh URL in registry via `findByExtensionTabId()` + `updateUrl()` (keeps `findByUrl` working for next call)
   4. If `deferredOwnershipCheck`: verify `findByExtensionTabId(extTabId)` returns an owned tab. If undefined → throw (tab not ours). If no `_meta` returned → throw (fail closed).
 - **SKIP_OWNERSHIP_TOOLS:** `safari_list_tabs`, `safari_new_tab`, `safari_health_check` (navigate_back/forward now go through the deferred path)
-- **Domain guard (`domainMatches`):** Compares last two hostname segments (eTLD+1 approximation). Prevents DoS by requiring at least one owned tab on the same registrable domain before deferring.
+- **Domain guard (`domainMatches`):** Declared on `TabOwnership` with ccTLD-aware registrable-domain matching (via `extractRegistrableDomain()`, handles `.co.uk`, `.com.au`, etc.). **NOT currently wired into the deferred-ownership path** — was removed from `server.ts` at `75177e8` because it broke legitimate cross-domain link clicks. Tracked for resolution as T24 in `docs/AUDIT-TASKS.md` (wire it correctly or delete the method). The ccTLD-aware implementation is kept so that, if wired, it does not treat `evil.co.uk` as the same registrable domain as `bank.co.uk`.
 - **Known limitations:**
   - SPA `history.pushState` does not fire `tabs.onUpdated` — extensionTabId cache and server URL both go stale. First call after pushState will fail.
-  - Two-part ccTLDs (`.co.uk`, `.com.au`) are incorrectly equated by `domainMatches` — `evil.co.uk` would pass the domain guard if `bank.co.uk` is owned. The post-execution verify still catches this (different tab.id).
   - Multiple tabs at same URL: `findByUrl` returns first found. `findByExtensionTabId` is unambiguous after backfill.
   - AppleScript-only sessions: no extension → no tab.id backfill → ownership remains URL-only (same as pre-identity behavior).
 
@@ -232,9 +231,7 @@ Dual-key registry: tabs are tracked by both positional `TabId` (windowIndex * 10
 - Uses `assertClosed(domain)` (not `isOpen()` + manual throw) — correctly handles half-open probe logic
 
 **Escaping contract:**
-- **Quote-only sites (35, all migrated):** Previously `.replace(/'/g, "\\'")` — now use `escapeForJsSingleQuote()` from `src/escape.ts`. Files: extraction.ts (4), storage.ts (18), network.ts (8), structured-extraction.ts (2), permissions.ts (1), interaction.ts (2)
-- **Two-pass sites (21, NOT migrated — deferred consistency refactor):** Already use `.replace(/\\/g, '\\\\').replace(/'/g, "\\'")` which handles the critical backslash-quote breakout. Located in interaction.ts (17 sites) and shadow.ts (4 sites). The extra chars (`\n`, `\r`, `\0`, U+2028, U+2029) are defense-in-depth, not active breakout vectors for two-pass patterns.
-- All JSON embedded in template literals uses `escapeForTemplateLiteral()` from `src/escape.ts`
+- **All user-input sites migrated** to `escapeForJsSingleQuote()` / `escapeForTemplateLiteral()` from `src/escape.ts`. Zero inline `.replace()` escaping remains in tool modules. Files: extraction.ts, storage.ts, network.ts, structured-extraction.ts, permissions.ts, interaction.ts, shadow.ts, frames.ts.
 - Characters escaped: `\`, `'`, `\n`, `\r`, `\0`, U+2028, U+2029 (single-quote context); `\`, `` ` ``, `${` (template context)
 
 ---
