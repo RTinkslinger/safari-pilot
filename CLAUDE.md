@@ -319,6 +319,25 @@ These traces are NOT test artifacts to be cleaned up. They are the raw data that
 
 Any new test harness, benchmark runner, or validation script that executes Safari Pilot tools MUST capture equivalent trace data. If building a new runner outside of `McpTestClient`, write `tool-calls.jsonl` in the same format.
 
+## Unit Tests (HARD RULES)
+
+Unit tests live in `test/unit/` and run via `npm run test:unit` (no Safari, no daemon, ~1s). They cover pure logic in `src/` that doesn't need the shipped stack — string escaping, state machines, engine-selector capability matching, error shapes.
+
+Boundary policy:
+- **May** import from `src/` directly — that's the whole point of unit scope.
+- **May** mock Node boundaries (`fs`, `net`, `child_process`, `AbortSignal`, timers) when the test needs them.
+- **MUST NOT** mock any internal module (e.g. `vi.mock('../../src/security/rate-limiter.js')`). Testing a mock tests nothing.
+- **MUST NOT** mock Safari, the extension, the daemon, or the MCP SDK. That territory belongs in `test/e2e/`; mocking it is exactly the failure mode that got the previous 104 tests purged on 2026-04-23.
+- **MUST NOT** skip the question "does an e2e test also cover this path?" — unit tests don't replace e2e, they supplement it for the pure-logic slice.
+
+If a test needs a Safari tab, a daemon TCP connection, a running extension, or an MCP handshake, it is an e2e test and belongs in `test/e2e/`. Move it.
+
+Scripts:
+- `npm test` → unit only (safe default — no Safari required)
+- `npm run test:unit` → same as above, explicit
+- `npm run test:e2e` → e2e only (requires full production stack)
+- `npm run test:all` → unit + e2e (explicit opt-in)
+
 ## Canonical Architecture Document
 
 **`ARCHITECTURE.md`** is the single source of truth for how Safari Pilot works as shipped. Every data flow, IPC protocol, security layer, and engine selection path is documented there with verification evidence.
