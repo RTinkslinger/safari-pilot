@@ -43,6 +43,14 @@ if launchctl list "$LABEL" &>/dev/null 2>&1; then
   launchctl stop "$LABEL" || true
 fi
 
+# Kill any orphaned SafariPilotd processes (from old test runs, spawned child processes, etc.)
+ORPHAN_COUNT=$(pgrep -f SafariPilotd | wc -l | tr -d ' ')
+if [ "$ORPHAN_COUNT" -gt 0 ]; then
+  echo "update-daemon: Killing $ORPHAN_COUNT orphaned SafariPilotd process(es)..."
+  pkill -f SafariPilotd || true
+  sleep 1
+fi
+
 # Atomic swap: replace current binary with staged version
 mv "$STAGED" "$DAEMON_BIN"
 echo "update-daemon: Binary swapped at $DAEMON_BIN"
