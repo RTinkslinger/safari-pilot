@@ -214,7 +214,9 @@ export class StorageTools {
           },
           required: ['tabUrl'],
         },
-        requirements: { idempotent: true },
+        // IndexedDB APIs are inherently async. Requires the extension engine
+        // (only one that awaits Promise-returning injected scripts).
+        requirements: { idempotent: true, requiresAsyncJs: true },
       },
       {
         name: 'safari_idb_get',
@@ -243,7 +245,9 @@ export class StorageTools {
           },
           required: ['tabUrl', 'database', 'store'],
         },
-        requirements: { idempotent: true },
+        // IndexedDB APIs are inherently async. Requires the extension engine
+        // (only one that awaits Promise-returning injected scripts).
+        requirements: { idempotent: true, requiresAsyncJs: true },
       },
     ];
   }

@@ -7,6 +7,14 @@ export interface EngineCapabilities {
   networkIntercept: boolean;
   cookieHttpOnly: boolean;
   framesCrossOrigin: boolean;
+  /**
+   * Whether the engine awaits Promise-returning injected scripts.
+   * AppleScript's `do JavaScript` and the daemon's AppleScript wrapper are
+   * synchronous — a `return new Promise(...)` serializes as `{}` or
+   * `[object Promise]`, silently dropping the real result. Only the
+   * extension's content-main.js awaits the injected function's return value.
+   */
+  asyncJs: boolean;
   latencyMs: number;
 }
 
@@ -27,6 +35,12 @@ export interface ToolRequirements {
   requiresNetworkIntercept?: boolean;
   requiresCookieHttpOnly?: boolean;
   requiresFramesCrossOrigin?: boolean;
+  /**
+   * Tool's injected JS uses `return new Promise(...)` or otherwise needs the
+   * engine to await the return value. Routed only to engines where
+   * `EngineCapabilities.asyncJs === true`.
+   */
+  requiresAsyncJs?: boolean;
   prefersFastLatency?: boolean;
 }
 

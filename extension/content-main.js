@@ -321,7 +321,11 @@
               break;
             }
             const fn = new _Function(params.script);
-            result = fn();
+            // Await the result so injected scripts that `return new Promise(...)`
+            // resolve properly. `await` on a non-Promise is a no-op, so this is
+            // safe for synchronous scripts too. Required for T6 (IndexedDB tools)
+            // and enables async-aware use of safari_evaluate.
+            result = await fn();
             if (commandId) {
               window.__safariPilotExecutedCommands.set(commandId, { result, timestamp: Date.now() });
             }

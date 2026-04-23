@@ -16,6 +16,7 @@ export const ENGINE_CAPS: Record<Engine, EngineCapabilities> = {
     networkIntercept: true,
     cookieHttpOnly: true,
     framesCrossOrigin: true,
+    asyncJs: true,
     latencyMs: 10,
   },
   daemon: {
@@ -25,6 +26,7 @@ export const ENGINE_CAPS: Record<Engine, EngineCapabilities> = {
     networkIntercept: false,
     cookieHttpOnly: false,
     framesCrossOrigin: false,
+    asyncJs: false,
     latencyMs: 5,
   },
   applescript: {
@@ -34,6 +36,7 @@ export const ENGINE_CAPS: Record<Engine, EngineCapabilities> = {
     networkIntercept: false,
     cookieHttpOnly: false,
     framesCrossOrigin: false,
+    asyncJs: false,
     latencyMs: 80,
   },
 };
@@ -54,7 +57,8 @@ export function selectEngine(
     tool.requiresDialogIntercept ||
     tool.requiresNetworkIntercept ||
     tool.requiresCookieHttpOnly ||
-    tool.requiresFramesCrossOrigin;
+    tool.requiresFramesCrossOrigin ||
+    tool.requiresAsyncJs;
 
   if (needsExtension) {
     if (extensionAvailable) return 'extension';
