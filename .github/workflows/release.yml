@@ -100,6 +100,26 @@ jobs:
             bin/Safari Pilot.zip
           generate_release_notes: true
 
+      - name: Copy universal daemon binary into bin/ for npm publish
+        # Without this, npm publish packages bin/SafariPilotd as populated by
+        # `npm ci`'s postinstall — an arm64-only build from the CI runner. Intel
+        # Mac users installing via npm would receive a binary that won't run.
+        # The universal binary in dist-bin/ is already signed + notarized.
+        run: |
+          cp dist-bin/SafariPilotd bin/SafariPilotd
+          chmod +x bin/SafariPilotd
+
+      - name: Verify bin/SafariPilotd is a universal Mach-O binary
+        # Fail-fast guard: if dist-bin wasn't built correctly or the copy above
+        # broke, we must NOT publish an arm64-only (or x86_64-only) tarball.
+        run: |
+          file_output=$(file bin/SafariPilotd)
+          echo "$file_output"
+          echo "$file_output" | grep -q "Mach-O universal binary" \
+            || { echo "ERROR: bin/SafariPilotd is not a universal binary — refusing to publish" >&2; exit 1; }
+          echo "$file_output" | grep -q "2 architectures" \
+            || { echo "ERROR: bin/SafariPilotd does not contain 2 architectures — refusing to publish" >&2; exit 1; }
+
       - name: Publish to npm
         run: npm publish --access public
         env:
