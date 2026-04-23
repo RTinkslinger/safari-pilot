@@ -813,30 +813,25 @@ export class SafariPilotServer {
           // Tab is owned — result is safe to return
         }
       } else if (deferredOwnershipCheck) {
-        // Extension didn't return _meta. This happens for tools that use
-        // engine.execute() (AppleScript) internally instead of executeJsInTab() —
-        // e.g., safari_navigate navigates via AppleScript, which has no tab identity.
+        // Deferred ownership check means `tabUrl` was not in the registry at
+        // pre-execution and we trusted the extension pipeline to run the tool
+        // on the right tab and return `_meta.tabId` that we can verify here.
+        // Landing in THIS branch (no _meta present) means the tool dispatched
+        // through a non-proxy path — e.g. NavigationTools' hardwired
+        // AppleScript engine — so we have no tab-identity evidence at all.
         //
-        // For navigate: the tool result contains the final URL. Update the ownership
-        // registry so subsequent calls on the new URL pass findByUrl directly.
-        // This is safe: the tool already executed successfully (AppleScript found the
-        // tab by URL/position), and deferred check means we trust the extension pipeline.
-        if (result.content?.[0]?.type === 'text') {
-          try {
-            const data = JSON.parse((result.content[0] as { type: 'text'; text: string }).text);
-            const newUrl = (data.url ?? data.tabUrl) as string | undefined;
-            if (newUrl) {
-              // Update the first owned tab that has a backfilled extensionTabId.
-              // This is the tab we were working with (same tab, URL just changed).
-              for (const { tabId } of this.tabOwnership.getAllOwned()) {
-                this.tabOwnership.updateUrl(tabId, newUrl);
-                break;
-              }
-            }
-          } catch { /* best-effort URL update */ }
-        }
-        // Don't throw — the tool already executed. Throwing after execution
-        // just destroys a valid result without preventing anything.
+        // Previously (75177e8): silently updated the first owned tab's URL to
+        // whatever the result claimed. That converted "I don't know which tab
+        // ran" into "we now own a tab at this new URL" — an agent-controllable
+        // registry-rewrite via a crafted `tabUrl` value.
+        //
+        // Fix (T8): fail closed. ARCHITECTURE.md:222 has always promised this;
+        // the code now matches. The tool already ran in Safari, but its result
+        // never reaches the agent — preventing the silent ownership laundering.
+        // Companion fixes T1 (tabUrl required on safari_navigate) and T2
+        // (post-navigate URL refresh via 8.post0) mean the legitimate
+        // "navigate owned tab to new URL" flow never lands in this branch.
+        throw new TabUrlNotRecognizedError(params['tabUrl'] as string);
       }
       trace(traceId, 'server', 'post_verify', {
         deferredVerified: deferredOwnershipCheck,

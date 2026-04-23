@@ -138,6 +138,44 @@ describe('Security: Tab ownership enforcement', () => {
     expect(removeEvent, `server-trace.ndjson must contain ownership_tab_removed for ${closedUrl}`).toBeDefined();
   }, 30000);
 
+  // ── T8: deferred-ownership no-_meta path throws (fail-closed) ────────────
+
+  it('T8: deferred-ownership + no _meta throws instead of silently adopting the URL', async () => {
+    // Open a tab and close it — ownership entry is evicted by T7. The URL is
+    // now unknown to the registry, but the agent can still submit it as
+    // `tabUrl` on a subsequent tool call.
+    const unique = `https://example.org/?sp_t8=${Date.now()}`;
+    const tab = await callTool(
+      client, 'safari_new_tab', { url: unique }, nextId++,
+    );
+    const unknownUrl = tab.tabUrl as string;
+    await new Promise((r) => setTimeout(r, 1500));
+    const closeRes = await callTool(
+      client, 'safari_close_tab', { tabUrl: unknownUrl }, nextId++,
+    );
+    expect(closeRes.closed).toBe(true);
+    await new Promise((r) => setTimeout(r, 300));
+
+    // DISCRIMINATING ASSERTION (what fails if T8's fix is removed):
+    //   - Pre-T8: server.ts:815 matched this branch, silently rewrote the
+    //     first owned tab's URL to whatever the result claimed, and returned
+    //     the fallback `{url: tabUrl, title: ''}` as success. The test would
+    //     see resolution, not rejection.
+    //   - Post-T8: the branch throws TabUrlNotRecognizedError with code
+    //     TAB_NOT_OWNED (per src/errors.ts:128).
+    // The error-text match below hits BOTH the specific code (`TAB_NOT_OWNED`)
+    // and the English prefix of the thrown error message — matching anything
+    // else would silently accept the wrong failure mode.
+    await expect(
+      rawCallTool(
+        client, 'safari_reload',
+        { tabUrl: unknownUrl },
+        nextId++,
+        5000,
+      ),
+    ).rejects.toThrow(/Tab URL not recognized as agent-owned|TAB_NOT_OWNED/);
+  }, 30000);
+
   // ── T5: safari_switch_frame deleted — was a no-op tool ───────────────────
 
   it('T5: safari_switch_frame is NOT advertised in tools/list (removed as no-op)', async () => {
@@ -156,21 +194,37 @@ describe('Security: Tab ownership enforcement', () => {
     expect(names).toContain('safari_list_frames');
   }, 10000);
 
-  it('T5: calling safari_switch_frame fails rather than silently returning {switched: true}', async () => {
-    // Pre-fix behavior: handler returned {switched: true} without storing any
-    // frame context — a lie to the agent. Post-fix: the tool isn't registered
-    // at all, so any attempt fails at the security pipeline or handler dispatch.
-    // (Here, the ownership check fires first and rejects the unowned tabUrl —
-    // which is ALSO evidence that the no-op path is gone.)
-    await expect(
-      rawCallTool(
-        client,
-        'safari_switch_frame',
-        { tabUrl: 'https://example.com', frameSelector: 'iframe' },
-        nextId++,
-        5000,
-      ),
-    ).rejects.toThrow(); // any error is acceptable — the silent {switched:true} is not
+  it('T5: calling safari_switch_frame no longer returns the fake {switched: true} envelope', async () => {
+    // DISCRIMINATING ASSERTION (what fails if the deletion is reverted):
+    //   - Re-register the handler → tools/call dispatches to handleSwitchFrame
+    //     → returns the hardcoded `{switched: true, frame: {...}}` envelope.
+    //     `payload.switched` would be === true and `payload.frame` would be
+    //     an object — both asserted against below.
+    //   - With T5's deletion: the tool isn't registered, so the handler map
+    //     has no entry. Before reaching any handler, the security pipeline
+    //     reaches its ownership check with an unowned tabUrl and the call
+    //     fails there. Either way, there is NO `{switched: true}` envelope.
+    const raw = await rawCallTool(
+      client,
+      'safari_switch_frame',
+      { tabUrl: 'https://never-opened-by-agent.example', frameSelector: 'iframe' },
+      nextId++,
+      5000,
+    ).catch((err: Error) => ({ _err: err.message }));
+
+    // Either it threw (the registered path is gone) OR it returned something
+    // that is explicitly NOT the fake envelope. Both are acceptable. The fake
+    // envelope is not.
+    if ('_err' in raw) {
+      // Threw — acceptable. Extra specificity: the failure mode must be
+      // meaningful (ownership or unknown-tool), not a silent pass-through
+      // with an empty string or unrelated error.
+      expect(raw._err).toMatch(/Tab URL not recognized|TAB_NOT_OWNED|Unknown tool|no handler/i);
+    } else {
+      // Some other outcome — explicitly assert the fake envelope is gone.
+      expect(raw.payload?.['switched']).not.toBe(true);
+      expect(raw.payload?.['frame']).toBeUndefined();
+    }
   }, 10000);
 
   // ── T2: registry URL refreshed after AppleScript navigation ──────────────
