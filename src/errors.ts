@@ -27,6 +27,7 @@ export const ERROR_CODES = {
   INTERNAL_ERROR: 'INTERNAL_ERROR',
   EXTENSION_UNCERTAIN: 'EXTENSION_UNCERTAIN',
   SESSION_RECOVERY_FAILED: 'SESSION_RECOVERY_FAILED',
+  SESSION_WINDOW_INIT_FAILED: 'SESSION_WINDOW_INIT_FAILED',
 } as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES];
@@ -329,6 +330,34 @@ export class SessionRecoveryError extends SafariPilotError {
       'Check Safari is running',
       'Check extension is enabled in Safari > Settings > Extensions',
       'Try restarting the daemon: launchctl kickstart -k gui/$(id -u)/com.anthropic.safari-pilot',
+    ];
+  }
+}
+
+/**
+ * Thrown by `SafariPilotServer.ensureSessionWindow()` when the AppleScript
+ * that creates the dedicated session window fails or returns an unparseable
+ * window id. Propagates through `start()` so `main()` in `src/index.ts`
+ * exits with a non-zero code and a clear message — instead of silently
+ * continuing with no `_sessionWindowId`, which would wedge the extension
+ * bootstrap and surface as a misleading "extension not connected" error
+ * 15 seconds later.
+ */
+export class SessionWindowInitError extends SafariPilotError {
+  readonly code = ERROR_CODES.SESSION_WINDOW_INIT_FAILED as ErrorCode;
+  readonly retryable = false;
+  readonly hints: string[];
+
+  constructor(details: { reason: 'execFailed' | 'unparseableWindowId'; cause?: string }) {
+    const reasonMsg = details.reason === 'execFailed'
+      ? 'AppleScript "make new document" failed or timed out'
+      : 'AppleScript returned an unparseable window id';
+    super(`Session window could not be created: ${reasonMsg}${details.cause ? ` (${details.cause})` : ''}`);
+    this.name = 'SessionWindowInitError';
+    this.hints = [
+      'Check that Safari is running and has at least one window open',
+      'Enable Safari > Develop > Allow JavaScript from Apple Events',
+      'Grant Automation permission to the controlling app in System Settings > Privacy & Security > Automation',
     ];
   }
 }

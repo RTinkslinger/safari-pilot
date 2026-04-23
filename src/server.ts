@@ -33,7 +33,7 @@ import { CircuitBreaker } from './security/circuit-breaker.js';
 import { IdpiScanner } from './security/idpi-scanner.js';
 import { HumanApproval } from './security/human-approval.js';
 import { ScreenshotRedaction } from './security/screenshot-redaction.js';
-import { RateLimitedError, HumanApprovalRequiredError, TabUrlNotRecognizedError, SessionRecoveryError } from './errors.js';
+import { RateLimitedError, HumanApprovalRequiredError, TabUrlNotRecognizedError, SessionRecoveryError, SessionWindowInitError } from './errors.js';
 import { loadConfig, DEFAULT_CONFIG, type SafariPilotConfig } from './config.js';
 import { trace } from './trace.js';
 
@@ -1147,24 +1147,33 @@ end tell`;
     if (this._sessionWindowId) return; // already have a window
 
     trace(traceId, 'server', 'session_window_start', {});
+    let result: string;
     try {
       const { execSync } = await import('node:child_process');
-      const result = execSync(
+      result = execSync(
         `osascript -e 'tell application "Safari"
   make new document with properties {URL:"${this.sessionTabUrl}"}
   return id of window 1
 end tell'`,
         { timeout: 5000, encoding: 'utf-8' },
       ).trim();
-      const windowId = parseInt(result, 10);
-      if (!isNaN(windowId)) {
-        this._sessionWindowId = windowId;
-        trace(traceId, 'server', 'session_window_created', { windowId });
-      }
-      this._sessionTabOpened = true;
-    } catch {
-      trace(traceId, 'server', 'session_window_failed', {}, 'error');
+    } catch (err) {
+      // T11: propagate instead of silently continuing with no _sessionWindowId.
+      // Pre-T11, a SIP denial or Safari-not-running condition silently passed
+      // here, then surfaced 15s later as a misleading "extension not
+      // connected" error. Now the real cause propagates through start().
+      const cause = err instanceof Error ? err.message : String(err);
+      trace(traceId, 'server', 'session_window_failed', { reason: 'execFailed', cause }, 'error');
+      throw new SessionWindowInitError({ reason: 'execFailed', cause });
     }
+    const windowId = parseInt(result, 10);
+    if (isNaN(windowId)) {
+      trace(traceId, 'server', 'session_window_failed', { reason: 'unparseableWindowId', output: result }, 'error');
+      throw new SessionWindowInitError({ reason: 'unparseableWindowId', cause: `osascript output: ${JSON.stringify(result)}` });
+    }
+    this._sessionWindowId = windowId;
+    this._sessionTabOpened = true;
+    trace(traceId, 'server', 'session_window_created', { windowId });
   }
 
   /**

@@ -296,7 +296,7 @@ MCP `initialize()` blocks until all systems are green. Every tool call does a li
 
 - **Startup sequence** (`server.ts:start()`): Runs BEFORE any tool is available.
   1. `registerWithDaemon()` — POST `/session/register` with sessionId. Returns count of existing sessions.
-  2. `ensureSessionWindow()` — Opens new Safari window with session dashboard (`127.0.0.1:19475/session?id=<sessionId>`). Captures `_sessionWindowId`.
+  2. `ensureSessionWindow()` — Opens new Safari window with session dashboard (`127.0.0.1:19475/session?id=<sessionId>`). Captures `_sessionWindowId`. **Throws `SessionWindowInitError` (T11, 2026-04-24) if the AppleScript fails or returns an unparseable window id** — propagates through `start()` → `main()` so the MCP server exits with a clear error instead of silently continuing into a wedged state that surfaces 15s later as a misleading "extension not connected" message.
   3. Poll `GET /status` every 1s for 15s until `ext: true`. Updates `engineAvailability`.
   4. Store `_initMeta` (sessionId, windowId, existingSessions, systems, initDurationMs).
   5. Log progress to stderr: "found N existing sessions", "waiting for extension", "all systems green (Nms)".
