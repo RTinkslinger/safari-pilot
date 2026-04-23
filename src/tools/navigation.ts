@@ -26,13 +26,15 @@ export class NavigationTools {
       {
         name: 'safari_navigate',
         description:
-          'Navigate to a URL in the specified tab (matched by current URL) or open in the active tab. ' +
-          'Returns the final URL and page title after navigation.',
+          'Navigate the specified agent-owned tab (identified by its current URL) to a new URL. ' +
+          'Both `url` (target) and `tabUrl` (the tab to navigate) are required — the tab must be ' +
+          'one previously opened via `safari_new_tab` so tab ownership can be verified. Returns the ' +
+          'final URL and page title after navigation.',
         inputSchema: {
           type: 'object',
           properties: {
             url: { type: 'string', description: 'Target URL to navigate to' },
-            tabUrl: { type: 'string', description: 'Current URL of the tab to navigate (omit to use front tab)' },
+            tabUrl: { type: 'string', description: 'Current URL of the agent-owned tab to navigate' },
             waitUntil: {
               type: 'string',
               enum: ['load', 'domcontentloaded', 'networkidle'],
@@ -41,7 +43,7 @@ export class NavigationTools {
             },
             timeout: { type: 'number', description: 'Navigation timeout in milliseconds', default: 30000 },
           },
-          required: ['url'],
+          required: ['url', 'tabUrl'],
         },
         requirements: { idempotent: false },
       },
@@ -157,6 +159,17 @@ export class NavigationTools {
   private async handleNavigate(params: Record<string, unknown>): Promise<ToolResponse> {
     const start = Date.now();
     const url = params['url'] as string;
+    const tabUrlParam = params['tabUrl'];
+    // Security: tabUrl is required so that server-side ownership enforcement can
+    // verify the target tab is agent-owned. Without it, the "front tab" fallback
+    // would let the agent navigate ANY user tab (banking, email, etc.).
+    if (typeof tabUrlParam !== 'string' || tabUrlParam === '') {
+      throw new Error(
+        'safari_navigate requires `tabUrl` (the current URL of an agent-owned tab). ' +
+        'Open a tab with safari_new_tab first, then pass its URL as tabUrl.',
+      );
+    }
+    const tabUrl = tabUrlParam;
     const timeout = typeof params['timeout'] === 'number' ? params['timeout'] : 30000;
 
     // Positional targeting: server injects _windowId/_tabIndex from ownership registry
@@ -172,8 +185,10 @@ export class NavigationTools {
 
     await sleep(WAIT_NAVIGATE_MS);
 
-    // Get final URL and title — use tabUrl if provided, else the target url
-    const tabUrl = (params['tabUrl'] as string | undefined) ?? url;
+    // Get final URL and title via the original tabUrl.
+    // Known limitation (T2): the tab's URL has changed but the registry still has
+    // the old URL. executeJsInTab looks up by URL which will fail. A subsequent
+    // tool call with the NEW url will also fail until T2 wires the update.
     const pageInfo = await this.executeJsInTab(tabUrl, PAGE_INFO_JS);
 
     const data = pageInfo ?? { url, title: '' };
