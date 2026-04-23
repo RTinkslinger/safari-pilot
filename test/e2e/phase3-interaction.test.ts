@@ -3,27 +3,37 @@
  *
  * Proves interaction tools work with both CSS selectors and ref-based targeting.
  * Uses httpbin.org/forms/post (has text inputs, textarea, selects, buttons).
+ *
+ * Uses the shared MCP client (see test/helpers/shared-client.ts) — one
+ * server spawn per test run, tab-level isolation.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { initClient, callTool, rawCallTool, type McpTestClient } from '../helpers/mcp-client.js';
+import { callTool, rawCallTool, type McpTestClient } from '../helpers/mcp-client.js';
+import { getSharedClient } from '../helpers/shared-client.js';
 
 describe('Phase 3: Interaction', () => {
   let client: McpTestClient;
-  let nextId: number;
+  let nextId: () => number;
   let tabUrl: string;
 
   beforeAll(async () => {
-    const result = await initClient('dist/index.js');
-    client = result.client;
-    nextId = result.nextId;
+    const s = await getSharedClient();
+    client = s.client;
+    nextId = s.nextId;
 
-    const tab = await callTool(client, 'safari_new_tab', { url: 'https://httpbin.org/forms/post' }, nextId++);
+    // httpbin.org doesn't support arbitrary query strings for sp_p3 marker
+    // on every path (the /forms/post endpoint ignores them but keeps them
+    // in the URL), so this is safe. Using ?sp_p3=<ts> for sweepability.
+    const unique = `https://httpbin.org/forms/post?sp_p3=${Date.now()}`;
+    const tab = await callTool(client, 'safari_new_tab', { url: unique }, nextId());
     tabUrl = tab.tabUrl;
     await new Promise(r => setTimeout(r, 4000));
   }, 35000);
 
   afterAll(async () => {
-    if (client) await client.close();
+    if (client && tabUrl) {
+      try { await callTool(client, 'safari_close_tab', { tabUrl }, nextId()); } catch { /* ignore */ }
+    }
   });
 
   // ── 3.2 Fill input ──────────────────────────────────────────────────────
@@ -31,7 +41,7 @@ describe('Phase 3: Interaction', () => {
     const result = await callTool(
       client, 'safari_fill',
       { tabUrl, selector: 'input[name="custname"]', value: 'Safari Pilot Test' },
-      nextId++,
+      nextId(),
       15000,
     );
     const text = JSON.stringify(result);
@@ -41,7 +51,7 @@ describe('Phase 3: Interaction', () => {
     const verify = await callTool(
       client, 'safari_evaluate',
       { tabUrl, script: 'return document.querySelector("input[name=\\"custname\\"]").value' },
-      nextId++,
+      nextId(),
       15000,
     );
     const val = typeof verify === 'string' ? verify : verify.value;
@@ -54,7 +64,7 @@ describe('Phase 3: Interaction', () => {
     const result = await callTool(
       client, 'safari_click',
       { tabUrl, selector: '[type="submit"], button' },
-      nextId++,
+      nextId(),
       15000,
     );
     const text = JSON.stringify(result);
@@ -67,7 +77,7 @@ describe('Phase 3: Interaction', () => {
     const nav = await callTool(
       client, 'safari_navigate',
       { url: 'https://example.com', tabUrl },
-      nextId++,
+      nextId(),
       15000,
     );
     tabUrl = nav.url;
@@ -77,7 +87,7 @@ describe('Phase 3: Interaction', () => {
     const result = await callTool(
       client, 'safari_wait_for',
       { tabUrl, selector: 'h1', state: 'attached', timeout: 5000 },
-      nextId++,
+      nextId(),
       10000,
     );
     const text = JSON.stringify(result);
@@ -89,7 +99,7 @@ describe('Phase 3: Interaction', () => {
     const raw = await rawCallTool(
       client, 'safari_click',
       { tabUrl, selector: 'h1' },
-      nextId++,
+      nextId(),
       15000,
     );
     expect(raw.meta?.engine).toBe('extension');

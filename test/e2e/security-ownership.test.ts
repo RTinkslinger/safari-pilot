@@ -9,8 +9,9 @@
  * T1 coverage: `safari_navigate` rejects missing / empty-string / non-string
  * tabUrl so that the ownership check at server.ts cannot be bypassed.
  */
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { initClient, rawCallTool, callTool, type McpTestClient } from '../helpers/mcp-client.js';
+import { describe, it, expect, beforeAll } from 'vitest';
+import { rawCallTool, callTool, type McpTestClient } from '../helpers/mcp-client.js';
+import { getSharedClient } from '../helpers/shared-client.js';
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
@@ -30,24 +31,20 @@ function readServerTraceEvents(): Array<Record<string, unknown>> {
 
 describe('Security: Tab ownership enforcement', () => {
   let client: McpTestClient;
-  let nextId: number;
+  let nextId: () => number;
 
   beforeAll(async () => {
-    const result = await initClient('dist/index.js');
-    client = result.client;
-    nextId = result.nextId;
+    const s = await getSharedClient();
+    client = s.client;
+    nextId = s.nextId;
   }, 30000);
-
-  afterAll(async () => {
-    if (client) await client.close();
-  });
 
   // ── T1: safari_navigate requires tabUrl ───────────────────────────────────
 
   it('T1: safari_navigate advertises tabUrl as required in its schema', async () => {
     const resp = (await client.send({
       jsonrpc: '2.0',
-      id: nextId++,
+      id: nextId(),
       method: 'tools/list',
       params: {},
     })) as Record<string, unknown>;
@@ -68,7 +65,7 @@ describe('Security: Tab ownership enforcement', () => {
         client,
         'safari_navigate',
         { url: 'https://example.com' },
-        nextId++,
+        nextId(),
         10000,
       ),
     ).rejects.toThrow(/tabUrl/);
@@ -82,7 +79,7 @@ describe('Security: Tab ownership enforcement', () => {
         client,
         'safari_navigate',
         { url: 'https://example.com', tabUrl: '' },
-        nextId++,
+        nextId(),
         10000,
       ),
     ).rejects.toThrow(/tabUrl/);
@@ -96,7 +93,7 @@ describe('Security: Tab ownership enforcement', () => {
         client,
         'safari_navigate',
         { url: 'https://example.com', tabUrl: null as unknown as string },
-        nextId++,
+        nextId(),
         10000,
       ),
     ).rejects.toThrow(/tabUrl/);
@@ -109,7 +106,7 @@ describe('Security: Tab ownership enforcement', () => {
     // collisions with tabs left behind by earlier test runs).
     const unique = `https://example.org/?sp_t7=${Date.now()}`;
     const tab = await callTool(
-      client, 'safari_new_tab', { url: unique }, nextId++,
+      client, 'safari_new_tab', { url: unique }, nextId(),
     );
     const closedUrl = tab.tabUrl as string;
     await new Promise((r) => setTimeout(r, 1500));
@@ -118,7 +115,7 @@ describe('Security: Tab ownership enforcement', () => {
     // and emits `ownership_tab_removed` into server-trace.ndjson precisely
     // when the registry entry is dropped.
     const closeRes = await callTool(
-      client, 'safari_close_tab', { tabUrl: closedUrl }, nextId++,
+      client, 'safari_close_tab', { tabUrl: closedUrl }, nextId(),
     );
     expect(closeRes.closed).toBe(true);
 
@@ -146,12 +143,12 @@ describe('Security: Tab ownership enforcement', () => {
     // `tabUrl` on a subsequent tool call.
     const unique = `https://example.org/?sp_t8=${Date.now()}`;
     const tab = await callTool(
-      client, 'safari_new_tab', { url: unique }, nextId++,
+      client, 'safari_new_tab', { url: unique }, nextId(),
     );
     const unknownUrl = tab.tabUrl as string;
     await new Promise((r) => setTimeout(r, 1500));
     const closeRes = await callTool(
-      client, 'safari_close_tab', { tabUrl: unknownUrl }, nextId++,
+      client, 'safari_close_tab', { tabUrl: unknownUrl }, nextId(),
     );
     expect(closeRes.closed).toBe(true);
     await new Promise((r) => setTimeout(r, 300));
@@ -170,7 +167,7 @@ describe('Security: Tab ownership enforcement', () => {
       rawCallTool(
         client, 'safari_reload',
         { tabUrl: unknownUrl },
-        nextId++,
+        nextId(),
         5000,
       ),
     ).rejects.toThrow(/Tab URL not recognized as agent-owned|TAB_NOT_OWNED/);
@@ -183,7 +180,7 @@ describe('Security: Tab ownership enforcement', () => {
     // "records the frame selector so future tool calls are scoped".
     // Real frame scoping is via safari_eval_in_frame — the no-op was deleted.
     const resp = (await client.send({
-      jsonrpc: '2.0', id: nextId++, method: 'tools/list', params: {},
+      jsonrpc: '2.0', id: nextId(), method: 'tools/list', params: {},
     })) as Record<string, unknown>;
     const result = resp['result'] as Record<string, unknown>;
     const tools = result['tools'] as Array<Record<string, unknown>>;
@@ -208,7 +205,7 @@ describe('Security: Tab ownership enforcement', () => {
       client,
       'safari_switch_frame',
       { tabUrl: 'https://never-opened-by-agent.example', frameSelector: 'iframe' },
-      nextId++,
+      nextId(),
       5000,
     ).catch((err: Error) => ({ _err: err.message }));
 
@@ -232,7 +229,7 @@ describe('Security: Tab ownership enforcement', () => {
   it('T2: registry URL updates after safari_navigate — subsequent call with new URL succeeds', async () => {
     // Open a tab owned by the agent. Initial URL is the registry's tracked URL.
     const tab = await callTool(
-      client, 'safari_new_tab', { url: 'https://example.com' }, nextId++,
+      client, 'safari_new_tab', { url: 'https://example.com' }, nextId(),
     );
     const startUrl = tab.tabUrl as string;
     await new Promise(r => setTimeout(r, 2000));
@@ -243,7 +240,7 @@ describe('Security: Tab ownership enforcement', () => {
       const nav = await callTool(
         client, 'safari_navigate',
         { url: 'https://httpbin.org/html', tabUrl: startUrl },
-        nextId++,
+        nextId(),
         30000,
       );
       const newUrl = nav.url as string;
@@ -254,18 +251,18 @@ describe('Security: Tab ownership enforcement', () => {
       const followUp = await callTool(
         client, 'safari_navigate',
         { url: 'https://example.org', tabUrl: newUrl },
-        nextId++,
+        nextId(),
         30000,
       );
       expect(followUp.url).toContain('example.org');
 
       // Close via the latest URL to confirm the registry still tracks correctly.
       await callTool(
-        client, 'safari_close_tab', { tabUrl: followUp.url as string }, nextId++,
+        client, 'safari_close_tab', { tabUrl: followUp.url as string }, nextId(),
       );
     } catch (err) {
       // Best-effort cleanup if the flow failed
-      try { await callTool(client, 'safari_close_tab', { tabUrl: startUrl }, nextId++); } catch { /* ignore */ }
+      try { await callTool(client, 'safari_close_tab', { tabUrl: startUrl }, nextId()); } catch { /* ignore */ }
       throw err;
     }
   }, 90000);

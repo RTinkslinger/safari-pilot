@@ -5,28 +5,38 @@
  * Items 1.2 (new_tab) and 1.5 (evaluate) are proven in initialization.test.ts.
  * This file covers 1.1 (navigate), 1.3 (close_tab), 1.4 (list_tabs),
  * 1.6 (screenshot), 1.7 (navigate_back/forward).
+ *
+ * Uses the shared MCP client (see test/helpers/shared-client.ts) — one
+ * server spawn per test run, tab-level isolation with unique URL markers.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { initClient, callTool, rawCallTool, type McpTestClient } from '../helpers/mcp-client.js';
+import { callTool, rawCallTool, type McpTestClient } from '../helpers/mcp-client.js';
+import { getSharedClient } from '../helpers/shared-client.js';
 
 describe('Phase 1: Core Navigation', () => {
   let client: McpTestClient;
-  let nextId: number;
+  let nextId: () => number;
   let tabUrl: string;
 
   beforeAll(async () => {
-    const result = await initClient('dist/index.js');
-    client = result.client;
-    nextId = result.nextId;
+    const s = await getSharedClient();
+    client = s.client;
+    nextId = s.nextId;
 
     // Open a tab to work with — wait for content script
-    const tab = await callTool(client, 'safari_new_tab', { url: 'https://example.com' }, nextId++);
+    const unique = `https://example.com/?sp_p1=${Date.now()}`;
+    const tab = await callTool(client, 'safari_new_tab', { url: unique }, nextId());
     tabUrl = tab.tabUrl;
     await new Promise(r => setTimeout(r, 3000));
   }, 30000);
 
   afterAll(async () => {
-    if (client) await client.close();
+    // Best-effort cleanup of the final tab URL (the sequence below updates
+    // `tabUrl` as the tests navigate). If the 1.3 close_tab test already
+    // ran successfully, this no-op-fails.
+    if (client && tabUrl) {
+      try { await callTool(client, 'safari_close_tab', { tabUrl }, nextId()); } catch { /* already closed */ }
+    }
   });
 
   // ── 1.1 Navigate to URL ──────────────────────────────────────────────────
@@ -34,7 +44,7 @@ describe('Phase 1: Core Navigation', () => {
     const result = await callTool(
       client, 'safari_navigate',
       { url: 'https://httpbin.org/html', tabUrl },
-      nextId++,
+      nextId(),
       30000,
     );
     expect(result.url).toContain('httpbin.org');
@@ -44,7 +54,7 @@ describe('Phase 1: Core Navigation', () => {
 
   // ── 1.4 List tabs ────────────────────────────────────────────────────────
   it('1.4 safari_list_tabs returns open tabs including our tab', async () => {
-    const result = await callTool(client, 'safari_list_tabs', {}, nextId++);
+    const result = await callTool(client, 'safari_list_tabs', {}, nextId());
     // Result is either an array or object with tabs
     const text = typeof result === 'string' ? result : JSON.stringify(result);
     expect(text).toContain('httpbin.org');
@@ -55,7 +65,7 @@ describe('Phase 1: Core Navigation', () => {
     const raw = await rawCallTool(
       client, 'safari_take_screenshot',
       { tabUrl },
-      nextId++,
+      nextId(),
       15000,
     );
     // Screenshot tool returns image content type
@@ -76,7 +86,7 @@ describe('Phase 1: Core Navigation', () => {
     const result = await callTool(
       client, 'safari_navigate_back',
       { tabUrl },
-      nextId++,
+      nextId(),
       15000,
     );
     expect(result.url).toContain('example.com');
@@ -87,7 +97,7 @@ describe('Phase 1: Core Navigation', () => {
     const result = await callTool(
       client, 'safari_navigate_forward',
       { tabUrl },
-      nextId++,
+      nextId(),
       15000,
     );
     expect(result.url).toContain('httpbin.org');
@@ -99,11 +109,12 @@ describe('Phase 1: Core Navigation', () => {
     const result = await callTool(
       client, 'safari_close_tab',
       { tabUrl },
-      nextId++,
+      nextId(),
       10000,
     );
     // Should confirm closure
     const text = JSON.stringify(result);
     expect(text).toBeDefined();
+    tabUrl = ''; // afterAll will no-op
   }, 15000);
 });

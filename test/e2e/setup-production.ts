@@ -1,13 +1,21 @@
 /**
  * E2E Production Stack Precondition Checks
  *
- * Verifies the system daemon, Safari extension, Safari browser, and MCP server
- * are all running before e2e tests execute. Skips checks for unit/integration runs.
+ * Verifies the system daemon, Safari extension, and Safari browser are
+ * running before e2e tests execute. Skips checks for unit/integration runs.
+ *
+ * Does NOT verify the MCP server binary itself — that used to spawn a
+ * throwaway `node dist/index.js` which created its own Safari session
+ * window (cleaned by T10, but a waste of ~10s per run). Post-T-Harness the
+ * shared client's own init sequence IS the MCP binary validation: the
+ * first test's `getSharedClient()` call either succeeds (binary good) or
+ * fails with a clear MCP-level error. No pre-flight spawn needed.
  *
  * Uses raw TCP/NDJSON — does NOT import from src/ (e2e rule).
  */
 import { createConnection } from 'node:net';
-import { spawn, execSync, type ChildProcess } from 'node:child_process';
+import { execSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -50,15 +58,17 @@ export async function setup() {
     );
   }
 
-  const mcpOk = await checkMcpServerSpawns();
-  if (!mcpOk) {
-    if (!isE2eRun) { console.log('E2E setup: MCP server failed to start (skipped — not an e2e run)'); return; }
+  // Cheap "forgot to rebuild" check — presence, not functional. Functional
+  // validation is implicit in the shared client's first MCP handshake.
+  const mcpBinary = join(__dir, '../../dist/index.js');
+  if (!existsSync(mcpBinary)) {
+    if (!isE2eRun) { console.log('E2E setup: dist/index.js missing (skipped — not an e2e run)'); return; }
     throw new Error(
-      'E2E PRECONDITION FAILED: MCP server failed to start. Run: npm run build'
+      'E2E PRECONDITION FAILED: dist/index.js not found. Run: npm run build'
     );
   }
 
-  console.log('E2E preconditions passed: daemon running, extension connected, Safari open, MCP server valid');
+  console.log('E2E preconditions passed: daemon running, extension connected, Safari open, MCP binary present');
 }
 
 export function teardown() {
@@ -108,26 +118,3 @@ async function queryExtensionHealth(): Promise<Record<string, unknown> | null> {
   });
 }
 
-function checkMcpServerSpawns(): Promise<boolean> {
-  return new Promise((resolve) => {
-    const serverPath = join(__dir, '../../dist/index.js');
-    const proc: ChildProcess = spawn('node', [serverPath], { stdio: ['pipe', 'pipe', 'pipe'] });
-    const timer = setTimeout(() => { proc.kill('SIGKILL'); resolve(false); }, 10_000);
-    const initMsg = JSON.stringify({
-      jsonrpc: '2.0', id: 1, method: 'initialize',
-      params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'setup-check', version: '1.0' } },
-    }) + '\n';
-    proc.stdin!.write(initMsg);
-    let buf = '';
-    proc.stdout!.on('data', (chunk: Buffer) => {
-      buf += chunk.toString();
-      if (buf.includes('"result"')) {
-        clearTimeout(timer);
-        proc.kill('SIGTERM');
-        resolve(true);
-      }
-    });
-    proc.on('error', () => { clearTimeout(timer); resolve(false); });
-    proc.on('close', () => { clearTimeout(timer); resolve(false); });
-  });
-}

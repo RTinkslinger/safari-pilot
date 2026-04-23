@@ -410,18 +410,32 @@ Every tool declares `requirements.idempotent: boolean` (required field — no de
 
 **Status (2026-04-23):** All previous unit, integration, and e2e tests were deleted — they were mock-based fakes that provided false confidence while the product was broken. Tests are being rebuilt from zero with live-only validation.
 
-### E2E Tests (test/e2e/) — 4 files, 19 tests
-- Spawn real `node dist/index.js`, send JSON-RPC over stdin/stdout
-- Zero mocks, zero source imports, real Safari, real extension
-- `McpTestClient` (test/helpers/mcp-client.ts) handles protocol + trace capture
-- Every test run captures: `tool-calls.jsonl`, `stderr.log`, `server-trace.ndjson`, `daemon-trace.ndjson` to `test-results/traces/<timestamp>/`
+### E2E Tests (test/e2e/) — 7 files, 34 tests
+
+**Shared harness (2026-04-23, T-Harness):** one MCP server per test run, not per file. Production runs one server per Claude Code session; the test suite now mirrors that. `test/helpers/shared-client.ts` exposes `getSharedClient()` — first call spawns + initializes; subsequent calls (any file, any test) return the same instance with a shared `nextId()` monotonic counter.
+
+Vitest config is load-bearing: `pool: 'forks' + poolOptions.forks.singleFork: true + isolate: false`. Remove any and every test file gets its own fork and its own "singleton" — i.e. one MCP server per file, which is exactly the bug this refactor fixed.
+
+Teardown (three layers, idempotent):
+1. Setup file `afterAll` (primary) — registered via `setupFiles: ['./test/helpers/shared-teardown.ts']`, fires after the last test in the last file.
+2. `process.on('beforeExit')` (backup) — catches paths where the setupFile didn't register.
+3. T10's server-side SIGTERM handler — catches `kill -TERM` or abort on the worker.
+
+Per-test isolation is via unique URL markers: every `safari_new_tab` call uses `?sp_<file>_<purpose>=${Date.now()}` so trace assertions scanning the shared `~/.safari-pilot/trace.ndjson` can filter to this test's events. Tests MUST close any tabs they open in try/finally or `afterAll`.
+
+Carve-outs (files that intentionally do NOT use the shared client):
+- `signal-shutdown.test.ts` — tests the signal handler itself, needs fresh spawns.
+- `initialization.test.ts` — one of its tests measures first-spawn init latency, so it does its own `initClient` + `close` alongside the shared client used by the other tests.
 
 | File | Tests | What it proves |
 |------|-------|---------------|
 | `initialization.test.ts` | 5 | Init blocks until green, health check returns metadata, new_tab + evaluate through extension engine, pre-call gate |
-| `phase1-core-navigation.test.ts` | 4+2skip | navigate, list_tabs, screenshot, close_tab. Skip: back/forward (stale URL) |
+| `phase1-core-navigation.test.ts` | 6 | navigate, list_tabs, screenshot, back/forward, close_tab |
 | `phase2-page-understanding.test.ts` | 6 | ARIA snapshot with refs, get_text, get_html, extract_links, extract_metadata, engine verification |
 | `phase3-interaction.test.ts` | 4 | fill (verified readback), click, wait_for, engine verification |
+| `phase5-storage-async.test.ts` | 2 | T6 — IDB tools await async JS, seeded DB visible via list + get |
+| `security-ownership.test.ts` | 9 | T1/T2/T5/T7/T8 — ownership registry, schema-required tabUrl, fail-closed on unknown URL, no fake switch_frame envelope |
+| `signal-shutdown.test.ts` | 2 | T10 — SIGTERM/SIGINT close the session window (asserts on `visible of window id`, not `exists`) |
 
 ### Daemon Tests (daemon/Tests/) — 51 tests
 - ExtensionSocketServer, ExtensionBridge, CommandDispatcher, HealthStore, SleepWakeMemoryRecovery

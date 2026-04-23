@@ -12,32 +12,37 @@
  *
  * This test discriminates: it SEEDS a database, then lists — the seeded name
  * must come back. Pre-T6 the list is empty regardless of what exists.
+ *
+ * Uses the shared MCP client (see test/helpers/shared-client.ts) — one
+ * server spawn per test run, tab-level isolation.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { initClient, callTool, rawCallTool, type McpTestClient } from '../helpers/mcp-client.js';
+import { callTool, rawCallTool, type McpTestClient } from '../helpers/mcp-client.js';
+import { getSharedClient } from '../helpers/shared-client.js';
 
 const TEST_DB = 'sp_t6_test_db';
 const TEST_STORE = 'items';
 
 describe('Phase 5: Async storage (IndexedDB) — T6', () => {
   let client: McpTestClient;
-  let nextId: number;
+  let nextId: () => number;
   let tabUrl: string;
 
   beforeAll(async () => {
-    const result = await initClient('dist/index.js');
-    client = result.client;
-    nextId = result.nextId;
+    const s = await getSharedClient();
+    client = s.client;
+    nextId = s.nextId;
 
     // Open a tab on a real origin — about:blank has IDB quirks.
-    const tab = await callTool(client, 'safari_new_tab', { url: 'https://example.com' }, nextId++);
+    const unique = `https://example.com/?sp_p5=${Date.now()}`;
+    const tab = await callTool(client, 'safari_new_tab', { url: unique }, nextId());
     tabUrl = tab.tabUrl as string;
     // Wait for the extension content script to inject.
     await new Promise((r) => setTimeout(r, 3000));
   }, 30000);
 
   afterAll(async () => {
-    if (client) {
+    if (client && tabUrl) {
       // Best-effort cleanup using fire-and-forget (same pattern as seeding):
       // the deleteDatabase call fires asynchronously; we don't need to await
       // its completion because the next test run will recreate the DB anyway.
@@ -45,11 +50,10 @@ describe('Phase 5: Async storage (IndexedDB) — T6', () => {
         await callTool(
           client, 'safari_evaluate',
           { tabUrl, script: `indexedDB.deleteDatabase('${TEST_DB}'); return { deleteIssued: true };` },
-          nextId++, 5000,
+          nextId(), 5000,
         );
       } catch { /* ignore */ }
-      try { await callTool(client, 'safari_close_tab', { tabUrl }, nextId++); } catch { /* ignore */ }
-      await client.close();
+      try { await callTool(client, 'safari_close_tab', { tabUrl }, nextId()); } catch { /* ignore */ }
     }
   });
 
@@ -86,7 +90,7 @@ describe('Phase 5: Async storage (IndexedDB) — T6', () => {
           return { started: true };
         `,
       },
-      nextId++,
+      nextId(),
       10000,
     );
     // Wait for the async IDB transaction to complete in the page event loop.
@@ -100,7 +104,7 @@ describe('Phase 5: Async storage (IndexedDB) — T6', () => {
     const listRaw = await rawCallTool(
       client, 'safari_idb_list',
       { tabUrl },
-      nextId++,
+      nextId(),
       10000,
     );
     // Engine assertion: requiresAsyncJs forces extension routing. If the
@@ -118,7 +122,7 @@ describe('Phase 5: Async storage (IndexedDB) — T6', () => {
     const getRaw = await rawCallTool(
       client, 'safari_idb_get',
       { tabUrl, database: TEST_DB, store: TEST_STORE },
-      nextId++,
+      nextId(),
       10000,
     );
     expect(getRaw.meta?.['engine']).toBe('extension');

@@ -3,28 +3,35 @@
  *
  * The Playwright gap closer. Proves safari_snapshot returns ARIA tree with refs,
  * and all extraction tools return real content from real pages.
+ *
+ * Uses the shared MCP client (see test/helpers/shared-client.ts) — one
+ * server spawn per test run, tab-level isolation with unique URL markers.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { initClient, callTool, rawCallTool, type McpTestClient } from '../helpers/mcp-client.js';
+import { callTool, rawCallTool, type McpTestClient } from '../helpers/mcp-client.js';
+import { getSharedClient } from '../helpers/shared-client.js';
 
 describe('Phase 2: Page Understanding', () => {
   let client: McpTestClient;
-  let nextId: number;
+  let nextId: () => number;
   let tabUrl: string;
 
   beforeAll(async () => {
-    const result = await initClient('dist/index.js');
-    client = result.client;
-    nextId = result.nextId;
+    const s = await getSharedClient();
+    client = s.client;
+    nextId = s.nextId;
 
     // Open a content-rich page
-    const tab = await callTool(client, 'safari_new_tab', { url: 'https://example.com' }, nextId++);
+    const unique = `https://example.com/?sp_p2=${Date.now()}`;
+    const tab = await callTool(client, 'safari_new_tab', { url: unique }, nextId());
     tabUrl = tab.tabUrl;
     await new Promise(r => setTimeout(r, 3000));
   }, 30000);
 
   afterAll(async () => {
-    if (client) await client.close();
+    if (client && tabUrl) {
+      try { await callTool(client, 'safari_close_tab', { tabUrl }, nextId()); } catch { /* ignore */ }
+    }
   });
 
   // ── 2.1 ARIA tree snapshot with refs ─────────────────────────────────────
@@ -32,7 +39,7 @@ describe('Phase 2: Page Understanding', () => {
     const result = await callTool(
       client, 'safari_snapshot',
       { tabUrl },
-      nextId++,
+      nextId(),
       15000,
     );
     const text = typeof result === 'string' ? result : JSON.stringify(result);
@@ -46,7 +53,7 @@ describe('Phase 2: Page Understanding', () => {
     const result = await callTool(
       client, 'safari_get_text',
       { tabUrl },
-      nextId++,
+      nextId(),
       15000,
     );
     const text = typeof result === 'string' ? result : (result.text ?? JSON.stringify(result));
@@ -59,7 +66,7 @@ describe('Phase 2: Page Understanding', () => {
     const result = await callTool(
       client, 'safari_get_html',
       { tabUrl },
-      nextId++,
+      nextId(),
       15000,
     );
     const html = typeof result === 'string' ? result : (result.html ?? JSON.stringify(result));
@@ -72,7 +79,7 @@ describe('Phase 2: Page Understanding', () => {
     const result = await callTool(
       client, 'safari_extract_links',
       { tabUrl },
-      nextId++,
+      nextId(),
       15000,
     );
     const text = JSON.stringify(result);
@@ -85,7 +92,7 @@ describe('Phase 2: Page Understanding', () => {
     const result = await callTool(
       client, 'safari_extract_metadata',
       { tabUrl },
-      nextId++,
+      nextId(),
       15000,
     );
     const text = JSON.stringify(result);
@@ -97,7 +104,7 @@ describe('Phase 2: Page Understanding', () => {
     const raw = await rawCallTool(
       client, 'safari_get_text',
       { tabUrl },
-      nextId++,
+      nextId(),
       15000,
     );
     expect(raw.meta?.engine).toBe('extension');
