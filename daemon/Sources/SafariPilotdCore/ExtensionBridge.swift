@@ -282,6 +282,11 @@ public final class ExtensionBridge: @unchecked Sendable {
                let event = result["event"] as? String {
                 let data = result["data"] as? [String: Any] ?? [:]
                 Trace.emit(traceId, layer: layer, event: event, data: data)
+                // Route alarm_fire events to HealthStore so lastAlarmFireTimestamp
+                // is updated — same effect as the extension_log path in CommandDispatcher.
+                if event == "alarm_fire" {
+                    _keepaliveStore?.recordAlarmFire()
+                }
             }
             return Response.success(id: commandID, value: AnyCodable("ok"))
         }
