@@ -362,9 +362,17 @@ export class ExtractionTools {
     const script = params['script'] as string;
     const timeout = typeof params['timeout'] === 'number' ? params['timeout'] : 10000;
 
+    // Async IIFE wrapper. Awaits the user script's result before packaging,
+    // so a script that `return new Promise(...)` resolves end-to-end instead
+    // of being postMessage'd as an unresolved Promise (which hits
+    // DataCloneError on the structured-clone boundary). `await` on a
+    // non-Promise is a no-op, so synchronous `return <value>` scripts still
+    // work. Pair with content-main.js's `await fn()` in execute_script (T6).
     const js = `
-      var __userResult = (function() { ${script} })();
-      return { value: __userResult, type: typeof __userResult };
+      return (async () => {
+        var __userResult = await (async function() { ${script} })();
+        return { value: __userResult, type: typeof __userResult };
+      })();
     `;
 
     const result = await this.engine.executeJsInTab(tabUrl, js, timeout);

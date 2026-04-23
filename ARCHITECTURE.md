@@ -124,6 +124,8 @@ curl -s http://127.0.0.1:19475/poll
 
 **CSP handling (2026-04-15):** Primary execution path uses content script relay (background.js → content-isolated.js → content-main.js). content-main.js captures the `Function` constructor at load time and handles `execute_script` method. Falls back to `browser.scripting.executeScript` for pages without content scripts. Structured extension operations (queryShadow, dialog interception, network interception) work on CSP-protected pages via pre-defined methods in content-main.js. Arbitrary eval-style JS may still be blocked by strict CSP — this is a Safari platform limitation.
 
+**`safari_evaluate` async wrapper (2026-04-24):** `handleEvaluate` in `src/tools/extraction.ts` wraps the user script in an ASYNC IIFE (`return (async () => { var __userResult = await (async function() { ${script} })(); return { value: __userResult, type: typeof __userResult }; })()`). The outer `await` resolves any Promise the user script returns before the value crosses the content-main → content-isolated → background postMessage boundary. Pre-fix a synchronous IIFE returned the Promise object unresolved, and structured-clone threw `DataCloneError`. Pairs with T6's `await fn()` in `content-main.js:execute_script`. Covered by `test/e2e/evaluate-async.test.ts`.
+
 ### Tier 2: Daemon Engine (5ms p50)
 **Capabilities:** Fast AppleScript execution, PDF generation (WKWebView.createPDF), download watching (FSEvents + DispatchSource)
 
