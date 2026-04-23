@@ -941,7 +941,7 @@ export class SafariPilotServer {
         error: error instanceof Error ? error.message : String(error),
         code: (error as Record<string, unknown>)?.code ?? 'UNKNOWN',
       }, 'error', Date.now() - start);
-      this.circuitBreaker.recordFailure(domain);
+      this.recordToolFailure(domain, selectedEngineName, error);
 
       // 9. Audit log — error path
       this.auditLog.record({
@@ -965,6 +965,26 @@ export class SafariPilotServer {
       this.circuitBreaker,
       this.config,
     );
+  }
+
+  /**
+   * Record both the per-domain and per-engine circuit-breaker failures for a
+   * tool call that threw. Called from `executeToolWithSecurity`'s catch block.
+   *
+   * Pre-T12 (2026-04-24) only `recordFailure(domain)` fired — the engine
+   * breaker existed but was never wired to the error path, so
+   * `EXTENSION_TIMEOUT` / `EXTENSION_UNCERTAIN` / `EXTENSION_DISCONNECTED`
+   * never tripped and the engine kept getting picked indefinitely.
+   *
+   * `recordEngineFailure` internally filters to the extension-lifecycle codes
+   * listed above, so calling it for every error (even generic ones) is safe.
+   */
+  private recordToolFailure(domain: string, engine: Engine, error: unknown): void {
+    this.circuitBreaker.recordFailure(domain);
+    const code = typeof (error as { code?: unknown })?.code === 'string'
+      ? (error as { code: string }).code
+      : 'UNKNOWN';
+    this.circuitBreaker.recordEngineFailure(engine, code);
   }
 
   setEngineAvailability(availability: { daemon: boolean; extension: boolean }): void {
