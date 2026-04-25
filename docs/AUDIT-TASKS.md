@@ -121,10 +121,11 @@
 **Origin:** `d65c461` (2026-04-11) — false claim from day one, never verified.
 **Fix:** Description rewritten at `src/tools/interaction.ts:230-244` to disclose the synthetic-event nature: "Dispatches synthetic MouseEvents (mouseover/mouseenter) — JS handlers run but CSS :hover does not engage (web platform limitation; only the real cursor engages CSS pseudo-classes)." 2 unit tests at `test/unit/tools/interaction-descriptions.test.ts` (negative: rejects `/triggers? CSS :hover|activates? CSS :hover|fires? CSS :hover/i`; positive: requires `/synthetic\s+(mouse\s*)?(event|MouseEvent)/i`). Two oracles jointly enforce both removal of the false claim AND positive disclosure of the constraint. upp:test-reviewer fast PASS 0/0/1.
 
-### T17. Fix `safari_take_screenshot` — remove dead params or implement them
+### T17. Fix `safari_take_screenshot` — remove dead params or implement them ✅ RESOLVED 2026-04-25 (commit `9b16f17`)
 **Findings:** H15 (tool-modules audit)
 **Root cause:** `fullPage`, `tabUrl`, `quality` defined in schema but completely ignored by handler. `screencapture -x` captures frontmost window only.
 **Origin:** `115c762` (2026-04-11) — schema-first, implementation-never pattern. Competitive analysis marks fullPage as "RD" (roadmap).
+**Fix:** Removed `tabUrl`, `fullPage`, `quality` from `safari_take_screenshot` inputSchema (`src/tools/extraction.ts:166-189`); top-level description now discloses the actual behavior ("Capture a screenshot of the frontmost Safari window ... no per-tab targeting"). 3 absence tests at `test/unit/tools/extraction-screenshot-schema.test.ts`. upp:test-reviewer fast PASS 0/0/1. tabUrl-removal also resolves an implicit conflict with the core tab-isolation principle (CLAUDE.md "Never switch user tabs") — the property's old description implied tab activation.
 
 ### T18. Fix `safari_export_pdf` tab targeting
 **Findings:** H18 (tool-modules audit)
