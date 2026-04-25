@@ -230,7 +230,8 @@ export class InteractionTools {
         name: 'safari_hover',
         description:
           'Hover over an element. Auto-waits for the element to be visible, stable, and receiving events. ' +
-          'Triggers CSS :hover states and mouseover/mouseenter events.',
+          'Dispatches synthetic MouseEvents (mouseover/mouseenter) — JS handlers run but CSS :hover does ' +
+          'not engage (web platform limitation; only the real cursor engages CSS pseudo-classes).',
         inputSchema: {
           type: 'object',
           properties: {
