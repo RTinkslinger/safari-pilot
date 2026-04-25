@@ -19,9 +19,10 @@
  * taxonomy so that a future "rename to `code2`" or "delete the retryable
  * getter" flags loudly here.
  *
- * The 4 declared-but-unused codes (ELEMENT_NOT_INTERACTABLE,
- * CROSS_ORIGIN_FRAME, DIALOG_UNEXPECTED, FRAME_NOT_FOUND) have NO concrete
- * class — filed as SD-22 for cleanup / class addition.
+ * SD-22 (2026-04-25, resolved): the 4 declared-but-unused codes
+ * (ELEMENT_NOT_INTERACTABLE, CROSS_ORIGIN_FRAME, DIALOG_UNEXPECTED,
+ * FRAME_NOT_FOUND) were deleted from ERROR_CODES — they had zero
+ * references anywhere in src/, daemon/Sources/, extension/, or tests.
  */
 import { describe, it, expect } from 'vitest';
 import {
