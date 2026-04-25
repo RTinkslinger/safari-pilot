@@ -8,19 +8,6 @@ Running list of findings surfaced by reviewers (Codex, `upp:test-reviewer`, advi
 
 ## Open
 
-### SD-12 — ExtensionBridge `__keepalive__`, `__trace__`, `_meta` sentinels untested
-- **Severity:** P1 (three production-critical sentinels, each a documented contract; deletion of any is invisible to the test suite)
-- **Source:** `upp:test-reviewer` retro review #2 (2026-04-24)
-- **Symptom:** Inside `ExtensionBridge.handleResult()`:
-  - `__keepalive__` (SUT lines 266-274): updates `HealthStore.lastKeepalivePing`, marks extension connected. No test queues `{"requestId": "__keepalive__", ...}` and asserts the HealthStore state change.
-  - `__trace__` (SUT lines 277-292): routes extension trace events to `daemon-trace.ndjson`; nested `alarm_fire` event updates `HealthStore.lastAlarmFireTimestamp`. No test exercises this path.
-  - `_meta` wrapper (SUT lines 358-365): success results carrying `_meta` get rewrapped as `{"value": innerValue, "_meta": meta}` — the T4/tab-identity contract. No test queues a result with `_meta` and asserts wrapper shape.
-- **Current understanding (from review):** one test per sentinel. Each drives the sentinel through `handleResult` and asserts the specific observable side effect.
-- **Discriminator:** delete the `__keepalive__` branch — new test must fail; restore → passes. Same for `__trace__` and `_meta` branches.
-- **Entry points / files:**
-  - `daemon/Sources/SafariPilotdCore/ExtensionBridge.swift` (lines 266-274, 277-292, 358-365)
-  - `daemon/Tests/SafariPilotdTests/ExtensionBridgeTests.swift` — extend
-
 ### SD-13 — ExtensionHTTPServer: 4 of 8 routes + disconnect timeout + onBindFailure untested
 - **Severity:** P1 (the routes flagged as "added for the initialization system" are the untested ones)
 - **Source:** `upp:test-reviewer` retro review #2 (2026-04-24)
@@ -168,6 +155,20 @@ Running list of findings surfaced by reviewers (Codex, `upp:test-reviewer`, advi
 ---
 
 ## Resolved
+
+### SD-12 — ExtensionBridge `__keepalive__` / `__trace__` / `_meta` sentinels untested (2026-04-25, commit `79ee209`)
+
+Resolved by adding 9 tests in `daemon/Tests/SafariPilotdTests/ExtensionBridgeTests.swift` covering all three handleResult sentinels:
+
+- `__keepalive__` (lines 266-274): two tests — both side effects in one test (recordKeepalivePing + handleConnected); one early-return safety test using a contrived `"__keepalive__"` pendingCommand collision (asserts `isInExecutedLog` is false post-keepalive, locking the early `return Response.success(...)` at line 273).
+- `__trace__` (lines 277-292): four tests — happy path (alarm_fire advances `lastAlarmFireTimestamp`); negative form for the `event == "alarm_fire"` guard (non-alarm event leaves the timestamp untouched); reviewer MAJOR follow-up for malformed payload with no `result` field; locked the `type=="trace"` field guard (wrong-type event is ignored).
+- `_meta` wrapper (lines 353-367): three tests — wrapped form preserves both inner value and `_meta` dict; backward-compat path returns the bare inner value when `_meta` is absent; reviewer ADVISORY follow-up locking the `?? NSNull()` fallback at line 357 for void script results (`{ok:true}` with no `value` key).
+
+Each test names its discrimination target inline as a comment: removing the targeted SUT branch fails the test loudly. T2 documents the leaked-Task contract: handleExecute's internal 90s timeoutTask resumes the continuation; the bridge is local to the test, no cross-test state leakage.
+
+`upp:test-reviewer` (full mode, 9 checks) verdict: **PASS** (CRITICAL: 0, MAJOR: 1 — malformed `__trace__` payload uncovered, addressed in same commit; ADVISORY: 3 — comment-wording on T2 tightened per reviewer; null-fallback test added per reviewer's optional follow-up; NSNumber-vs-Int round-trip explicitly noted as out-of-scope for bridge tests, belongs at the dispatcher boundary).
+
+Total tests: 97 unit (TS) + 20 canary + 41 e2e + 97 Swift = 255 (Swift was 88 pre-SD-12; +9).
 
 ### SD-11 — HealthStore recent-iteration API (session/MCP/keepalive) has zero tests (2026-04-25, commit `aff0705`)
 
