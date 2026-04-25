@@ -87,7 +87,30 @@ func registerCommandDispatcherTests() {
         try assertEqual(response.id, "cmd-x")
     }
 
-    // 9. testExecuteRouting — dispatcher forwards script to executor
+    // 9. testExecuteRouting — dispatcher forwards script to executor.
+    //
+    // SD-19 strengthening: the prior assertion `response.value == "script_result"`
+    // was self-fulfilling — the mock was pre-configured to return that exact
+    // value, so the assertion proved only that the test plumbing worked, not
+    // that the dispatcher actually forwarded anything. Two real behavioural
+    // claims remain:
+    //   (1) `mock.lastScript == script` — the dispatcher must have CALLED
+    //       executor.execute with the unescaped script string. The dispatcher
+    //       is responsible for the JSON-string → Swift-string decoding;
+    //       the mock just records what arrived. Load-bearing.
+    //   (2) `response.id == "exec-1"` — the dispatcher must have forwarded
+    //       `command.id` (the inbound NDJSON id) as the executor's commandID,
+    //       which the mock reflects back via its own `Response(id: commandID, ...)`
+    //       constructor (CommandDispatcherTests.swift:14). A regression that
+    //       passed a hardcoded literal or empty string instead of `command.id`
+    //       to executor.execute would fail this.
+    //
+    // Initial SD-19 attempt added `response.elapsedMs >= 0` as a third oracle.
+    // Reviewer flagged as CRITICAL tautology: Response.elapsedMs is non-optional
+    // Double (defaults to 0); the mock explicitly sets elapsedMs:0; the
+    // dispatcher's execute route returns `await executor.execute(...)` directly
+    // and does NOT populate elapsedMs at this layer (AppleScriptExecutor does,
+    // but it's mocked out here). Removed.
     test("testExecuteRouting") {
         let mock = MockExecutor()
         mock.responseToReturn = Response.success(id: "placeholder", value: AnyCodable("script_result"))
@@ -104,8 +127,13 @@ func registerCommandDispatcherTests() {
             await dispatcher.dispatch(line: line)
         }
         try assertTrue(response.ok)
-        try assertEqual(mock.lastScript, script)
-        try assertEqual(response.value?.value as? String, "script_result")
+        try assertEqual(mock.lastScript, script,
+                        "dispatcher must forward the unescaped script string to executor.execute "
+                            + "(this is the actual behavioural claim)")
+        try assertEqual(response.id, "exec-1",
+                        "dispatcher must forward command.id as executor.execute(commandID:); "
+                            + "the mock reflects this back via Response(id: commandID, ...). "
+                            + "A regression passing a hardcoded literal or empty string would fail.")
     }
 
     // 10. testExecuteMissingScript — missing script param returns INVALID_PARAMS

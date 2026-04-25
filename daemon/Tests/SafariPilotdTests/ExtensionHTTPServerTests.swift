@@ -106,18 +106,61 @@ func registerExtensionHTTPServerTests() {
     }
 
     test("testHTTPConnectCallsReconcile") {
+        // SD-19 strengthening: pre-SD-19 the body asserted only that 5
+        // reconcile keys were `!= nil` — an empty-array response (or even a
+        // bug that returned `[String: []]` placeholder maps) would pass.
+        // Locking by pre-populating bridge state and asserting specific id
+        // classifications:
+        //   - pre-queue cmd-pre-pending (delivered=false) → must classify
+        //     as `reQueued` when extension reports it in pendingIds
+        //   - pre-execute + complete cmd-pre-acked → must classify as
+        //     `acked` when extension reports it in executedIds (it's in
+        //     daemon's executedLog)
         let (server, bridge, health) = startTestHTTPServer()
         defer { server.stop() }
-
         Thread.sleep(forTimeInterval: 0.5)
 
-        // Verify bridge starts disconnected
         try assertFalse(bridge.isExtensionConnected)
         try assertTrue(health.lastReconcileTimestamp == nil)
 
+        // Pre-state: queue a command (delivered=false; will be reQueued)
+        let preQueuedTask = Task {
+            await bridge.handleExecute(
+                commandID: "cmd-pre-pending",
+                params: ["script": AnyCodable("a")]
+            )
+        }
+        Thread.sleep(forTimeInterval: 0.1)
+
+        // Pre-state: queue + complete a second command so it lands in executedLog
+        let preAckedTask = Task {
+            await bridge.handleExecute(
+                commandID: "cmd-pre-acked",
+                params: ["script": AnyCodable("b")]
+            )
+        }
+        Thread.sleep(forTimeInterval: 0.1)
+        _ = syncAwait { await bridge.handlePoll(commandID: "p-pre") }
+        _ = bridge.handleResult(
+            commandID: "r-pre",
+            params: [
+                "requestId": AnyCodable("cmd-pre-acked"),
+                "result": AnyCodable(["ok": true, "value": "done"]),
+            ]
+        )
+        _ = syncAwait { await preAckedTask.value }
+
+        // The poll above marked cmd-pre-pending delivered=true. Disconnect
+        // flips it back to false so reconcile classifies it as `reQueued`
+        // (delivered=false, in extension's pendingIds), not `inFlight`
+        // (delivered=true). This mirrors the production wake sequence:
+        // extension event page sleeps → daemon flips delivered → extension
+        // wakes + /connect.
+        _ = bridge.handleDisconnected(commandID: "disc-pre-reconcile")
+
         let connectBody: [String: Any] = [
-            "executedIds": [] as [String],
-            "pendingIds": [] as [String],
+            "executedIds": ["cmd-pre-acked"],
+            "pendingIds": ["cmd-pre-pending"],
         ]
         let (data, response) = syncHTTPPost(
             port: server.testPort, path: "/connect", json: connectBody
@@ -129,18 +172,37 @@ func registerExtensionHTTPServerTests() {
             throw TestFailure("Failed to parse connect response")
         }
 
-        // Verify reconcile response shape
-        try assertTrue(json["acked"] != nil, "Response should contain 'acked'")
-        try assertTrue(json["uncertain"] != nil, "Response should contain 'uncertain'")
-        try assertTrue(json["reQueued"] != nil, "Response should contain 'reQueued'")
-        try assertTrue(json["inFlight"] != nil, "Response should contain 'inFlight'")
-        try assertTrue(json["pushNew"] != nil, "Response should contain 'pushNew'")
+        // Specific id classifications — locks reconcile semantics, not just shape.
+        let acked = json["acked"] as? [String] ?? []
+        try assertTrue(acked.contains("cmd-pre-acked"),
+                       "acked must include cmd-pre-acked (in executedLog); "
+                           + "got \(acked)")
+        let reQueued = json["reQueued"] as? [String] ?? []
+        try assertTrue(reQueued.contains("cmd-pre-pending"),
+                       "reQueued must include cmd-pre-pending (in extension's "
+                           + "pendingIds with bridge delivered=false); got \(reQueued)")
+        // pushNew must be empty because the only undelivered command is
+        // cmd-pre-pending, and that's already in extension's pendingIds.
+        let pushNew = json["pushNew"] as? [[String: Any]] ?? []
+        try assertEqual(pushNew.count, 0,
+                        "pushNew must be empty when extension already knows the "
+                            + "single undelivered command")
 
-        // Verify side effects
+        // Verify side effects (these were already locked pre-SD-19; kept for clarity)
         try assertTrue(bridge.isExtensionConnected,
                        "Bridge should be connected after /connect")
         try assertTrue(health.lastReconcileTimestamp != nil,
                        "HealthStore.lastReconcileTimestamp should be set")
+
+        // Cleanup: send result for cmd-pre-pending so the leaked Task resolves
+        _ = bridge.handleResult(
+            commandID: "r-cleanup",
+            params: [
+                "requestId": AnyCodable("cmd-pre-pending"),
+                "result": AnyCodable(["ok": true, "value": "cleanup"]),
+            ]
+        )
+        _ = syncAwait { await preQueuedTask.value }
     }
 
     test("testHTTPPollReturnsAllCommandsWhenMultipleAvailable") {
@@ -206,6 +268,10 @@ func registerExtensionHTTPServerTests() {
         try assertTrue(allowMethods!.contains("POST"), "Allow-Methods should include POST")
     }
 
+    // SD-19: the paired observability hook `onBindFailure` is now covered by
+    // `testOnBindFailureFiresWhenPortAlreadyBound` (added as part of SD-13).
+    // Together those two tests lock both halves of the lifecycle hook contract:
+    // bind succeeds → onReady fires; bind fails → onBindFailure fires.
     test("testHTTPServerCallsOnReadyAfterStart") {
         let bridge = ExtensionBridge()
         let tmpPath = FileManager.default.temporaryDirectory
