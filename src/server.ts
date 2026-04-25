@@ -516,6 +516,11 @@ export class SafariPilotServer {
               approvalRequired: true,
             }),
           }],
+          // T30 — surface MCP `isError` so clients distinguish an
+          // approval-blocked call from a successful tool call. Other
+          // security layers throw, but HumanApproval soft-returns to
+          // preserve the structured `approvalRequired` payload.
+          isError: true,
           metadata: {
             engine: 'applescript' as Engine,
             degraded: true,
@@ -669,6 +674,8 @@ export class SafariPilotServer {
                 approvalRequired: true,
               }),
             }],
+            // T30 — same MCP isError contract as Site 1 above.
+            isError: true,
             metadata: {
               engine: selectedEngineName,
               degraded: true,

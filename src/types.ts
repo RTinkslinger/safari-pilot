@@ -86,6 +86,15 @@ export interface ToolError {
 
 export interface ToolResponse {
   content: Array<{ type: 'text' | 'image'; text?: string; data?: string; mimeType?: string }>;
+  /**
+   * MCP `CallToolResult.isError`. Tool-level errors that take a
+   * soft-return path (e.g. `HumanApprovalRequiredError` — which surfaces
+   * a structured `approvalRequired` payload instead of throwing) must
+   * set this so MCP clients can distinguish them from successful calls.
+   * Other security failures throw and are converted to MCP errors by
+   * the SDK automatically.
+   */
+  isError?: boolean;
   metadata: {
     engine: Engine;
     degraded: boolean;

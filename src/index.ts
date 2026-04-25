@@ -76,6 +76,9 @@ async function main(): Promise<void> {
         }
         return { type: 'text' as const, text: c.text ?? '' };
       }),
+      // T30 — forward MCP `isError` from soft-return paths
+      // (HumanApproval) so clients see protocol-level error semantics.
+      ...(result.isError ? { isError: true } : {}),
       _meta: result.metadata ? {
         engine: result.metadata.engine,
         degraded: result.metadata.degraded,
