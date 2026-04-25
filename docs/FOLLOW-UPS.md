@@ -12,23 +12,6 @@ Running list of findings surfaced by reviewers (Codex, `upp:test-reviewer`, advi
 
 ## Open
 
-### SD-32 — Concurrent MCP sessions kill each other's session-dashboard windows (regression introduced by SD-21 / commit `c9e8b82`)
-
-Surfaced by the 2026-04-25 fresh-eyes review. `closeOrphanedSessionWindows` (`src/server.ts:1273-1297`) filters Safari windows by AppleScript predicate `name is "Safari Pilot — Active Session"` — the constant `<title>` set by `ExtensionHTTPServer.swift:361`'s session-page HTML. The session URL carries a unique `?id=<sessionId>` query param, but the window title is identical across all live sessions.
-
-**Symptom:** Session B's startup at `server.ts:1367-1378` runs `registerWithDaemon` (which already reports `otherSessions > 0`) and then `ensureSessionWindow → closeOrphanedSessionWindows` — so Session B closes Session A's dashboard window. Session A's keepalive then fails the 10s extension poll and `SessionRecoveryError` surfaces mid-flow.
-
-**Why it matters:** The multi-session contract that `HealthStore.activeSessionCount` and the per-session `?id=` query parameter were designed for is broken by this one-line title filter. Two concurrent Claude Code sessions cannot coexist.
-
-**Fix options:**
-- (a) embed `sessionId` in the dashboard `<title>` and filter the AppleScript predicate by exact title match including ID;
-- (b) skip orphan cleanup entirely when `registerWithDaemon` reports `otherSessions > 0`;
-- (c) tag the window via a custom property / JS-set marker that includes session ID and filter on that.
-
-**Discriminator:** spawn two processes via `node dist/index.js` simultaneously, register two MCP sessions with distinct IDs, observe via `safari_list_tabs` whether both dashboard windows survive. Pre-fix: Session A's window is closed by Session B's startup. Post-fix: both survive.
-
-**Entry-points:** `src/server.ts:1273-1297` (closeOrphanedSessionWindows), `src/server.ts:1367-1378` (start sequence), `daemon/Sources/SafariPilotdCore/ExtensionHTTPServer.swift:361` (sessionPageHTML title).
-
 ### SD-30 — Banking-disable-extension is a legitimate security feature, currently unimplemented
 
 Filed during T31 deletion. The original `extensionAllowed` field on `DomainPolicy` was computed per domain (false for `SENSITIVE_PATTERNS` like banks/payment-processors) but never read by `selectEngine`. T31 chose deletion over wiring because wiring requires (a) flipping `BASE_DEFAULT_POLICY.extensionAllowed` to `true` so the default isn't "extension blocked on every unknown domain", (b) deciding the user-facing semantic when a tool needs the extension on a banking domain (throw `EngineUnavailableError`? degrade silently? log + proceed?), and (c) discriminating tests for both the block path and the non-block default path.
@@ -49,6 +32,16 @@ If the security feature is wanted: re-add `extensionAllowed` to PolicyRule + Eva
 ---
 
 ## Resolved
+
+### SD-32 — `closeOrphanedSessionWindows` skips cleanup when other live sessions exist (2026-04-25, commit `6b55ff9`)
+
+Regression originally introduced by SD-21 (commit `c9e8b82`). The orphan-cleanup AppleScript filtered Safari windows by the constant title "Safari Pilot — Active Session" — shared across every live MCP session's dashboard tab. Session B's startup would close Session A's window, breaking the multi-session contract.
+
+**Fix:** picked option (b) from the original SD-32 entry — added a private `_otherSessionsAtStart` field set by `start()` from the `registerWithDaemon()` return value; `closeOrphanedSessionWindows` early-returns when that count is > 0, emitting a `session_window_orphan_cleanup_skipped` trace. Single-session crash recovery (the legitimate SD-21 path) still runs when this is the only live session.
+
+**Test:** dual-test in `test/unit/server/orphan-cleanup-multi-session.test.ts` using SD-29 module-isolation pattern. Test 1 (skip-when-others-live): poke `_otherSessionsAtStart=1`, assert `execSync.not.toHaveBeenCalled()`. Test 2 (run-in-single-session, negative-form discriminator): poke `_otherSessionsAtStart=0`, assert one execSync call containing the "Safari Pilot — Active Session" filter. Mutation-verified.
+
+**Open follow-up:** the wiring at `start():1422` (storing the otherSessions count into the field) is unit-uncovered — only an e2e that spawns two concurrent MCP sessions and asserts Session A's keepalive survives Session B's startup would close that gap. Tracker entry notes this; would file as SD-33 if anyone reports concurrent-session breakage.
 
 ### SD-31 — `killSwitch.recordError()` filters security-pipeline errors (2026-04-25, commit `63d4e59`)
 

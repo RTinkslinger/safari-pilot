@@ -30,11 +30,7 @@ Atomic per-item scope. For each entry below:
 ## Open work — by impact
 
 ### Critical bugs (ship next)
-Real defects causing real product issues today.
-
-| ID | Surface | One-liner | Notes |
-|---|---|---|---|
-| **SD-32** | `src/server.ts:1273-1297` + `daemon/Sources/SafariPilotdCore/ExtensionHTTPServer.swift:361` | Concurrent MCP sessions kill each other's dashboard windows — orphan-cleanup AppleScript filters by constant title shared across sessions | regression from SD-21 (commit `c9e8b82`). Multi-session contract is broken. Fix options: embed sessionId in title and filter exact, OR skip orphan cleanup when `otherSessions > 0`, OR tag windows with a custom marker. |
+*All shipped this sprint.* T7, SD-31, SD-32 resolved. See "Resolved this sprint" below.
 
 ### Extension-rebuild batch
 Source changes to `extension/*.js` are incomplete without rebuild + sign + notarize + release per the `feedback_distribution_builds` memory. Bundle these as ONE drop, not three releases.
@@ -122,7 +118,8 @@ Lookup-only index; full fix-context paragraphs are in `docs/AUDIT-TASKS.md` / `d
 | Reconciliation | — | `da37e52` | 13 stale-open audit items marked RESOLVED + SD-31, SD-32 filed |
 | Tracker | — | `4bec8e3` | Consolidated AUDIT-TASKS + FOLLOW-UPS into this file |
 | SD-31 | `63d4e59` | `ecb32d6` | killSwitch.recordError filters security-pipeline errors (no more TabUrlNotRecognizedError-burst self-DoS) |
-| T7 | `71218d9` | (this commit) | Regression guard for existing safari_close_tab tab-ownership cleanup (server.ts:833-852); audit-flagged leak prevented from silently re-emerging |
+| T7 | `71218d9` | `317527a` | Regression guard for existing safari_close_tab tab-ownership cleanup (server.ts:833-852); audit-flagged leak prevented from silently re-emerging |
+| SD-32 | `6b55ff9` | (this commit) | orphan-cleanup skips when other live sessions exist; multi-session contract restored |
 
 Pre-2026-04-25 sprint resolved entries (SD-01..SD-28, T13..T25 originals): see archives.
 
@@ -131,7 +128,9 @@ Pre-2026-04-25 sprint resolved entries (SD-01..SD-28, T13..T25 originals): see a
 ## Tally
 
 - **28** audit items (T-numbered) open — 0 P0, 4 in extension batch, 7 P2 quality debt, 17 P3 missing-feature/cosmetic.
-- **2** SDs open — 1 critical regression (SD-32), 1 deferred feature (SD-30).
+- **1** SD open — SD-30, deferred feature (banking-disable-extension).
 - **2** ROADMAP backlog items — navigate_back/forward stale URL, NDJSON line-split flake.
 
-Total open: **32**. Of these, **1 is a real bug** (SD-32) — the rest are quality debt, missing features, deferred design decisions, or cosmetic.
+Total open: **31**. **All real bugs are now resolved this sprint** (T7, SD-31, SD-32). The remainder is quality debt, missing features, deferred design decisions, or cosmetic.
+
+Open follow-up flagged by SD-32 reviewer: an e2e companion test that spawns two concurrent MCP sessions and asserts Session A's keepalive survives Session B's startup would close the unit-test wiring gap (server.ts:1422 stores the otherSessions count into a private field; the unit tests poke the field directly; only an e2e exercises the full registerWithDaemon → field-write → cleanup-skip flow). Worth filing as SD-33 if anyone reports concurrent-session breakage.
