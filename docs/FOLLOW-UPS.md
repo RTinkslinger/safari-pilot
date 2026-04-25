@@ -8,17 +8,6 @@ Running list of findings surfaced by reviewers (Codex, `upp:test-reviewer`, advi
 
 ## Open
 
-### SD-05 — No end-to-end lifecycle workflow test
-- **Severity:** P1 (the exact bug class CLAUDE.md history warns against — URL-as-identity cascade)
-- **Source:** `upp:test-reviewer` retro review #1 (Check 9 LIFECYCLE GAP)
-- **Symptom:** Each phase file exercises atomic ops in its own tab and closes it. No single test walks open → navigate → interact → extract → navigate-back → navigate-forward → close as one journey, asserting the tab-ownership registry stays coherent at each transition. Phase 1 has these ops but each in its own `it()` with mid-suite `tabUrl` mutations — a mid-test failure cascades without discriminating which transition broke.
-- **Current understanding (from review, not verified):** one `it()` block doing the full sequence, with assertions between each step. Can reuse the existing tools through the shared client. The failure mode this catches: a commit that updates the registry wrong on one transition causes the next transition to misbehave.
-- **Discriminator for the fix:** inject a known bad registry-update at one transition (e.g., revert T2's post-navigation URL refresh) → test fails on the very next step. Restoring passes the full journey.
-- **Entry points / files:**
-  - `src/security/tab-ownership.ts` — dual-key registry invariants
-  - `src/server.ts` — step 8.post0/post1/post2 registry mutations
-  - New test: `test/e2e/lifecycle-workflow.test.ts`
-
 ### SD-06 — 18 of 21 error classes untested
 - **Severity:** P2 (error paths regress most often; prioritize security-consequence ones first)
 - **Source:** `upp:test-reviewer` retro review #1
@@ -220,6 +209,12 @@ Running list of findings surfaced by reviewers (Codex, `upp:test-reviewer`, advi
 ---
 
 ## Resolved
+
+### SD-05 — No end-to-end lifecycle workflow test (2026-04-25, commit `b1c4eb5`)
+
+Resolved by adding one `it()` in `test/e2e/lifecycle-workflow.test.ts` that drives the full 7-hop journey (open → navigate → interact → extract → back → forward → close) in a single block, with tabUrl cascading forward at each hop. Three explicit trace-event oracles filter by precise URL pairs / tabUrl to pin attribution: T2's `ownership_url_refreshed` (hop 2), T7's `ownership_tab_removed` (hop 7), and cascade discrimination at hops 3-6 (if any preceding hop breaks the registry, the next ownership pre-check throws `TabUrlNotRecognizedError`). Discrimination empirically verified by disabling T2 — test fails at hop 2's trace-event assertion; restored → passes.
+
+`upp:test-reviewer` (fast mode, 3 checks) verdict: **PASS** (CRITICAL: 0, MAJOR: 1 — addressed; ADVISORY: 2 — style confirmations). Total tests: 82 unit + 14 canary + 41 e2e = 137.
 
 ### SD-04 — 7 of 9 security layers have zero coverage (2026-04-25, commit `29eb006`)
 
