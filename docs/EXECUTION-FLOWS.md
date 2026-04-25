@@ -214,8 +214,6 @@ SafariPilotServer.executeToolWithSecurity()
     │
     ├── (extraction tools) → IdpiAnnotator.annotate()
     │
-    ├── (safari_take_screenshot) → ScreenshotRedaction.getRedactionScript()
-    │
     └── AuditLog.record() → success
 ```
 
@@ -399,9 +397,8 @@ Step    Component                   Trace point   Blocks on
           deferred verify)
  8a     IdpiAnnotator.annotate()      —            (annotates metadata, no block; T35)
          (extraction tools only)
- 8b     ScreenshotRedaction           —            (annotates metadata, no block)
-         (safari_take_screenshot only)
  9      AuditLog.record()             —            (always runs, success or error)
+         (former 8b ScreenshotRedaction deleted under T36)
 ─────────────────────────────────────────────────────────────────────────────
 ```
 

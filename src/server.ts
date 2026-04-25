@@ -32,7 +32,6 @@ import { RateLimiter } from './security/rate-limiter.js';
 import { CircuitBreaker } from './security/circuit-breaker.js';
 import { IdpiAnnotator } from './security/idpi-annotator.js';
 import { HumanApproval } from './security/human-approval.js';
-import { ScreenshotRedaction } from './security/screenshot-redaction.js';
 import {
   RateLimitedError,
   HumanApprovalRequiredError,
@@ -195,7 +194,6 @@ export class SafariPilotServer {
   readonly circuitBreaker: CircuitBreaker;
   readonly idpiAnnotator: IdpiAnnotator;
   readonly humanApproval: HumanApproval;
-  readonly screenshotRedaction: ScreenshotRedaction;
 
   private engineProxy: EngineProxy | null = null;
   private clickContexts: Map<string, ClickContext> = new Map();
@@ -265,7 +263,6 @@ export class SafariPilotServer {
     });
     this.idpiAnnotator = new IdpiAnnotator();
     this.humanApproval = new HumanApproval();
-    this.screenshotRedaction = new ScreenshotRedaction();
   }
 
   async initialize(): Promise<void> {
@@ -942,16 +939,7 @@ export class SafariPilotServer {
         }
       }
 
-      // 8b. Screenshot redaction — attach redaction metadata for screenshot tools
-      if (name === 'safari_take_screenshot') {
-        if (!result.metadata) {
-          result.metadata = { engine: selectedEngineName, degraded: false, latencyMs: 0 };
-        }
-        (result.metadata as Record<string, unknown>).redactionScript = this.screenshotRedaction.getRedactionScript();
-        (result.metadata as Record<string, unknown>).redactionApplied = true;
-      }
-
-      // 8c. Post-click tab detection — detect tabs opened by website JS (window.open,
+      // 8b. Post-click tab detection — detect tabs opened by website JS (window.open,
       // target="_blank") and auto-register them in the ownership registry. Without
       // this, the agent can't interact with website-opened tabs.
       if (name === 'safari_click' && preClickTabs && this._engine) {

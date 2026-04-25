@@ -136,8 +136,9 @@ Seven pre-execution layers + three post-execution checks run on every tool call 
 
 **Post-execution (annotate/audit after tool runs):**
 8. **IdpiAnnotator** — indirect prompt injection detection on extraction tool results only; annotates metadata, never blocks (T35; server.ts:920)
-9. **ScreenshotRedaction** — attaches CSS blur script for cross-origin iframes and banking domains on screenshot tool only (server.ts:591)
-10. **AuditLog** — records every tool call with params, engine, result, timing (server.ts:596)
+9. **AuditLog** — records every tool call with params, engine, result, timing (server.ts:596)
+
+(A former layer 8b "ScreenshotRedaction" was deleted in T36 — it returned a redaction script in metadata that was never injected before `screencapture`, and the OS-level capture is immune to CSS blur regardless. A domain-block screenshot policy is tracked as T59.)
 
 ### Tool Module Pattern
 

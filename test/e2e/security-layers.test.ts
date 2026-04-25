@@ -9,8 +9,12 @@
  *   - IdpiAnnotator (layer 8a, renamed from IdpiScanner per T35) — extraction
  *     tool result on prompt-injection content → metadata.idpiThreats annotation.
  *     The layer never blocks; the assertion is metadata-only.
- *   - ScreenshotRedaction (layer 8b) — safari_take_screenshot response
- *     metadata carries `redactionScript` + `redactionApplied: true`.
+ *
+ * (Former layer 8b — ScreenshotRedaction — was deleted under T36 (2026-04-26)
+ * because the redaction script was returned in metadata but never injected
+ * before screencapture, and `screencapture -x` is OS-level so CSS blur is
+ * immune anyway. The whole post-execution layer was a no-op annotation. A
+ * domain-block screenshot policy is filed as T59 if real protection is wanted.)
  *
  * The other 4 layers (KillSwitch, RateLimiter, per-domain CircuitBreaker,
  * AuditLog) are unit-tested under `test/unit/security/` because their
@@ -179,38 +183,4 @@ describe('Security layers e2e (SD-04)', () => {
     }
   }, 45_000);
 
-  // ── Layer 8b: ScreenshotRedaction ─────────────────────────────────────────
-  it('ScreenshotRedaction: safari_take_screenshot response metadata carries redactionScript + redactionApplied', async () => {
-    // The redaction script is attached unconditionally for safari_take_screenshot
-    // (server.ts:866-873). It is the JS that callers inject before capture
-    // to blur cross-origin iframes and password fields. Without this metadata
-    // attachment, callers have no way to apply redaction → screenshots leak
-    // sensitive content.
-    const unique = `https://example.com/?sp_sd04_red=${Date.now()}`;
-    const tab = await callTool(client, 'safari_new_tab', { url: unique }, nextId(), 15_000);
-    const tabUrl = tab.tabUrl as string;
-    try {
-      const raw = await rawCallTool(
-        client, 'safari_take_screenshot',
-        { tabUrl },
-        nextId(),
-        15_000,
-      );
-      const meta = raw.meta as Record<string, unknown> | undefined;
-      expect(meta, 'screenshot must carry metadata').toBeDefined();
-      expect(meta!['redactionApplied']).toBe(true);
-      const script = meta!['redactionScript'];
-      expect(typeof script).toBe('string');
-      // Script content guard: must reference the redaction attribute and
-      // the iframe selector, otherwise a stub returning an empty string
-      // would pass.
-      expect(script as string).toContain('data-safari-pilot-redacted');
-      expect(script as string).toContain('iframe');
-
-      // Discrimination: comment out server.ts:871 (the redactionScript
-      // assignment) → metadata lacks the field → test fails.
-    } finally {
-      try { await callTool(client, 'safari_close_tab', { tabUrl }, nextId()); } catch { /* ignore */ }
-    }
-  }, 30_000);
 });

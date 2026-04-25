@@ -199,8 +199,9 @@ Logic:
 | — | **Tool Execution** | Calls the tool handler with selected engine | server.ts:576 |
 | 8 | **Post-exec Ownership** | Backfill extensionTabId, refresh URL, verify deferred ownership | server.ts:602 |
 | 9 | **IdpiAnnotator** | Post-execution: scans extraction results for prompt-injection patterns and annotates `_meta` (never blocks; T35) | server.ts:920 |
-| 10 | **ScreenshotRedaction** | Post-execution: attaches redaction script for banking/cross-origin | server.ts:654 |
-| 11 | **AuditLog** | Post-execution: records tool, URL, engine, params, result, timing | server.ts:659 |
+| 10 | **AuditLog** | Post-execution: records tool, URL, engine, params, result, timing | server.ts:659 |
+
+**Note (T36, 2026-04-26):** A "ScreenshotRedaction" layer was previously documented at slot 10. It was deleted as a no-op — the module returned a CSS-blur script in `_meta.redactionScript` but the script was never injected into the page before `screencapture -x` ran, and `screencapture` is OS-level so CSS blur in the DOM doesn't apply to it anyway. A domain-block screenshot policy (refuse `safari_take_screenshot` for banking domains) is tracked as T59 if real protection is wanted; that's a stronger primitive than soft DOM blur.
 
 **CircuitBreaker dual scope (src/security/circuit-breaker.ts):** The breaker carries two INDEPENDENT scopes on the same instance.
 - **Per-domain scope** (existing): 5 failures in a 60s rolling window → 120s cooldown. API: `recordFailure(domain)` / `recordSuccess(domain)` / `isOpen(domain)` / `getState(domain)` / `assertClosed(domain)`. Runs inline at layer 6.
