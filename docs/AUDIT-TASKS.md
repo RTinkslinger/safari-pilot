@@ -155,10 +155,10 @@
 **Root cause:** `while(true)` exits on ANY catch (including `AbortError` from normal 10s timeout). Extension goes deaf for up to 60s until next alarm wake. No retry logic.
 **Origin:** `78938fb` (2026-04-18).
 
-### T23. Fix 15s disconnect timeout vs 20s keepalive interval
+### T23. Fix 15s disconnect timeout vs 20s keepalive interval ✅ RESOLVED 2026-04-25 (commit `0e6e6e9`, daemon-only path)
 **Findings:** M14 (extension-ipc audit)
 **Root cause:** Daemon marks extension disconnected at 15s, keepalive fires at 20s. 5s false-disconnect window (25% of cycle) triggers unnecessary recovery.
-**Fix:** Lower keepalive to 10s or raise timeout to 25s.
+**Fix:** Daemon-only path — raised `disconnectTimeout` from 15s → 25s in `daemon/Sources/SafariPilotdCore/ExtensionHTTPServer.swift`. Avoided the alternative path (lower extension keepalive to 10s) because it requires extension rebuild + release. 1 NEW Swift test (`testDisconnectTimeoutAccommodatesKeepaliveCycle`) advances mockClock 20s and asserts the bridge stays connected — load-bearing T23 oracle. SD-28's existing `testDisconnectCheckFiresWhenIdleBeyondThreshold` test advance bumped 16 → 26 to clear the new threshold. Doc-comment on `checkDisconnect()` updated. Triangulation locks the threshold to T ∈ [20, 26). upp:test-reviewer fast PASS 0/0/2.
 
 ### T24. Fix `domainMatches()` — either wire it or delete it
 **Findings:** M1 (security audit)
