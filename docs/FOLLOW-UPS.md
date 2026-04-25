@@ -29,20 +29,6 @@ Surfaced by the 2026-04-25 fresh-eyes review. `closeOrphanedSessionWindows` (`sr
 
 **Entry-points:** `src/server.ts:1273-1297` (closeOrphanedSessionWindows), `src/server.ts:1367-1378` (start sequence), `daemon/Sources/SafariPilotdCore/ExtensionHTTPServer.swift:361` (sessionPageHTML title).
 
-### SD-31 — `killSwitch.recordError()` records ALL thrown errors, not just tool-execution failures (regression introduced by T29 / commit `a504928`)
-
-Surfaced by the 2026-04-25 fresh-eyes review. T29 added `this.killSwitch.recordError()` inside `executeToolWithSecurity`'s catch block at `src/server.ts:978`. The catch is reached by every thrown error — including security-pipeline rejections that aren't tool-execution failures: `KillSwitchActiveError`, `RateLimitedError`, `TabUrlNotRecognizedError`, the blocked-domain `Error` thrown at line 492, `CircuitBreakerOpen`, and the `EngineUnavailableError` re-throw path. (`HumanApprovalRequiredError` soft-returns and is unaffected.)
-
-**Symptom:** With `autoActivation: { maxErrors: N, windowSeconds: W }` configured, a legitimate burst of rejections — e.g., an agent looping over unowned URLs producing N consecutive `TabUrlNotRecognizedError` throws within W seconds — auto-trips the kill-switch and self-DoSes the agent for the rest of the session.
-
-**Why it matters:** The companion call `recordEngineFailure` IS filtered (`circuit-breaker.ts:175-181` only records `EXTENSION_*` codes); the new `recordError` call is not. Asymmetry plus a configurable threshold = footgun.
-
-**Fix:** gate the `recordError()` call on the error class. Allowable: tool-runtime errors (engine failures, JS errors, browser timeouts). Excluded: every security-pipeline-thrown error class listed above. Either filter on `error instanceof` or read `error.code` and only record on the same set the engine breaker uses.
-
-**Discriminator:** configure `autoActivation: { maxErrors: 3, windowSeconds: 60 }`, register a tool-stub that the security pipeline rejects (e.g., feed N `TabUrlNotRecognizedError`s), then assert `killSwitch.isActive()` stays `false`. Pre-fix: switch trips. Post-fix: switch stays closed; only real engine failures count.
-
-**Entry-points:** `src/server.ts:978` (the recordError call), `src/security/kill-switch.ts:132-150` (recordError), `src/security/circuit-breaker.ts:175-181` (the analogous filter pattern to copy).
-
 ### SD-30 — Banking-disable-extension is a legitimate security feature, currently unimplemented
 
 Filed during T31 deletion. The original `extensionAllowed` field on `DomainPolicy` was computed per domain (false for `SENSITIVE_PATTERNS` like banks/payment-processors) but never read by `selectEngine`. T31 chose deletion over wiring because wiring requires (a) flipping `BASE_DEFAULT_POLICY.extensionAllowed` to `true` so the default isn't "extension blocked on every unknown domain", (b) deciding the user-facing semantic when a tool needs the extension on a banking domain (throw `EngineUnavailableError`? degrade silently? log + proceed?), and (c) discriminating tests for both the block path and the non-block default path.
@@ -63,6 +49,18 @@ If the security feature is wanted: re-add `extensionAllowed` to PolicyRule + Eva
 ---
 
 ## Resolved
+
+### SD-31 — `killSwitch.recordError()` filters security-pipeline errors (2026-04-25, commit `63d4e59`)
+
+T29 (commit `a504928`) added `this.killSwitch.recordError()` to `executeToolWithSecurity`'s catch block without filtering by error class. Self-DoS risk: a configured `autoActivation: { maxErrors: 3, windowSeconds: 60 }` would auto-trip after 3 consecutive `TabUrlNotRecognizedError` throws (or any security-pipeline rejection bursts).
+
+**Fix:** introduced top-level `isSecurityPipelineError(err)` classifier in `src/server.ts` and guarded the `recordError()` call. Mirrors the existing filter in `circuit-breaker.ts:175-181` for `recordEngineFailure` (which only records `EXTENSION_*` codes). Both auto-activation paths now react only to failures the agent could plausibly stop hitting by changing strategy.
+
+Classifier returns true for `KillSwitchActiveError`, `RateLimitedError`, `CircuitBreakerOpenError`, `TabUrlNotRecognizedError`, `TabNotOwnedError`, `DomainNotAllowedError`, `HumanApprovalRequiredError` (defensive — currently soft-returns), `EngineUnavailableError` (defensive — currently soft-returns), and the blocked-domain generic `Error` matched by message regex.
+
+**Test:** new `it()` in `test/unit/server/killswitch-auto-activation.test.ts` configures `autoActivation:{3, 60s}`, registers `safari_navigate` (NOT in `SKIP_OWNERSHIP_TOOLS`) so ownership check fires, drives 3 `TabUrlNotRecognizedError` throws via unknown-tabUrl calls. Dual oracle: (a) `killSwitch.isActive()` stays `false`, (b) the 4th call rejects with `TabUrlNotRecognizedError` — NOT `KillSwitchActiveError`. Mutation-verified.
+
+The existing T29 test in the same file (handler throws generic `Error` → switch DOES trip after 3 calls) still passes — handler-runtime errors ARE tool-execution failures and SHOULD count.
 
 ### SD-29 — vitest cross-file mock pollution: `vi.mock('node:net')` in daemon.test.ts arrived too late under `isolate: false` (2026-04-25, commit `a173e95`)
 
