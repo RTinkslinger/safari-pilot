@@ -171,10 +171,12 @@
 **Origin:** `c5ab358` (2026-04-12) — never modified.
 **Fix:** Extracted a `public static func isShutdownLine(_:) -> Bool` helper in `CommandDispatcher.swift` that parses the NDJSON line and returns `parsed.method == "shutdown"`. The run() loop now calls this helper instead of the substring check. (Note: the audit said "main.swift" but the bug was actually in `CommandDispatcher.run()`:72; main.swift just calls `dispatcher.run()`.) 3 Swift tests cover real-shutdown-command, id-as-shutdown-but-method-is-execute (the load-bearing T25 oracle), and malformed-NDJSON. Mutation cycle confirmed: reverting to substring check fails ONLY Test 2. Helper is `public static` to give tests a seam without driving run() (which calls exit(0)). upp:test-reviewer fast PASS 0/0/1.
 
-### T26. Add thread safety to `Trace.swift`
+### T26. Add thread safety to `Trace.swift` ✅ RESOLVED 2026-04-25 (commit `591ffda`)
 **Findings:** M19 (daemon-core audit)
 **Root cause:** `seekToEndOfFile()` + `write()` without synchronization. Concurrent calls from bridge/HTTP/dispatcher queues can corrupt trace NDJSON.
 **Origin:** `6dcbeed` (2026-04-21) — single commit, never modified.
+
+**Fix:** Extracted the seek+write pair into `Trace.writeLine(_:to:)` and wrapped the body in a private serial `DispatchQueue.sync`, matching the HealthStore idiom. `Trace.emit` now routes through the new primitive. Discriminating concurrency stress test (`TraceTests.testWriteLineSerializesConcurrentWrites`) drives 1000 parallel writers against an isolated temp `FileHandle`; layered oracle asserts line count == iterations, every line is valid JSON, and the set of seen ids has exactly N members. Test skips on single-core hosts where `DispatchQueue.concurrentPerform` would serialise trivially. Verified 10/10 RED unguarded → 10/10 GREEN with the lock; full daemon suite 129 passed (was 128).
 
 ### T27. Fix `findTargetTab` active-tab fallback
 **Findings:** M11 (extension-ipc audit)
