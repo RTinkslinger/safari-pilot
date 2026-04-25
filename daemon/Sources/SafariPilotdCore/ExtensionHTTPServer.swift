@@ -95,11 +95,30 @@ public final class ExtensionHTTPServer: @unchecked Sendable {
     }
 
     /// Stop the server and disconnect-detection tasks.
+    ///
+    /// SD-24: synchronously wait (up to 2s) for both Tasks to complete so
+    /// NIO/Hummingbird gets time to release its listening sockets. Without
+    /// this wait, rapid back-to-back test runs accumulate ~19 servers'
+    /// worth of in-flight cleanup → kernel `EMFILE` (Too many open files
+    /// in system) → cascading bind failures on subsequent tests.
+    /// Best-effort: the 2s deadline prevents hangs on a stuck Task.
+    /// Production callers (graceful daemon shutdown) absorb the wait fine.
     public func stop() {
+        let serverTask = _serverTask
+        let disconnectTask = _disconnectTask
         _serverTask?.cancel()
         _disconnectTask?.cancel()
         _serverTask = nil
         _disconnectTask = nil
+
+        let semaphore = DispatchSemaphore(value: 0)
+        Task {
+            if let task = serverTask { _ = await task.value }
+            if let task = disconnectTask { _ = await task.value }
+            semaphore.signal()
+        }
+        _ = semaphore.wait(timeout: .now() + 2)
+
         Logger.info("ExtensionHTTPServer stopped")
     }
 
