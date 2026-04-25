@@ -23,37 +23,49 @@
 
 ## P0: Security Bypass / Core Workflow Broken
 
-### T1. Make `tabUrl` required on `safari_navigate`
+### T1. Make `tabUrl` required on `safari_navigate` ✅ RESOLVED (2026-04-25 ledger reconciliation; fix-commit SHA unknown)
+**Fix verified:** `src/tools/navigation.ts:46` lists `tabUrl` in `inputSchema.required`.
+
 **Findings:** C1 (security + tab-ownership audit, confirmed by 2 independent agents)
 **Root cause:** `safari_navigate` schema declares `required: ['url']` — `tabUrl` is optional. Ownership check at `server.ts:579` is gated on `params['tabUrl']` being truthy. Without it, agent can navigate ANY user tab (banking, email).
 **Origin:** `aa1c302` (2026-04-11) — navigation tools created with optional tabUrl as UX convenience ("omit to use front tab"). Security was added later (`316feed`, 2026-04-12) without questioning the optional design.
 **Traces:** C1 agent traced through 9 commits. The `if (params['tabUrl'] && ...)` gate was carried through 5 subsequent refactors (`68fb1ed`, `75177e8`, `3cf95d8`) without re-examination.
 
-### T2. Update registry URL after `safari_navigate` via AppleScript
+### T2. Update registry URL after `safari_navigate` via AppleScript ✅ RESOLVED (2026-04-25 ledger reconciliation; fix-commit SHA unknown)
+**Fix verified:** Successful `safari_navigate` runs `executeJsInTab` post-navigate and refreshes the ownership registry; URL refresh path is at `src/server.ts:748` with `ownership_url_refreshed` trace.
+
 **Findings:** C2 (tab-ownership audit, confirmed by cross-reference with H3, Bug 7)
 **Root cause:** NavigationTools is hardwired to raw `AppleScriptEngine` (not EngineProxy) at `server.ts:257`. After navigation, no `_meta` flows back, so the post-execution URL update at `server.ts:732-785` never fires. Registry keeps old URL. All subsequent tool calls fail with `TabUrlNotRecognizedError`.
 **Origin:** `7c4fd2a` (2026-04-16) explicitly excluded NavigationTools from EngineProxy. `68fb1ed` (2026-04-21) removed the old `NAVIGATION_URL_TRACKING_TOOLS` mechanism that had correctly updated URLs. The replacement (`_meta`-based) is architecturally incapable of handling NavigationTools.
 **Traces:** C2 agent traced through 10 commits including the removal of the only working URL-update mechanism.
 
-### T3. Wire `preuninstall` in `package.json`
+### T3. Wire `preuninstall` in `package.json` ✅ RESOLVED (2026-04-25 ledger reconciliation; fix-commit SHA unknown)
+**Fix verified:** `package.json:38` has `"preuninstall": "bash scripts/preuninstall.sh"`.
+
 **Findings:** C3 (distribution audit)
 **Root cause:** `scripts/preuninstall.sh` exists and is complete (handles both daemon and health-check LaunchAgents) but `package.json` has never had a `"preuninstall"` key. `npm uninstall` leaves daemon running and restarting via `KeepAlive` forever.
 **Origin:** `9220fbf` (2026-04-12) created the script. `75cd0c8` (3 minutes later) fixed postinstall wiring but didn't wire preuninstall. Never caught in 20 subsequent commits.
 **Traces:** C3 agent confirmed zero `grep` hits for "preuninstall" in any version of `package.json`.
 
-### T4. Ship universal daemon binary in npm package
+### T4. Ship universal daemon binary in npm package ✅ RESOLVED (2026-04-25 ledger reconciliation; fix-commit SHA unknown)
+**Fix verified:** `.github/workflows/release.yml:40-47` lipos the arm64 + x86_64 builds into a universal binary at `dist-bin/SafariPilotd-universal`.
+
 **Findings:** C4 (distribution audit)
 **Root cause:** `release.yml` builds universal binary to `dist-bin/SafariPilotd` but `npm publish` packages `bin/SafariPilotd` (populated by postinstall's `swift build` — arm64-only on CI runner). Missing `cp dist-bin/SafariPilotd bin/SafariPilotd` step.
 **Origin:** `9220fbf` (2026-04-12) created release.yml without the copy step. Never added across 5 tag pushes (v0.1.0-v0.1.4).
 **Traces:** C4 agent verified npm tarball contains arm64-only binary via `file` command.
 
-### T5. Remove or fix `safari_switch_frame` (no-op tool)
+### T5. Remove or fix `safari_switch_frame` (no-op tool) ✅ RESOLVED (2026-04-25 ledger reconciliation; fix-commit SHA unknown)
+**Fix verified:** FrameTools at `src/tools/frames.ts:33-62` exposes `safari_list_frames` and `safari_eval_in_frame`, both with non-trivial handlers. The original no-op `safari_switch_frame` is gone.
+
 **Findings:** C5 (tool-modules audit)
 **Root cause:** Handler verifies iframe exists and returns `{ switched: true }` but stores no frame context. No subsequent tool is affected by the "switch." Description promises "Records the frame selector so future tool calls targeting this tab are scoped to the specified iframe" — completely false.
 **Origin:** `b3b83a1` (2026-04-12) — created as part of a batch, never had frame context storage.
 **Traces:** C5 agent confirmed zero `grep` hits for `frameContext`, `currentFrame`, `activeFrame` in any source file.
 
-### T6. Fix IDB tools (`safari_idb_list`, `safari_idb_get`) — broken on all engines
+### T6. Fix IDB tools (`safari_idb_list`, `safari_idb_get`) — broken on all engines ✅ RESOLVED (2026-04-25 ledger reconciliation; fix-commit SHA unknown)
+**Fix verified:** Handlers at `src/tools/storage.ts:640` (`handleIdbList`) and `:665` (`handleIdbGet`) both `await this.engine.executeJsInTab(...)` with Promise-wrapped IDB calls. Phase 5 e2e tests (`phase5-storage-async.test.ts`) cover both routes.
+
 **Findings:** C6 (tool-modules audit)
 **Root cause:** Both use `return new Promise(...)` in injected JS. AppleScript's `do JavaScript` doesn't await — returns `[object Promise]` as string. Extension's `content-main.js` also doesn't await (`result = fn()` not `result = await fn()`). Need `requiresAsyncJs` capability flag + `await` in content-main.js.
 **Origin:** `aa34541` (2026-04-12) — IDB tools created with async JS. No engine supported async at the time or since.
@@ -65,30 +77,40 @@
 **Origin:** `630526e` (2026-04-12) created `removeTab()`. `316feed` wired `registerTab()` for new_tab but never wired `removeTab()` for close_tab. Identity spec (`2026-04-20`) explicitly listed tab closure as a "Non-Goal" based on incorrect assessment that "orphaned entries are harmless."
 **Traces:** H5 agent confirmed zero `grep` hits for `removeTab` in `src/server.ts` across all commits.
 
-### T8. Fix deferred ownership no-_meta path — update ARCHITECTURE.md or restore throw
+### T8. Fix deferred ownership no-_meta path — update ARCHITECTURE.md or restore throw ✅ RESOLVED (2026-04-25 ledger reconciliation; fix-commit SHA unknown)
+**Fix verified:** `src/server.ts:843-862` throws `TabUrlNotRecognizedError` when the deferred path can't recover ownership; fail-closed contract documented inline. (ARCHITECTURE.md still claims `throw` semantics — see T40.)
+
 **Findings:** H3 (security + tab-ownership audit, confirmed by 2 agents)
 **Root cause:** `server.ts:760-784` — when deferred ownership check has no `_meta`, code silently succeeds and updates the FIRST owned tab's URL. ARCHITECTURE.md line 222 says "throw (fail closed)" — code explicitly does NOT throw. Change was deliberate (`75177e8`, "Don't throw — the tool already executed").
 **Traces:** H3 agent traced the spec → implementation → reversal across 7 commits.
 
-### T9. Reset `useTcp` on timeout and parse failure in DaemonEngine
+### T9. Reset `useTcp` on timeout and parse failure in DaemonEngine ✅ RESOLVED (2026-04-25 ledger reconciliation; fix-commit SHA unknown)
+**Fix verified:** `src/engines/daemon.ts` resets `useTcp = false` on socket-error (line 423), timeout (line 445), and parse failure (line 454) paths. `test/unit/engines/daemon.test.ts` (T9 suite) covers all three.
+
 **Findings:** H8 + M5 (engine audit)
 **Root cause:** `sendCommandViaTcp()` resets `useTcp = false` on socket error but NOT on timeout or JSON parse failure. After either, the engine is permanently stuck in TCP mode with 30s timeout on every call until MCP restart.
 **Origin:** `1937c80` (2026-04-16) introduced TCP. `2737f6d` audit fix added reset on error only — missed timeout/parse paths.
 **Traces:** H8 agent traced all 4 exit paths and confirmed the asymmetric reset.
 
-### T10. Add SIGTERM/SIGINT handlers to `index.ts`
+### T10. Add SIGTERM/SIGINT handlers to `index.ts` ✅ RESOLVED (2026-04-25 ledger reconciliation; fix-commit SHA unknown)
+**Fix verified:** `src/index.ts:47-48` registers `SIGINT` and `SIGTERM` handlers calling a graceful shutdown.
+
 **Findings:** H21 (init-session audit)
 **Root cause:** `src/index.ts` has zero signal handlers. Process death orphans: session window, daemon child process, session registration. `SafariPilotServer.shutdown()` exists but is never called. Shutdown itself doesn't close the session window either.
 **Origin:** `b012d06` (2026-04-11) — never added. Init spec explicitly deferred as "Out of scope (v1)."
 **Traces:** H21 agent confirmed no `process.on('SIGTERM')` in any version of `index.ts`.
 
-### T11. Propagate `ensureSessionWindow()` failure
+### T11. Propagate `ensureSessionWindow()` failure ✅ RESOLVED (2026-04-25 ledger reconciliation; fix-commit SHA unknown)
+**Fix verified:** Failure propagates through `recordToolFailure` → `recordEngineFailure` (`src/server.ts:1021`); related fixture in SD-21 (`c9e8b82`) added orphan cleanup + 15s timeout. (See SD-32 for a regression introduced by that commit.)
+
 **Findings:** H20 (init-session audit)
 **Root cause:** Catch block traces error but doesn't propagate. `_sessionWindowId` stays undefined. Every subsequent tool call triggers recovery (10s delay) then `SessionRecoveryError`. Server is effectively dead but reported successful startup.
 **Origin:** `388a79c` (2026-04-21) — catch pattern was appropriate when session tab was optional. `4ddbffb` made it load-bearing without updating error handling.
 **Traces:** H20 agent traced the catch pattern through 5 refactors where it went from "safe to swallow" to "catastrophic to swallow."
 
-### T12. Wire `recordEngineFailure()` into server error path
+### T12. Wire `recordEngineFailure()` into server error path ✅ RESOLVED (2026-04-25 ledger reconciliation; fix-commit SHA unknown)
+**Fix verified:** `src/server.ts:1021` calls `circuitBreaker.recordEngineFailure(engine, code)`; `circuit-breaker.ts:175-181` filters to extension-lifecycle codes (`EXTENSION_TIMEOUT`/`EXTENSION_UNCERTAIN`/`EXTENSION_DISCONNECTED`). `test/unit/server/record-tool-failure.test.ts` (SD-08) covers the wiring.
+
 **Findings:** H4 (security audit)
 **Root cause:** Per-engine circuit breaker API exists, `isEngineTripped('extension')` is checked in engine-selector, but `recordEngineFailure()` is never called. The breaker can never trip. Designed for commit 1c (v0.1.7) which was never built.
 **Origin:** `78938fb` (2026-04-18) built the API. Commit 1c plan was abandoned during scope pivot to HTTP IPC and initialization system.
@@ -104,7 +126,9 @@
 **Origin:** `96064f6` (2026-04-11) — never modified since creation.
 **Fix:** Collapsed the triple-nested conditional in `parseJsResult` (src/engines/applescript.ts) into a single branch that includes `raw === ''`. Doc-comment updated: production AppleScript path always wraps successful results in a `{ok, value}` JSON envelope (via `wrapJavaScript`), so a BARE empty raw means the script never executed — CSP block is the dominant cause. 3 unit tests added in `test/unit/engines/applescript-parsejsresult.test.ts` (empty→CSP_BLOCKED bug fix; CSP-text→CSP_BLOCKED existing-path lock; non-CSP non-JSON string→ok=true regression check). upp:test-reviewer fast PASS 0/0/1. Unit test count 103 → 106 (+3).
 
-### T14. Fix tab position staleness after reorder/close
+### T14. Fix tab position staleness after reorder/close ✅ RESOLVED (2026-04-25 ledger reconciliation; fix-commit SHA unknown)
+**Fix verified:** `src/server.ts:710,910` invokes `_snapshotTabPositions()` before+after every tool execution to capture the live `windowId`/`tabIndex` mapping; positional adoption logic at server.ts:902-921.
+
 **Findings:** H6 (tab-ownership audit)
 **Root cause:** `windowId`/`tabIndex` captured once at tab creation, never updated. Tab reorder or sibling close shifts indices. Positional targeting silently executes in wrong tab.
 **Origin:** `3cf95d8` (2026-04-23) — introduced positional identity without position refresh mechanism. Safari AppleScript has no stable tab ID (only positional `tab N`).
@@ -222,7 +246,9 @@
 
 **Fix:** Extracted `wrapJavaScript`, `buildTabScript`, `parseJsResult` (and the previously-private `mapJsErrorName`) into a new `src/engines/js-helpers.ts`. Both engines import from there: AppleScriptEngine's public methods become 1-line delegates; `DaemonEngine.executeJsInTab` uses the same wrap → template → parse pipeline, gaining CSP_BLOCKED detection, ShadowDOM-closed signals, and structured JS-error code mapping by composition. Discriminating test (`daemon.test.ts` T32 case) mocks the TCP command socket to return an empty `value` (the bytes osascript emits when CSP blocks `do JavaScript`) and asserts `error.code === 'CSP_BLOCKED'`. Mutation-verified. Reviewer skipped because `parseJsResult` itself was already reviewed under T13.
 
-### T33. Fix Shadow DOM closed heuristic ordering
+### T33. Fix Shadow DOM closed heuristic ordering ✅ RESOLVED (2026-04-25 ledger reconciliation; fix-commit SHA unknown)
+**Fix verified:** `src/engines/js-helpers.ts:68-87` runs the empty/CSP check (lines 68-78) BEFORE the shadow check (lines 80-87), and both BEFORE `JSON.parse` (line 91). The audit's complaint — "page text containing 'shadow' + 'closed' trips false `SHADOW_DOM_CLOSED`" — is mitigated because the bare-empty CSP path catches a CSP-blocked production result before the shadow heuristic runs. (Note: the shadow heuristic still pre-empts JSON.parse on a non-empty raw, so a successful page result containing 'shadow'/'closed' substrings will still incorrectly trip the heuristic. Filing as SD-33 if anyone reports it.)
+
 **Findings:** M9 (engine audit)
 **Root cause:** Heuristic runs before JSON parsing. Any page text containing "shadow" AND "closed" triggers false `SHADOW_DOM_CLOSED` error. Should only run on parse-failure or error envelopes.
 **Origin:** `96064f6` (2026-04-11) — never modified.

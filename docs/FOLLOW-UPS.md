@@ -8,6 +8,37 @@ Running list of findings surfaced by reviewers (Codex, `upp:test-reviewer`, advi
 
 ## Open
 
+### SD-32 — Concurrent MCP sessions kill each other's session-dashboard windows (regression introduced by SD-21 / commit `c9e8b82`)
+
+Surfaced by the 2026-04-25 fresh-eyes review. `closeOrphanedSessionWindows` (`src/server.ts:1273-1297`) filters Safari windows by AppleScript predicate `name is "Safari Pilot — Active Session"` — the constant `<title>` set by `ExtensionHTTPServer.swift:361`'s session-page HTML. The session URL carries a unique `?id=<sessionId>` query param, but the window title is identical across all live sessions.
+
+**Symptom:** Session B's startup at `server.ts:1367-1378` runs `registerWithDaemon` (which already reports `otherSessions > 0`) and then `ensureSessionWindow → closeOrphanedSessionWindows` — so Session B closes Session A's dashboard window. Session A's keepalive then fails the 10s extension poll and `SessionRecoveryError` surfaces mid-flow.
+
+**Why it matters:** The multi-session contract that `HealthStore.activeSessionCount` and the per-session `?id=` query parameter were designed for is broken by this one-line title filter. Two concurrent Claude Code sessions cannot coexist.
+
+**Fix options:**
+- (a) embed `sessionId` in the dashboard `<title>` and filter the AppleScript predicate by exact title match including ID;
+- (b) skip orphan cleanup entirely when `registerWithDaemon` reports `otherSessions > 0`;
+- (c) tag the window via a custom property / JS-set marker that includes session ID and filter on that.
+
+**Discriminator:** spawn two processes via `node dist/index.js` simultaneously, register two MCP sessions with distinct IDs, observe via `safari_list_tabs` whether both dashboard windows survive. Pre-fix: Session A's window is closed by Session B's startup. Post-fix: both survive.
+
+**Entry-points:** `src/server.ts:1273-1297` (closeOrphanedSessionWindows), `src/server.ts:1367-1378` (start sequence), `daemon/Sources/SafariPilotdCore/ExtensionHTTPServer.swift:361` (sessionPageHTML title).
+
+### SD-31 — `killSwitch.recordError()` records ALL thrown errors, not just tool-execution failures (regression introduced by T29 / commit `a504928`)
+
+Surfaced by the 2026-04-25 fresh-eyes review. T29 added `this.killSwitch.recordError()` inside `executeToolWithSecurity`'s catch block at `src/server.ts:978`. The catch is reached by every thrown error — including security-pipeline rejections that aren't tool-execution failures: `KillSwitchActiveError`, `RateLimitedError`, `TabUrlNotRecognizedError`, the blocked-domain `Error` thrown at line 492, `CircuitBreakerOpen`, and the `EngineUnavailableError` re-throw path. (`HumanApprovalRequiredError` soft-returns and is unaffected.)
+
+**Symptom:** With `autoActivation: { maxErrors: N, windowSeconds: W }` configured, a legitimate burst of rejections — e.g., an agent looping over unowned URLs producing N consecutive `TabUrlNotRecognizedError` throws within W seconds — auto-trips the kill-switch and self-DoSes the agent for the rest of the session.
+
+**Why it matters:** The companion call `recordEngineFailure` IS filtered (`circuit-breaker.ts:175-181` only records `EXTENSION_*` codes); the new `recordError` call is not. Asymmetry plus a configurable threshold = footgun.
+
+**Fix:** gate the `recordError()` call on the error class. Allowable: tool-runtime errors (engine failures, JS errors, browser timeouts). Excluded: every security-pipeline-thrown error class listed above. Either filter on `error instanceof` or read `error.code` and only record on the same set the engine breaker uses.
+
+**Discriminator:** configure `autoActivation: { maxErrors: 3, windowSeconds: 60 }`, register a tool-stub that the security pipeline rejects (e.g., feed N `TabUrlNotRecognizedError`s), then assert `killSwitch.isActive()` stays `false`. Pre-fix: switch trips. Post-fix: switch stays closed; only real engine failures count.
+
+**Entry-points:** `src/server.ts:978` (the recordError call), `src/security/kill-switch.ts:132-150` (recordError), `src/security/circuit-breaker.ts:175-181` (the analogous filter pattern to copy).
+
 ### SD-30 — Banking-disable-extension is a legitimate security feature, currently unimplemented
 
 Filed during T31 deletion. The original `extensionAllowed` field on `DomainPolicy` was computed per domain (false for `SENSITIVE_PATTERNS` like banks/payment-processors) but never read by `selectEngine`. T31 chose deletion over wiring because wiring requires (a) flipping `BASE_DEFAULT_POLICY.extensionAllowed` to `true` so the default isn't "extension blocked on every unknown domain", (b) deciding the user-facing semantic when a tool needs the extension on a banking domain (throw `EngineUnavailableError`? degrade silently? log + proceed?), and (c) discriminating tests for both the block path and the non-block default path.
