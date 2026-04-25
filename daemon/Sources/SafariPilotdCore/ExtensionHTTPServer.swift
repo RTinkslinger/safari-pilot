@@ -45,7 +45,10 @@ public final class ExtensionHTTPServer: @unchecked Sendable {
     private let timeSource: TimeSource
 
     /// Time without requests before declaring extension disconnected.
-    private static let disconnectTimeout: TimeInterval = 15.0
+    /// T23: 25s (was 15s) so the daemon doesn't disconnect in the 5s window
+    /// between threshold and the next 20s keepalive (extension/content-isolated.js:209
+    /// schedules `setInterval(..., 20000)` for the keepalive ping).
+    private static let disconnectTimeout: TimeInterval = 25.0
     /// Interval between disconnect-detection checks.
     private static let disconnectCheckInterval: TimeInterval = 10.0
     /// Long-poll wait timeout for GET /poll.
@@ -496,9 +499,10 @@ public final class ExtensionHTTPServer: @unchecked Sendable {
     }
 
     /// Run one disconnect-detection pass. Compares elapsed time since the last
-    /// HTTP request against `disconnectTimeout` (15s); if exceeded AND the
-    /// bridge still believes the extension is connected, calls
-    /// `bridge.handleDisconnected`. Also pumps `healthStore.checkMcpConnection`.
+    /// HTTP request against `disconnectTimeout` (25s, ≥ extension's 20s keepalive
+    /// interval); if exceeded AND the bridge still believes the extension is
+    /// connected, calls `bridge.handleDisconnected`. Also pumps
+    /// `healthStore.checkMcpConnection`.
     ///
     /// Invoked from two places:
     /// - The production `_disconnectTask` background loop (every 10s after start()).

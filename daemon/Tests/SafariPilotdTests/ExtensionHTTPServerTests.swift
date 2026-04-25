@@ -656,14 +656,54 @@ func registerExtensionHTTPServerTests() {
         try assertTrue(bridge.isExtensionConnected,
                        "bridge must be connected before staleness check")
 
-        // Advance mockClock 16s past _lastRequestTime (set to start in init)
-        // → elapsed = 16 > disconnectTimeout = 15 → checkDisconnect must fire.
-        mock.advance(by: 16)
+        // T23: disconnect threshold raised from 15s → 25s to accommodate
+        // the extension's 20s keepalive interval (content-isolated.js:209).
+        // Advance mockClock 26s past _lastRequestTime → elapsed = 26 > 25 →
+        // checkDisconnect must fire.
+        mock.advance(by: 26)
         server.checkDisconnect()
 
         try assertFalse(
             bridge.isExtensionConnected,
-            "checkDisconnect with elapsed > 15s must call bridge.handleDisconnected"
+            "checkDisconnect with elapsed > disconnectTimeout (T23: 25s) must call bridge.handleDisconnected"
+        )
+    }
+
+    // T23: regression guard — the keepalive interval (20s, set in
+    // extension/content-isolated.js:209) must NOT trigger a false disconnect.
+    // Pre-T23, disconnectTimeout was 15s; with elapsed=20 > 15, checkDisconnect
+    // fired during the 5s window between disconnect threshold and the next
+    // keepalive — a 25%-of-cycle false-positive recovery storm. T23 raises
+    // disconnectTimeout to 25s so the keepalive's natural cadence stays inside
+    // the threshold.
+    test("testDisconnectTimeoutAccommodatesKeepaliveCycle") {
+        let mock = MockClock(start: Date())
+        let bridge = ExtensionBridge()
+        let tmpPath = FileManager.default.temporaryDirectory
+            .appendingPathComponent("test-http-keepalive-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: tmpPath) }
+        let health = HealthStore(persistPath: tmpPath)
+        let server = ExtensionHTTPServer(
+            port: 0,
+            bridge: bridge,
+            healthStore: health,
+            timeSource: mock
+        )
+
+        _ = bridge.handleConnected(commandID: "pre-keepalive")
+        try assertTrue(bridge.isExtensionConnected)
+
+        // Advance 20s — exactly at the keepalive cadence. The disconnect
+        // check fires (e.g. at the 10s interval boundary that lands on this
+        // tick) but elapsed=20 < disconnectTimeout=25, so the connection
+        // must be preserved.
+        mock.advance(by: 20)
+        server.checkDisconnect()
+
+        try assertTrue(
+            bridge.isExtensionConnected,
+            "T23: checkDisconnect at elapsed=20s (keepalive interval) must NOT disconnect "
+                + "(disconnectTimeout must be ≥ 20s to accommodate the keepalive cadence)"
         )
     }
 
