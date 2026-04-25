@@ -24,8 +24,43 @@ If the security feature is wanted: re-add `extensionAllowed` to PolicyRule + Eva
 
   - `ARCHITECTURE.md` (§Test Architecture, Daemon Tests section)
 
+### SD-33 — HealthStore unwired increment methods (dead instrumentation)
 
+Filed during T39 re-scope (2026-04-26). The `HealthStore` class defines five timestamp-array writers, but four have ZERO production callers (verified `daemon/Sources/` repo-wide grep, including reading 508 lines of `CommandDispatcher.swift`):
 
+| Method | Production callers | Status |
+|---|---|---|
+| `recordHttpRequestError` | 4 (`main.swift:205`, `ExtensionHTTPServer.swift:342, 529, 540`) | Wired (T39 added prune) |
+| `incrementRoundtrip` | 0 | Unwired |
+| `incrementTimeout` | 0 | Unwired |
+| `incrementUncertain` | 0 | Unwired |
+| `incrementForceReload` | 0 | Unwired |
+| `recordRoundtripAt` (test seam) | 0 | Test-only by design |
+
+The unwired methods feed `roundtripCount1h` / `timeoutCount1h` / `uncertainCount1h` / `forceReloadCount24h` accessors that ARE read by `ExtensionBridge.swift:513-516` into the health snapshot — but always read 0 because nothing writes. So the daemon ships health-snapshot fields that are silently meaningless.
+
+Two valid resolutions, both atomic:
+
+**Option A — Wire the instrumentation.** Find the appropriate production sites and call the increment methods:
+- `incrementRoundtrip()` ← inside `CommandDispatcher.handle` after a Safari command succeeds (or in the bridge response path). Decide: every command, or only the slow ones?
+- `incrementTimeout()` ← inside the timeout-handler branch where commands abort past their deadline.
+- `incrementUncertain()` ← in the path where DaemonEngine returns `engine_uncertain: true` (currently nowhere — needs source decision).
+- `incrementForceReload()` ← already invoked from tests; production trigger is the recovery `forceReloadExtension` flow which should call this on each emergency reload.
+Then ship + test each wiring as a separate atomic item.
+
+**Option B — Delete the dead code.** Remove the five methods + their backing arrays + the `*Count1h` / `forceReloadCount24h` accessors + the health-snapshot fields that consume them. T37/T31 deletion-only precedent applies. Smaller surface area, honest signal: the daemon admits it doesn't track these metrics.
+
+**Discriminator (option A):** the chosen wiring site is exercised by an existing or new test → after the wire, `*Count1h` reads non-zero in the test scenario.
+
+**Discriminator (option B):** post-deletion, `git log -p` shows the methods, accessors, and tests removed; `swift build` clean; the health snapshot drops the now-meaningless fields.
+
+**Entry-points:**
+- `daemon/Sources/SafariPilotdCore/HealthStore.swift:21-29` (private fields), `74-79` (public count accessors), `88-90, 94-99, 146-156` (public writers)
+- `daemon/Sources/SafariPilotdCore/ExtensionBridge.swift:513-516` (health-snapshot consumers)
+- `daemon/Tests/SafariPilotdTests/HealthStoreTests.swift:60-74, 123-135` (existing tests)
+- `daemon/Tests/SafariPilotdTests/CommandDispatcherTests.swift:542-543` and `ExtensionBridgeTests.swift:379-380` (further test-only callers)
+
+Do not "just fix" — pick option A or B first, then run Phase 1 of `upp:systematic-debugging` against the chosen path.
 
 
 

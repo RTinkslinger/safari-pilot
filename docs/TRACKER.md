@@ -52,7 +52,6 @@ Build pipeline: edit → `bash scripts/build-extension.sh` → verify entitlemen
 | **T35** | `src/security/idpi-scanner.ts` + `src/server.ts:575` | IDPI scanner annotates result metadata but never blocks injected content; documentation honestly says "no block" | Decide: block (rename + add throw path) or rename to "annotator" + drop the "scanner" framing. |
 | **T36** | `src/security/screenshot-redaction.ts` + `src/server.ts:591` | redaction script returned but never injected before capture — currently a no-op annotation | |
 | **T38** | `src/server.ts` `recoverSession` | recovery re-opens window + polls extension but never calls `registerWithDaemon()` — multi-session count desyncs after recovery | |
-| **T39** | `daemon/Sources/SafariPilotdCore/HealthStore.swift` | `roundtripTimestamps` / `timeoutTimestamps` / `uncertainTimestamps` arrays grow unbounded; only `forceReloadTimestamps` has pruning | |
 | **T40** | `ARCHITECTURE.md` | 8 documented claims contradict current code (cross-origin frames, ownership-domainMatches deletion, etc.) | doc-only fix. |
 
 ### Missing features / cosmetic — P3
@@ -82,6 +81,7 @@ Build pipeline: edit → `bash scripts/build-extension.sh` → verify entitlemen
 | ID | Surface | One-liner |
 |---|---|---|
 | **SD-30** | DomainPolicy + selectEngine | banking-disable-extension security feature is legitimate but unimplemented; needs threat-model + default-policy decision before wiring |
+| **SD-33** | `daemon/Sources/SafariPilotdCore/HealthStore.swift` | `incrementRoundtrip` / `incrementTimeout` / `incrementUncertain` / `incrementForceReload` have ZERO production callers (verified by grep). Their `*Count1h` / `forceReloadCount24h` accessors surface in the health snapshot but always read 0 because nothing writes. Wire to actual production telemetry sites OR delete the methods + accessors + tests. Surfaced by T39 re-scope. |
 
 ### ROADMAP backlog (not from audit, but tracked)
 
@@ -119,7 +119,8 @@ Lookup-only index; full fix-context paragraphs are in `docs/AUDIT-TASKS.md` / `d
 | SD-31 | `63d4e59` | `ecb32d6` | killSwitch.recordError filters security-pipeline errors (no more TabUrlNotRecognizedError-burst self-DoS) |
 | T7 | `71218d9` | `317527a` | Regression guard for existing safari_close_tab tab-ownership cleanup (server.ts:833-852); audit-flagged leak prevented from silently re-emerging |
 | SD-32 | `6b55ff9` | `170592e` | orphan-cleanup skips when other live sessions exist; multi-session contract restored |
-| T37 | `d82c534` | (this commit) | Deleted unused `recordPreExisting` + `isPreExisting` from `TabOwnership` (zero callers; positive-ownership model makes them redundant) |
+| T37 | `d82c534` | `b4687de` | Deleted unused `recordPreExisting` + `isPreExisting` from `TabOwnership` (zero callers; positive-ownership model makes them redundant) |
+| T39 | `cae41d8` | (this commit) | `recordHttpRequestError` now prunes entries older than 1h on append (re-scoped from 4 arrays to 1; the other three were unwired and filed as SD-33) |
 
 Pre-2026-04-25 sprint resolved entries (SD-01..SD-28, T13..T25 originals): see archives.
 
@@ -127,8 +128,8 @@ Pre-2026-04-25 sprint resolved entries (SD-01..SD-28, T13..T25 originals): see a
 
 ## Tally
 
-- **27** audit items (T-numbered) open — 0 P0, 4 in extension batch, 6 P2 quality debt, 17 P3 missing-feature/cosmetic.
-- **1** SD open — SD-30, deferred feature (banking-disable-extension).
+- **26** audit items (T-numbered) open — 0 P0, 4 in extension batch, 5 P2 quality debt, 17 P3 missing-feature/cosmetic.
+- **2** SD open — SD-30 (banking-disable-extension, deferred feature); SD-33 (HealthStore unwired increment methods, surfaced by T39 re-scope).
 - **2** ROADMAP backlog items — navigate_back/forward stale URL, NDJSON line-split flake.
 
 Total open: **30**. **All real bugs are now resolved this sprint** (T7, SD-31, SD-32). The remainder is quality debt, missing features, deferred design decisions, or cosmetic.

@@ -284,10 +284,11 @@
 **Root cause:** Recovery re-opens window and polls extension but doesn't call `registerWithDaemon()`. After daemon restart, session is unregistered.
 **Origin:** `5fb94fa` (2026-04-23).
 
-### T39. Prune HealthStore timestamp arrays
+### T39. Prune HealthStore timestamp arrays ✅ RESOLVED 2026-04-26 (commit `cae41d8`, re-scoped — see Fix)
 **Findings:** M18 (daemon-core audit)
 **Root cause:** `roundtripTimestamps`, `timeoutTimestamps`, `uncertainTimestamps`, `httpRequestErrorTimestamps` grow unbounded. `forceReloadTimestamps` IS pruned — same pattern not applied.
 **Origin:** `78938fb` (2026-04-18).
+**Fix (re-scoped):** Test-reviewer + grep verified that of the 4 listed arrays, only `httpRequestErrorTimestamps` has production writers (`main.swift:205`, `ExtensionHTTPServer.swift:342, 529, 540`). The other three (`roundtrip`, `timeout`, `uncertain`) plus `forceReload` are written ONLY from tests — pruning them would prune nothing. Re-scoped this ship to add prune-on-append in `recordHttpRequestError` (1h cutoff matching the existing `httpRequestErrorCount1h` window). Filed the unwired sibling instrumentation methods as SD-33 — needs wire-or-delete decision. Discriminating Swift test uses `Mirror(reflecting:)` on the private array because the public `httpRequestErrorCount1h` filters on read and is non-discriminating for the prune-on-append behaviour. Reviewer: REVISE → PASS after re-scope. Mutation cycle confirmed (revert prune line → 130 → 129/1 fail; restore → 130 pass).
 
 ### T40. Update ARCHITECTURE.md — 8 documented claims that contradict code
 **Findings:** Cross-referenced from C1, C2, H3, H4, H10, M1, M24, and others.
