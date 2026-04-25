@@ -109,10 +109,11 @@
 **Root cause:** `windowId`/`tabIndex` captured once at tab creation, never updated. Tab reorder or sibling close shifts indices. Positional targeting silently executes in wrong tab.
 **Origin:** `3cf95d8` (2026-04-23) — introduced positional identity without position refresh mechanism. Safari AppleScript has no stable tab ID (only positional `tab N`).
 
-### T15. Fix `safari_new_tab` idempotent flag (should be false)
+### T15. Fix `safari_new_tab` idempotent flag (should be false) ✅ RESOLVED 2026-04-25 (commit `1e56bba`)
 **Findings:** H13 (tool-modules audit)
 **Root cause:** Marked `idempotent: true` — retry creates duplicate tabs. Currently inert (NavigationTools never routes through extension engine) but architecturally wrong.
 **Origin:** `78938fb` (2026-04-18) bulk migration. Spec didn't categorize `safari_new_tab`. Migration error (same batch that broke `safari_eval_in_frame` at `368cbe2`).
+**Fix:** One-character schema change at `src/tools/navigation.ts:108` (`idempotent: true` → `idempotent: false`). Value-pinning unit test at `test/unit/tools/navigation-requirements.test.ts` mirrors the SD-01 extraction-requirements pattern. upp:test-reviewer fast PASS 0/0/0.
 
 ### T16. Fix `safari_hover` description — CSS `:hover` not triggered
 **Findings:** H14 (tool-modules audit)
