@@ -346,13 +346,98 @@ func registerHealthStoreTests() {
                        "sessionTabActive must be true after recordSessionServed")
     }
 
-    // NOTE: pruneStaleSessionsLocked uses a hardcoded -60s cutoff (not a
-    // parameter). Testing the prune-transition cleanly requires either
-    // sleeping >60s (slow) or injecting a clock (SUT refactor). The
-    // contract is implicitly exercised by activeSessionCount on every
-    // call (it invokes prune before counting); a regression where prune
-    // was deleted entirely would fail the deduplication test above
-    // through different observable behaviour. A cutoff CHANGE — the
-    // exact mutation SD-11's discriminator describes — is not directly
-    // covered here. Filed as a future strengthening note.
+    // SD-23 RESOLVED: prune-cutoff transition tested via injected Clock.
+    // The hardcoded -60s cutoff is now exercised by advancing a MockClock
+    // forward and asserting the prune fires at exactly the threshold. A
+    // regression that changed the cutoff to (say) -600s makes this test
+    // fail because the session at lastSeen=now-90s is no longer past the
+    // 600s cutoff.
+
+    test("testPruneStaleSessionsLockedAt60sCutoff") {
+        // Discrimination targets in pruneStaleSessionsLocked:
+        //   1. The cutoff value (-60s) — bumping to -600s leaves sessions
+        //      registered <600s ago active even past 60s.
+        //   2. The use of clock.now() instead of Date() — without the
+        //      injection, the test cannot advance time forward.
+        //   3. The < comparison — flipping to <= or > would mis-classify
+        //      sessions exactly at the boundary.
+        let (dir, healthPath) = makeTempHealthPath()
+        defer { cleanup(dir) }
+
+        let mock = MockClock(start: Date())
+        let store = HealthStore(persistPath: healthPath, clock: mock)
+
+        // Register at mock-time T0.
+        store.registerSession("sess-prune-1")
+        try assertEqual(store.activeSessionCount, 1,
+                        "session must be active immediately after register")
+
+        // Advance mock-time by 30s (under threshold) — session stays.
+        mock.advance(by: 30)
+        try assertEqual(store.activeSessionCount, 1,
+                        "session must still be active 30s post-register (under 60s threshold)")
+
+        // Advance to mock-time T0+90s (past threshold) — session pruned.
+        mock.advance(by: 60)  // total elapsed = 90s
+        try assertEqual(
+            store.activeSessionCount, 0,
+            "session must be pruned at >60s post-register; cutoff is clock.now() - 60. "
+                + "If non-zero, either the cutoff value drifted from -60s OR the prune is "
+                + "still using Date() instead of clock.now()."
+        )
+    }
+
+    test("testPruneStaleSessionsLockedTouchSessionResetsLastSeen") {
+        // touchSession should reset lastSeen so the session is NOT pruned
+        // even if registered long ago. Discrimination: removing the
+        // touchSession call would let the session age out despite the
+        // touch.
+        let (dir, healthPath) = makeTempHealthPath()
+        defer { cleanup(dir) }
+
+        let mock = MockClock(start: Date())
+        let store = HealthStore(persistPath: healthPath, clock: mock)
+
+        store.registerSession("sess-touch-prune")
+        mock.advance(by: 50)
+        store.touchSession("sess-touch-prune")  // reset lastSeen at mock-T0+50s
+
+        // Advance another 50s (total 100s post-register, but only 50s post-touch).
+        mock.advance(by: 50)
+        try assertEqual(
+            store.activeSessionCount, 1,
+            "touchSession must reset lastSeen — at mock-T0+100s, the session was "
+                + "touched at T0+50s, so it's only 50s stale (under threshold)"
+        )
+
+        // Now advance past the post-touch threshold.
+        mock.advance(by: 11)  // 61s post-touch
+        try assertEqual(
+            store.activeSessionCount, 0,
+            "session must be pruned at 61s post-touch"
+        )
+    }
+}
+
+// MARK: - SD-23 test helper: MockClock
+
+/// Test-only Clock that returns a controllable Date. Use `advance(by:)` to
+/// move time forward without sleeping. Lives in the test target — not part
+/// of the production surface.
+final class MockClock: TimeSource, @unchecked Sendable {
+    private var current: Date
+
+    init(start: Date) {
+        self.current = start
+    }
+
+    func now() -> Date {
+        return current
+    }
+
+    /// Move time forward by `seconds`. Negative values move backward (rare
+    /// but supported for completeness).
+    func advance(by seconds: TimeInterval) {
+        current = current.addingTimeInterval(seconds)
+    }
 }

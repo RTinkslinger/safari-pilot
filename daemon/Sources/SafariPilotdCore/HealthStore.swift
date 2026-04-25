@@ -4,6 +4,15 @@ public final class HealthStore: @unchecked Sendable {
     private let persistPath: URL
     private let queue = DispatchQueue(label: "com.safari-pilot.health-store")
 
+    /// Time source for cutoff calculations. SD-23 injection point.
+    /// Only used inside `pruneStaleSessionsLocked` so that tests can
+    /// advance time forward without sleeping. Other Date() sites
+    /// (registerSession, recordKeepalivePing, etc.) remain real-time
+    /// because tests control them via direct invocation rather than
+    /// time-passage. Named `TimeSource` to avoid collision with Swift's
+    /// built-in `Clock` protocol from macOS 13+.
+    private let clock: TimeSource
+
     // Persisted: survives daemon restart
     private var _lastAlarmFireTimestamp: Date
     public var lastAlarmFireTimestamp: Date {
@@ -49,8 +58,9 @@ public final class HealthStore: @unchecked Sendable {
         }
     }
 
-    public init(persistPath: URL) {
+    public init(persistPath: URL, clock: TimeSource = SystemTimeSource()) {
         self.persistPath = persistPath
+        self.clock = clock
         self._lastAlarmFireTimestamp = Date()  // default: init = Date.now()
 
         if let data = try? Data(contentsOf: persistPath),
@@ -140,22 +150,27 @@ public final class HealthStore: @unchecked Sendable {
     // MARK: - Session registry
 
     /// Register an MCP session. If sessionId already exists, update lastSeen.
+    /// SD-23: lastSeen uses `clock.now()` so the mock clock can advance time
+    /// for prune-cutoff tests. Production with SystemTimeSource → identical
+    /// to Date().
     public func registerSession(_ sessionId: String) {
         queue.sync {
+            let now = clock.now()
             if let idx = _activeSessions.firstIndex(where: { $0.sessionId == sessionId }) {
-                _activeSessions[idx].lastSeen = Date()
+                _activeSessions[idx].lastSeen = now
             } else {
-                _activeSessions.append((sessionId: sessionId, lastSeen: Date()))
+                _activeSessions.append((sessionId: sessionId, lastSeen: now))
             }
             Logger.info("Session registered: \(sessionId) (total: \(_activeSessions.count))")
         }
     }
 
-    /// Update lastSeen for a session (called on each /status check as implicit heartbeat).
+    /// Update lastSeen for a session (called on each /status check as implicit
+    /// heartbeat). SD-23: lastSeen uses `clock.now()` for testability.
     public func touchSession(_ sessionId: String) {
         queue.sync {
             if let idx = _activeSessions.firstIndex(where: { $0.sessionId == sessionId }) {
-                _activeSessions[idx].lastSeen = Date()
+                _activeSessions[idx].lastSeen = clock.now()
             }
         }
     }
@@ -171,9 +186,10 @@ public final class HealthStore: @unchecked Sendable {
         }
     }
 
-    /// Remove sessions not seen in 60s.
+    /// Remove sessions not seen in 60s. Uses the injected clock so tests
+    /// can advance time forward without sleeping (SD-23).
     private func pruneStaleSessionsLocked() {
-        let cutoff = Date(timeIntervalSinceNow: -60)
+        let cutoff = clock.now().addingTimeInterval(-60)
         _activeSessions.removeAll(where: { $0.lastSeen < cutoff })
     }
 
