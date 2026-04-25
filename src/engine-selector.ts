@@ -15,7 +15,11 @@ export const ENGINE_CAPS: Record<Engine, EngineCapabilities> = {
     dialogIntercept: true,
     networkIntercept: true,
     cookieHttpOnly: true,
-    framesCrossOrigin: true,
+    // T34: false until extension/manifest.json content_scripts entries gain
+    // `all_frames: true` (tracked under T55). Without manifest all_frames the
+    // extension cannot run inside cross-origin iframes — see
+    // test/unit/engine-selector/cap-manifest-parity.test.ts for the invariant.
+    framesCrossOrigin: false,
     asyncJs: true,
     latencyMs: 10,
   },
