@@ -10,18 +10,6 @@ Running list of findings surfaced by reviewers (Codex, `upp:test-reviewer`, advi
 
   - `ARCHITECTURE.md` (§Test Architecture, Daemon Tests section)
 
-### SD-19 — Shape-only / self-fulfilling assertions in Swift tests (batch)
-- **Severity:** P2 (three identified; each is a one-line strengthening)
-- **Source:** `upp:test-reviewer` retro review #2 (2026-04-24)
-- **Symptom:** Three weak assertions:
-  - `CommandDispatcherTests.swift:91-109` (`testExecuteRouting`): mock configured with `.success(value: "script_result")`, test asserts the same value came back. Self-fulfilling. The `mock.lastScript == script` check is real, keep that; drop the return-value check or replace with a transformation assertion (`response.elapsedMs != nil` or NDJSON round-trip).
-  - `ExtensionHTTPServerTests.swift:108-144` (`testHTTPConnectCallsReconcile`): asserts 5 reconcile keys are `!= nil` — any empty-array response passes. Pre-queue a command + pre-populate executed log, then assert `json["acked"] == ["known"]`, `json["reQueued"].contains("queued")`.
-  - `ExtensionHTTPServerTests.swift:209-235` (`testHTTPServerCallsOnReadyAfterStart`): asserts `onReady` fired; doesn't assert the paired `onBindFailure` hook. Covered by SD-13's onBindFailure test.
-- **Current understanding (from review):** same class of bug as SD-07 for TypeScript — batch fix as one commit.
-- **Discriminator:** for each test, wire a stub SUT that satisfies the current weak assertion → test passes today, must fail post-strengthening.
-- **Entry points / files:**
-  - `daemon/Tests/SafariPilotdTests/CommandDispatcherTests.swift`
-  - `daemon/Tests/SafariPilotdTests/ExtensionHTTPServerTests.swift`
 
 ### SD-23 — HealthStore needs an injectable clock for prune-cutoff testing
 - **Severity:** P3 (test infra brittleness; doesn't affect production behaviour)
@@ -179,6 +167,22 @@ Running list of findings surfaced by reviewers (Codex, `upp:test-reviewer`, advi
 ---
 
 ## Resolved
+
+### SD-19 — Shape-only / self-fulfilling Swift assertions strengthened (batch; 1 REVISE cycle) (2026-04-25, commit `b5a7b43`)
+
+Three weak assertions identified by reviewer retro #2 strengthened:
+
+**testExecuteRouting** (CommandDispatcherTests.swift): pre-SD-19 asserted `response.value == "script_result"` — purely self-fulfilling (mock returns "script_result", test asserts "script_result"). Strengthened to two real behavioural claims: `mock.lastScript == script` (dispatcher must forward unescaped script string) AND `response.id == "exec-1"` (dispatcher must forward command.id as executor.execute(commandID:); the mock reflects this back via `Response(id: commandID, ...)`).
+
+**REVISE cycle**: my initial strengthening added `response.elapsedMs >= 0` as a third oracle. Reviewer flagged CRITICAL tautology — Response.elapsedMs is non-optional Double (defaults 0); mock explicitly sets elapsedMs:0; dispatcher's execute route returns `await executor.execute(...)` directly and doesn't populate elapsedMs at this layer (AppleScriptExecutor does, but it's mocked out). The REVISE catch was the gate working as intended — the EXACT pattern SD-19 was filed to fix. Removed. Plus comment narrative on `response.id` corrected (mock at line 14-21 ignores `responseToReturn.id` and reflects commandID directly; "placeholder" is dead data).
+
+**testHTTPConnectCallsReconcile** (ExtensionHTTPServerTests.swift): pre-SD-19 asserted only that 5 reconcile keys were `!= nil` — empty-array response would pass. Strengthened: pre-populate bridge state (queue cmd-pre-pending → reQueued, queue+complete cmd-pre-acked → acked), `handleDisconnected` to flip delivered=false (mirrors production wake), then /connect with `executedIds=[cmd-pre-acked], pendingIds=[cmd-pre-pending]`. Asserts `acked.contains("cmd-pre-acked")`, `reQueued.contains("cmd-pre-pending")`, `pushNew.count == 0` (negative form). Locks reconcile semantics, not just shape.
+
+**testHTTPServerCallsOnReadyAfterStart**: comment-only update pointing to `testOnBindFailureFiresWhenPortAlreadyBound` (added by SD-13). Both halves of the lifecycle hook contract now locked.
+
+`upp:test-reviewer` (fast mode, Checks 6/7/8): first verdict **REVISE** (1 CRITICAL tautology, 1 ADVISORY comment misframe); after fix, **PASS** (0 CRITICAL, 0 MAJOR, 0 ADVISORY). Reviewer-calibration note: this is the gate firing correctly on my own self-fulfilling pattern. Worth noting alongside the SD-13 (correct call) and SD-15 (state-machine miss) calibration data points.
+
+Total tests: 97 unit (TS) + 28 canary + 41 e2e + 116 Swift = 282 (no test count change; just strengthening).
 
 ### SD-18 — Doc correction: "Swift tests are real, not mocked" (2026-04-25, commit `55b3500`)
 
