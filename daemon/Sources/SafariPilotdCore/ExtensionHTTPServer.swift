@@ -34,9 +34,15 @@ public final class ExtensionHTTPServer: @unchecked Sendable {
 
     /// Tracks the last time any HTTP request was received.
     private let lock = DispatchQueue(label: "com.safari-pilot.http-server")
-    private var _lastRequestTime: Date = Date()
+    private var _lastRequestTime: Date
     private var _serverTask: Task<Void, Never>?
     private var _disconnectTask: Task<Void, Never>?
+
+    /// SD-28: TimeSource injection. Production uses SystemTimeSource (Date());
+    /// tests inject MockClock to drive the disconnect-timeout threshold
+    /// (`checkDisconnect()` elapsed calc) without waiting 15s of real time.
+    /// Replaces the test-only `runDisconnectCheckForTest` backdoor.
+    private let timeSource: TimeSource
 
     /// Time without requests before declaring extension disconnected.
     private static let disconnectTimeout: TimeInterval = 15.0
@@ -50,13 +56,16 @@ public final class ExtensionHTTPServer: @unchecked Sendable {
         bridge: ExtensionBridge,
         healthStore: HealthStore,
         onReady: (@Sendable () async -> Void)? = nil,
-        onBindFailure: (@Sendable (Error) -> Void)? = nil
+        onBindFailure: (@Sendable (Error) -> Void)? = nil,
+        timeSource: TimeSource = SystemTimeSource()
     ) {
         self.port = port
         self.bridge = bridge
         self.healthStore = healthStore
         self.onReady = onReady
         self.onBindFailure = onBindFailure
+        self.timeSource = timeSource
+        self._lastRequestTime = timeSource.now()
     }
 
     // MARK: - Lifecycle
@@ -281,7 +290,7 @@ public final class ExtensionHTTPServer: @unchecked Sendable {
         let sessionTab = healthStore.sessionTabActive
         let lastPingAge: Any
         if let last = healthStore.lastKeepalivePing {
-            lastPingAge = Int(Date().timeIntervalSince(last) * 1000)
+            lastPingAge = Int(timeSource.now().timeIntervalSince(last) * 1000)
         } else {
             lastPingAge = NSNull()
         }
@@ -479,33 +488,32 @@ public final class ExtensionHTTPServer: @unchecked Sendable {
     // MARK: - Helpers
 
     private func touchLastRequestTime() {
-        lock.sync { _lastRequestTime = Date() }
+        lock.sync { _lastRequestTime = timeSource.now() }
     }
 
     private var lastRequestTime: Date {
         lock.sync { _lastRequestTime }
     }
 
-    private func checkDisconnect() {
-        let elapsed = Date().timeIntervalSince(lastRequestTime)
+    /// Run one disconnect-detection pass. Compares elapsed time since the last
+    /// HTTP request against `disconnectTimeout` (15s); if exceeded AND the
+    /// bridge still believes the extension is connected, calls
+    /// `bridge.handleDisconnected`. Also pumps `healthStore.checkMcpConnection`.
+    ///
+    /// Invoked from two places:
+    /// - The production `_disconnectTask` background loop (every 10s after start()).
+    /// - Tests, directly, after advancing the injected `timeSource` past the
+    ///   15s threshold (replaces SD-13's `runDisconnectCheckForTest` backdoor).
+    ///
+    /// Idempotent given identical clock state — safe to call repeatedly.
+    public func checkDisconnect() {
+        let elapsed = timeSource.now().timeIntervalSince(lastRequestTime)
         if elapsed > Self.disconnectTimeout && bridge.isExtensionConnected {
             Logger.info("ExtensionHTTPServer: no request in \(Int(elapsed))s — marking disconnected")
             _ = bridge.handleDisconnected(commandID: "http-disconnect-timeout")
         }
         // Check MCP connection heartbeat — clears mcpConnected if no TCP command in 30s.
         healthStore.checkMcpConnection()
-    }
-
-    /// Test-only entry point: rewinds `_lastRequestTime` by `elapsedSeconds`
-    /// and invokes the private `checkDisconnect()` synchronously. Lets tests
-    /// exercise the disconnect-timeout branch without sleeping past the
-    /// 10s/15s production schedule. Production code paths never call this —
-    /// `_disconnectTask` is the only producer in normal operation. SD-17
-    /// tracks the broader cleanup of test-only surfaces on production
-    /// classes (alongside `ExtensionBridge.addToExecutedLogForTest`).
-    public func runDisconnectCheckForTest(elapsedSeconds: TimeInterval) {
-        lock.sync { _lastRequestTime = Date(timeIntervalSinceNow: -elapsedSeconds) }
-        checkDisconnect()
     }
 
     /// Serialize a dictionary to a JSON HTTP response with application/json content type.

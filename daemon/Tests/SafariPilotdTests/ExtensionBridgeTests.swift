@@ -429,15 +429,49 @@ func registerExtensionBridgeTests() {
     }
 
     test("testExecutedLogExpiresAfterTTL") {
-        let bridge = ExtensionBridge()
+        // SD-28: drives the natural execute → poll → result cycle with an
+        // injected MockClock to control time. Replaces the deleted
+        // `addToExecutedLogForTest` backdoor.
+        //
+        // Discrimination target: ExtensionBridge.swift `pruneExpiredEntries`
+        // cutoff calculation `timeSource.now().addingTimeInterval(-300)`.
+        // Reverting that to a hardcoded `Date()` would still work here
+        // (Date() ≈ mockClock.now() at insertion), but reverting the
+        // `timeSource.now()` reference at the cutoff means the cutoff
+        // doesn't move when mockClock advances → the 6-minute-old entry
+        // stays in the log → assertFalse fails.
+        let mock = MockClock(start: Date())
+        let bridge = ExtensionBridge(timeSource: mock)
 
-        // Insert an entry with a timestamp 6 minutes in the past (beyond 5-min TTL)
-        let sixMinutesAgo = Date().addingTimeInterval(-360)
-        bridge.addToExecutedLogForTest(commandID: "old-cmd", at: sixMinutesAgo)
+        // Run a real handleExecute → handlePoll → handleResult cycle so the
+        // entry lands in executedLog with timestamp = mockClock.now() (T0).
+        let executeTask = Task {
+            await bridge.handleExecute(
+                commandID: "ttl-cmd-1",
+                params: ["script": AnyCodable("return 1")]
+            )
+        }
+        Thread.sleep(forTimeInterval: 0.1)
+        _ = syncAwait { await bridge.handlePoll(commandID: "ttl-poll") }
+        _ = bridge.handleResult(
+            commandID: "ttl-res",
+            params: [
+                "requestId": AnyCodable("ttl-cmd-1"),
+                "result": AnyCodable(["ok": true, "value": "ok"]),
+            ]
+        )
+        _ = syncAwait { await executeTask.value }
 
-        // Should NOT be found — it's expired
-        try assertFalse(bridge.isInExecutedLog("old-cmd"),
-                        "Expired entry should not be found in executedLog")
+        // Sanity: fresh entry IS in the log at T0.
+        try assertTrue(bridge.isInExecutedLog("ttl-cmd-1"),
+                       "fresh entry must be in executedLog before any clock advance")
+
+        // Advance mock clock past 5-min TTL → next prune (triggered by
+        // isInExecutedLog itself) drops the entry.
+        mock.advance(by: 360)
+        try assertFalse(bridge.isInExecutedLog("ttl-cmd-1"),
+                        "entry inserted at T0 must be pruned after mockClock advances "
+                            + "past 300s TTL — ties prune cutoff to timeSource.now()")
     }
 
     test("testExecutedLogSizeReportedInHealthSnapshot") {

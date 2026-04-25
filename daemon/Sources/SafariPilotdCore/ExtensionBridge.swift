@@ -37,11 +37,19 @@ public final class ExtensionBridge: @unchecked Sendable {
     /// Set after init via `setHealthStore(_:)` to avoid circular initialisation.
     private weak var _keepaliveStore: HealthStore?
 
+    /// SD-28: TimeSource injection. Production uses SystemTimeSource (Date());
+    /// tests inject MockClock to drive the executedLog TTL prune-cutoff
+    /// (line 75) and entry insertion timestamp (line 389) without sleeping.
+    /// Replaces the test-only `addToExecutedLogForTest` backdoor.
+    private let timeSource: TimeSource
+
     public var isExtensionConnected: Bool {
         queue.sync { _isConnected }
     }
 
-    public init() {}
+    public init(timeSource: TimeSource = SystemTimeSource()) {
+        self.timeSource = timeSource
+    }
 
     /// Wire up a HealthStore so keepalive sentinels can update `lastKeepalivePing`.
     public func setHealthStore(_ store: HealthStore) {
@@ -56,13 +64,6 @@ public final class ExtensionBridge: @unchecked Sendable {
         }
     }
 
-    /// Test-only: insert an entry with a specific timestamp for TTL testing.
-    public func addToExecutedLogForTest(commandID: String, at timestamp: Date) {
-        queue.sync {
-            executedLog.append(ExecutedEntry(commandID: commandID, timestamp: timestamp))
-        }
-    }
-
     /// Set the IPC mechanism label (e.g. "none", "tcp", "http") for health reporting.
     public func setIpcMechanism(_ mechanism: String) {
         queue.sync {
@@ -72,7 +73,7 @@ public final class ExtensionBridge: @unchecked Sendable {
 
     /// Remove entries older than the TTL. Must be called under `queue.sync`.
     private func pruneExpiredEntries() {
-        let cutoff = Date().addingTimeInterval(-Self.executedLogTTL)
+        let cutoff = timeSource.now().addingTimeInterval(-Self.executedLogTTL)
         executedLog.removeAll(where: { $0.timestamp < cutoff })
     }
 
@@ -386,7 +387,7 @@ public final class ExtensionBridge: @unchecked Sendable {
         // Record in executedLog for reconcile (prune expired entries while we're here)
         queue.sync {
             pruneExpiredEntries()
-            executedLog.append(ExecutedEntry(commandID: cmd.id, timestamp: Date()))
+            executedLog.append(ExecutedEntry(commandID: cmd.id, timestamp: timeSource.now()))
         }
 
         return Response.success(id: commandID, value: AnyCodable("extension_ack"))

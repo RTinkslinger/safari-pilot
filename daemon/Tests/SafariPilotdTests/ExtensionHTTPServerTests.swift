@@ -627,21 +627,39 @@ func registerExtensionHTTPServerTests() {
     // MARK: - SD-13: 15s disconnect timeout
 
     test("testDisconnectCheckFiresWhenIdleBeyondThreshold") {
-        // Discrimination target: ExtensionHTTPServer.swift:467-475, specifically
+        // SD-28: controls time via MockClock injection instead of the deleted
+        // `runDisconnectCheckForTest` backdoor. Server is constructed but
+        // start() is NEVER called — avoids the production `_disconnectTask`
+        // background loop racing the test's mockClock.advance + checkDisconnect
+        // sequence (advisor flag).
+        //
+        // Discrimination target: ExtensionHTTPServer.swift `checkDisconnect`,
+        // specifically:
         //     if elapsed > Self.disconnectTimeout && bridge.isExtensionConnected
         //     bridge.handleDisconnected(commandID: "http-disconnect-timeout")
-        // Removing either the elapsed comparison or the handleDisconnected call
-        // breaks the wake-from-stale-extension contract.
-        let (server, bridge, _) = startTestHTTPServer()
-        defer { server.stop() }
-        Thread.sleep(forTimeInterval: 0.5)
+        // Removing either the elapsed comparison or the handleDisconnected
+        // call breaks the wake-from-stale-extension contract.
+        let mock = MockClock(start: Date())
+        let bridge = ExtensionBridge()
+        let tmpPath = FileManager.default.temporaryDirectory
+            .appendingPathComponent("test-http-disconnect-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: tmpPath) }
+        let health = HealthStore(persistPath: tmpPath)
+        let server = ExtensionHTTPServer(
+            port: 0,
+            bridge: bridge,
+            healthStore: health,
+            timeSource: mock
+        )
 
         _ = bridge.handleConnected(commandID: "pre-disconnect")
         try assertTrue(bridge.isExtensionConnected,
                        "bridge must be connected before staleness check")
 
-        // 16s elapsed > 15s threshold → must disconnect.
-        server.runDisconnectCheckForTest(elapsedSeconds: 16)
+        // Advance mockClock 16s past _lastRequestTime (set to start in init)
+        // → elapsed = 16 > disconnectTimeout = 15 → checkDisconnect must fire.
+        mock.advance(by: 16)
+        server.checkDisconnect()
 
         try assertFalse(
             bridge.isExtensionConnected,
@@ -650,17 +668,28 @@ func registerExtensionHTTPServerTests() {
     }
 
     test("testDisconnectCheckPreservesConnectionWhenFresh") {
-        // Negative form: fresh `_lastRequestTime` (5s ago) must NOT trigger
-        // disconnect. Locks against a regression that drops the elapsed
-        // comparison entirely.
-        let (server, bridge, _) = startTestHTTPServer()
-        defer { server.stop() }
-        Thread.sleep(forTimeInterval: 0.5)
+        // SD-28: negative form via MockClock — fresh _lastRequestTime (5s ago)
+        // must NOT trigger disconnect. Locks against a regression that drops
+        // the elapsed comparison entirely (always-fires).
+        let mock = MockClock(start: Date())
+        let bridge = ExtensionBridge()
+        let tmpPath = FileManager.default.temporaryDirectory
+            .appendingPathComponent("test-http-fresh-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: tmpPath) }
+        let health = HealthStore(persistPath: tmpPath)
+        let server = ExtensionHTTPServer(
+            port: 0,
+            bridge: bridge,
+            healthStore: health,
+            timeSource: mock
+        )
 
         _ = bridge.handleConnected(commandID: "pre-fresh")
         try assertTrue(bridge.isExtensionConnected)
 
-        server.runDisconnectCheckForTest(elapsedSeconds: 5)
+        // Advance mockClock 5s — well under 15s threshold → must NOT disconnect.
+        mock.advance(by: 5)
+        server.checkDisconnect()
 
         try assertTrue(
             bridge.isExtensionConnected,
