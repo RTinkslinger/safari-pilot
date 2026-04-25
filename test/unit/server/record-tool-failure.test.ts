@@ -1,5 +1,5 @@
 /**
- * T12 — `SafariPilotServer.recordToolFailure()` must fire BOTH the
+ * T12 / SD-08 — `SafariPilotServer.recordToolFailure()` must fire BOTH the
  * per-domain `recordFailure(domain)` and the per-engine
  * `recordEngineFailure(engine, code)` calls on the circuit breaker.
  *
@@ -10,13 +10,16 @@
  * EXTENSION_DISCONNECTED never tripped and the engine kept getting picked
  * indefinitely despite repeated failures.
  *
- * This test isolates the wiring by calling the extracted `recordToolFailure`
- * method directly. The rest of executeToolWithSecurity (9 security layers,
- * engine selection, post-hooks) is not exercised here — the claim this test
- * proves is narrow: the error-path catch delegates to `recordToolFailure`,
- * and that method fires both spies.
+ * SD-08 refactor (2026-04-25): the original tests used `vi.spyOn` to
+ * assert HOW the server wired the methods (called-with-specific-args).
+ * Per upp:test-reviewer retro #1, that was behaviour-asserting-on-
+ * implementation. Replaced with observable-state assertions: do N
+ * failures → assert the breaker state the user would actually observe.
+ * The T12 discrimination guarantee is preserved — reverting
+ * `recordToolFailure` to call only one of the two breaker branches
+ * fails at least one of the state assertions below.
  */
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { SafariPilotServer } from '../../../src/server.js';
 import { DEFAULT_CONFIG } from '../../../src/config.js';
 import type { CircuitBreaker } from '../../../src/security/circuit-breaker.js';
@@ -30,49 +33,88 @@ function internals(server: SafariPilotServer): ServerInternals {
   return server as unknown as ServerInternals;
 }
 
-describe('SafariPilotServer.recordToolFailure (T12): engine breaker wiring', () => {
-  it('records BOTH per-domain and per-engine failures for a SafariPilotError with a code', () => {
+describe('SafariPilotServer.recordToolFailure (T12 / SD-08)', () => {
+  it('5 EXTENSION_TIMEOUT failures on one domain trip BOTH per-domain AND per-engine breakers', () => {
+    // Single-test observable-state assertion covering both breaker scopes.
+    // Replaces the pre-SD-08 `vi.spyOn(cb, 'recordFailure' | 'recordEngineFailure')`
+    // pair which asserted on method-call-arguments. This version asserts on
+    // the end-state the caller would see — any regression in wiring (either
+    // branch missing, or engine code dropped) breaks at least one assertion.
     const server = new SafariPilotServer(DEFAULT_CONFIG);
     const cb = internals(server).circuitBreaker;
-    const domainSpy = vi.spyOn(cb, 'recordFailure');
-    const engineSpy = vi.spyOn(cb, 'recordEngineFailure');
 
-    const err = { code: 'EXTENSION_TIMEOUT', message: 'timeout', name: 'ExtensionTimeoutError' };
-    internals(server).recordToolFailure('example.com', 'extension', err);
+    const domain = 'example.com';
+    const err = { code: 'EXTENSION_TIMEOUT', message: 'timeout' };
 
-    expect(domainSpy).toHaveBeenCalledTimes(1);
-    expect(domainSpy).toHaveBeenCalledWith('example.com');
+    // Baseline: both scopes start closed.
+    expect(cb.getState(domain)).toBe('closed');
+    expect(cb.isEngineTripped('extension')).toBe(false);
 
-    expect(engineSpy).toHaveBeenCalledTimes(1);
-    expect(engineSpy).toHaveBeenCalledWith('extension', 'EXTENSION_TIMEOUT');
+    for (let i = 0; i < 5; i++) {
+      internals(server).recordToolFailure(domain, 'extension', err);
+    }
+
+    // Per-domain breaker opened → proves recordToolFailure → cb.recordFailure.
+    // If SD-08 regression reverted recordToolFailure to skip the per-domain
+    // branch, this assertion would fail (stays 'closed').
+    expect(cb.getState(domain)).toBe('open');
+
+    // Per-engine breaker tripped → proves recordToolFailure →
+    // cb.recordEngineFailure WITH the error's code. If recordToolFailure
+    // skipped the engine branch OR dropped the code, isEngineTripped stays
+    // false (engine breaker triggers only on EXTENSION_* codes; a dropped
+    // code becomes 'UNKNOWN' and is ignored by the engine-level filter).
+    expect(cb.isEngineTripped('extension')).toBe(true);
   });
 
-  it('defaults the engine-failure code to UNKNOWN when the error has no code field', () => {
-    // An arbitrary plain Error (no .code) is still a tool failure worth
-    // recording — the engine breaker filters internally to the three
-    // trigger codes, so UNKNOWN simply becomes a no-op for engine state.
-    const server = new SafariPilotServer(DEFAULT_CONFIG);
-    const cb = internals(server).circuitBreaker;
-    const engineSpy = vi.spyOn(cb, 'recordEngineFailure');
-
-    internals(server).recordToolFailure('example.com', 'daemon', new Error('boom'));
-
-    expect(engineSpy).toHaveBeenCalledWith('daemon', 'UNKNOWN');
-  });
-
-  it('trips the engine breaker after 5 EXTENSION_TIMEOUT failures (integration with CircuitBreaker)', () => {
-    // Not a pure unit test of recordToolFailure — this is the end-to-end
-    // wiring assertion: if recordToolFailure were reverted to NOT call
-    // recordEngineFailure, isEngineTripped would stay false forever and
-    // this assertion would fail.
+  it('engine breaker trips across different domains (engine scope independent of per-domain)', () => {
+    // Preserves the original test 3 semantics: 5 failures across DIFFERENT
+    // domains don't trip the per-domain breaker (each domain gets 1
+    // failure, well under the 5-threshold), but DO trip the engine breaker
+    // (which accumulates across all domains). This scope-independence is a
+    // load-bearing property of T12's dual-scope design.
     const server = new SafariPilotServer(DEFAULT_CONFIG);
     const cb = internals(server).circuitBreaker;
     const err = { code: 'EXTENSION_TIMEOUT', message: 'timeout' };
 
-    expect(cb.isEngineTripped('extension')).toBe(false);
     for (let i = 0; i < 5; i++) {
       internals(server).recordToolFailure(`d${i}.example`, 'extension', err);
     }
+
+    // Engine tripped — accumulation across the 5 distinct domains.
     expect(cb.isEngineTripped('extension')).toBe(true);
+
+    // No per-domain breaker tripped — each domain only saw 1 failure.
+    for (let i = 0; i < 5; i++) {
+      expect(cb.getState(`d${i}.example`)).toBe('closed');
+    }
+  });
+
+  it('non-triggering error codes do not trip the engine breaker (filter is by code, not call count)', () => {
+    // Engine breaker triggers only on EXTENSION_TIMEOUT / EXTENSION_UNCERTAIN /
+    // EXTENSION_DISCONNECTED. Other codes (or a missing/UNKNOWN code from a
+    // plain Error) must NOT accumulate toward the engine trip threshold.
+    // This replaces the pre-SD-08 `it('defaults the engine-failure code to
+    // UNKNOWN when ...')` spy test — observable via the state-not-tripped
+    // invariant.
+    const server = new SafariPilotServer(DEFAULT_CONFIG);
+    const cb = internals(server).circuitBreaker;
+
+    // 10 failures — 2x the threshold — with a non-triggering code.
+    const err = { code: 'TIMEOUT', message: 'daemon timeout' };
+    for (let i = 0; i < 10; i++) {
+      internals(server).recordToolFailure(`d${i}.example`, 'daemon', err);
+    }
+
+    // Daemon engine breaker never trips on 'TIMEOUT' (not in the engine
+    // breaker's trigger set). Per-domain still accumulates normally — but
+    // each domain only saw 1 failure so none trip either.
+    expect(cb.isEngineTripped('daemon')).toBe(false);
+
+    // 5 plain Errors (no `code` field) map to 'UNKNOWN' and don't trip.
+    for (let i = 0; i < 5; i++) {
+      internals(server).recordToolFailure('x.example', 'extension', new Error('boom'));
+    }
+    expect(cb.isEngineTripped('extension')).toBe(false);
   });
 });
