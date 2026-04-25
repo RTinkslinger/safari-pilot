@@ -139,10 +139,11 @@
 **Origin:** `35e3c58` (2026-04-12). CompoundTools receives raw `engine` not `proxy` — no positional identity.
 **Fix (lean path, option 5 per advisor):** Made the failure LOUD instead of silent. On post-navigation URL-query failure (ok=false OR empty/whitespace value), the loop now breaks, pushes a warning to `PaginateResult.warnings`, and sets `metadata.degraded=true`. PaginateResult gained an optional `warnings?: string[]` field. 3 unit tests at `test/unit/tools/compound-paginate-scrape.test.ts` (empty-value, ok=false, happy path). upp:test-reviewer fast PASS 0/0/2. Proper positional-identity threading through CompoundTools (option 1) is future work — the schema is now honest about partial failure, callers see warnings + degraded flag, and the silent-scrape-old-page failure mode is gone.
 
-### T20. Fix `safari_eval_in_frame` — replace `eval()` with `new Function()`
+### T20. Fix `safari_eval_in_frame` — replace `eval()` with `new Function()` ✅ RESOLVED 2026-04-25 (commit `8b62f03`)
 **Findings:** H16 (tool-modules audit)
 **Root cause:** Only tool using explicit `eval()`. Fails on any page with CSP `script-src` without `'unsafe-eval'`. `content-main.js` uses `new _Function()` (pre-captured constructor) which survives CSP.
 **Origin:** `b3b83a1` (2026-04-12). Security audit `162e5a5` removed the engine routing flag but didn't fix the `eval()` itself.
+**Fix:** Replaced `result = win.eval(userScript);` with `result = new win.Function(userScript)();` in the embedded JS template (`src/tools/frames.ts:122`). Codebase consistency move — matches `extension/content-main.js:11,323` (`const _Function = Function;` + `new _Function(params.script)`). 2 tests at `test/unit/tools/frames-eval-in-frame.test.ts` (negative regex on `\beval\s*\(`; positive regex on `new\s+(win\.)?Function\s*\(`). upp:test-reviewer fast PASS 0/0/1. **Note on the audit's stronger CSP claim:** the pre-capture is what survives CSP, and that has to happen at content-script-injection time (before any page script runs). For safari_eval_in_frame on the AppleScript engine path, neither eval() nor new Function() can pre-capture — both are subject to runtime CSP. The fix is therefore primarily a code-quality / scope-isolation / convention move; proper CSP-survival requires routing through the extension engine (future work).
 
 ### T21. Add content script `history.pushState` patching
 **Findings:** M10 (extension-ipc audit)
