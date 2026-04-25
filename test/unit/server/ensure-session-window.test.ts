@@ -25,15 +25,15 @@ import { SafariPilotServer } from '../../../src/server.js';
 import { SessionWindowInitError } from '../../../src/errors.js';
 import { DEFAULT_CONFIG } from '../../../src/config.js';
 
-/** Invoke the private ensureSessionWindow in a type-safe cast. */
+/**
+ * Invoke the private ensureSessionWindow in a type-safe cast. The method
+ * cast stays because SD-09's scope was specifically about READING private
+ * state fields via `as unknown as`; test-only entry-point method calls
+ * are a separate concern.
+ */
 async function callEnsureSessionWindow(server: SafariPilotServer): Promise<void> {
   await (server as unknown as { ensureSessionWindow: (id: string) => Promise<void> })
     .ensureSessionWindow('test-trace');
-}
-
-/** Peek at the private _sessionWindowId field. */
-function peekWindowId(server: SafariPilotServer): number | undefined {
-  return (server as unknown as { _sessionWindowId: number | undefined })._sessionWindowId;
 }
 
 describe('SafariPilotServer.ensureSessionWindow (T11): failure propagation', () => {
@@ -47,7 +47,7 @@ describe('SafariPilotServer.ensureSessionWindow (T11): failure propagation', () 
     mockExec.mockReturnValue('12345\n');
     const server = new SafariPilotServer(DEFAULT_CONFIG);
     await callEnsureSessionWindow(server);
-    expect(peekWindowId(server)).toBe(12345);
+    expect(server.getSessionWindowId()).toBe(12345);
   });
 
   it('throws SessionWindowInitError when execSync itself fails', async () => {
@@ -67,7 +67,7 @@ describe('SafariPilotServer.ensureSessionWindow (T11): failure propagation', () 
     expect(err.message).toContain('AppleScript');
     expect(err.message).toContain('-1743'); // original cause surfaced
     expect(err.retryable).toBe(false);
-    expect(peekWindowId(server), '_sessionWindowId must stay undefined on failure').toBeUndefined();
+    expect(server.getSessionWindowId(), '_sessionWindowId must stay undefined on failure').toBeUndefined();
   });
 
   it('throws SessionWindowInitError when osascript returns unparseable output', async () => {
@@ -87,7 +87,7 @@ describe('SafariPilotServer.ensureSessionWindow (T11): failure propagation', () 
     const err = thrown as SessionWindowInitError;
     expect(err.message).toContain('unparseable');
     expect(err.message).toContain('not-a-number');
-    expect(peekWindowId(server)).toBeUndefined();
+    expect(server.getSessionWindowId()).toBeUndefined();
   });
 
   it('no-ops (does not re-throw) when _sessionWindowId is already set', async () => {
@@ -97,6 +97,6 @@ describe('SafariPilotServer.ensureSessionWindow (T11): failure propagation', () 
     (server as unknown as { _sessionWindowId: number })._sessionWindowId = 999;
     await callEnsureSessionWindow(server);
     expect(mockExec).not.toHaveBeenCalled();
-    expect(peekWindowId(server)).toBe(999);
+    expect(server.getSessionWindowId()).toBe(999);
   });
 });

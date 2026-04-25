@@ -38,11 +38,9 @@ function makeSocket(): MockSocket {
   return sock;
 }
 
-/** Peek at the private useTcp flag. Reading internal state is allowed by
- *  the boundary policy (only mocking internals is forbidden). */
-function peekUseTcp(engine: DaemonEngine): boolean {
-  return (engine as unknown as { useTcp: boolean }).useTcp;
-}
+// SD-09: read TCP-mode through the public getter instead of a private-
+// field cast. Renaming `useTcp` at the field level (→ `_tcp`) no longer
+// breaks this test — `isTcpMode()` preserves the contract.
 
 /**
  * Drive the probe + command flow. Returns the command's Promise alongside
@@ -109,7 +107,7 @@ describe('DaemonEngine (T9): useTcp reset on TCP failures', () => {
     // Wait long enough for the probe to complete (microtask chain) but
     // shorter than the command timeout.
     await new Promise((r) => setTimeout(r, 50));
-    expect(peekUseTcp(engine), 'useTcp must be true after successful TCP probe').toBe(true);
+    expect(engine.isTcpMode(), 'useTcp must be true after successful TCP probe').toBe(true);
     await cmdPromise;
   }, 10000);
 
@@ -122,7 +120,7 @@ describe('DaemonEngine (T9): useTcp reset on TCP failures', () => {
     const result = await engine.command('slowMethod', {}, 150);
     expect(result.ok, 'command must report failure after timeout').toBe(false);
     // Before the fix this was still true; the whole point of T9.
-    expect(peekUseTcp(engine), 'useTcp must be reset to false after a TCP timeout').toBe(false);
+    expect(engine.isTcpMode(), 'useTcp must be reset to false after a TCP timeout').toBe(false);
   }, 10000);
 
   it('resets useTcp=false when the TCP response is unparseable (T9 parse path)', async () => {
@@ -134,7 +132,7 @@ describe('DaemonEngine (T9): useTcp reset on TCP failures', () => {
     const engine = new DaemonEngine({ daemonPath: '/nonexistent', tcpPort: 19474 });
     const result = await engine.command('anyMethod', {}, 1000);
     expect(result.ok, 'command must report failure on invalid JSON').toBe(false);
-    expect(peekUseTcp(engine), 'useTcp must be reset to false after a TCP parse failure').toBe(false);
+    expect(engine.isTcpMode(), 'useTcp must be reset to false after a TCP parse failure').toBe(false);
   });
 
   it('still resets useTcp=false on socket error (pre-T9 behavior preserved)', async () => {
@@ -143,6 +141,6 @@ describe('DaemonEngine (T9): useTcp reset on TCP failures', () => {
     const engine = new DaemonEngine({ daemonPath: '/nonexistent', tcpPort: 19474 });
     const result = await engine.command('anyMethod', {}, 1000);
     expect(result.ok).toBe(false);
-    expect(peekUseTcp(engine)).toBe(false);
+    expect(engine.isTcpMode()).toBe(false);
   });
 });

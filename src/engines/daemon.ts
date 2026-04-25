@@ -51,6 +51,17 @@ export class DaemonEngine extends BaseEngine {
   private useTcp = false;
   private _traceId: string | undefined;
 
+  /**
+   * Read-only accessor for the TCP-mode flag. Exposed so tests and
+   * introspection tools can observe the stdio ↔ TCP mode toggle without
+   * reaching into `useTcp` via a private-field cast — SD-09.
+   * Initially false; flipped true when a stdio command hits a specific
+   * error class (T9) and flipped back on TCP self-heal.
+   */
+  isTcpMode(): boolean {
+    return this.useTcp;
+  }
+
   constructor(options?: DaemonEngineOptions | string) {
     super();
     if (typeof options === 'string') {

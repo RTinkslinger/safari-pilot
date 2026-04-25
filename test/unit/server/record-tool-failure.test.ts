@@ -22,10 +22,13 @@
 import { describe, it, expect } from 'vitest';
 import { SafariPilotServer } from '../../../src/server.js';
 import { DEFAULT_CONFIG } from '../../../src/config.js';
-import type { CircuitBreaker } from '../../../src/security/circuit-breaker.js';
 
+// SD-09: `server.circuitBreaker` is already a `readonly` public field on
+// SafariPilotServer — no cast needed for the state read. Only the call
+// to the private `recordToolFailure` method uses a cast, and that is
+// test-only entry-point access (SD-09's scope is state reads, not
+// method calls).
 interface ServerInternals {
-  circuitBreaker: CircuitBreaker;
   recordToolFailure: (domain: string, engine: string, error: unknown) => void;
 }
 
@@ -41,7 +44,7 @@ describe('SafariPilotServer.recordToolFailure (T12 / SD-08)', () => {
     // the end-state the caller would see — any regression in wiring (either
     // branch missing, or engine code dropped) breaks at least one assertion.
     const server = new SafariPilotServer(DEFAULT_CONFIG);
-    const cb = internals(server).circuitBreaker;
+    const cb = server.circuitBreaker;
 
     const domain = 'example.com';
     const err = { code: 'EXTENSION_TIMEOUT', message: 'timeout' };
@@ -74,7 +77,7 @@ describe('SafariPilotServer.recordToolFailure (T12 / SD-08)', () => {
     // (which accumulates across all domains). This scope-independence is a
     // load-bearing property of T12's dual-scope design.
     const server = new SafariPilotServer(DEFAULT_CONFIG);
-    const cb = internals(server).circuitBreaker;
+    const cb = server.circuitBreaker;
     const err = { code: 'EXTENSION_TIMEOUT', message: 'timeout' };
 
     for (let i = 0; i < 5; i++) {
@@ -98,7 +101,7 @@ describe('SafariPilotServer.recordToolFailure (T12 / SD-08)', () => {
     // UNKNOWN when ...')` spy test — observable via the state-not-tripped
     // invariant.
     const server = new SafariPilotServer(DEFAULT_CONFIG);
-    const cb = internals(server).circuitBreaker;
+    const cb = server.circuitBreaker;
 
     // 10 failures — 2x the threshold — with a non-triggering code.
     const err = { code: 'TIMEOUT', message: 'daemon timeout' };

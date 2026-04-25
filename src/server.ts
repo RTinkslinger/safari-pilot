@@ -170,6 +170,16 @@ export class SafariPilotServer {
     initDurationMs: number;
   } | undefined;
 
+  /**
+   * Read-only accessor for the session window id. Exposed so tests and
+   * health-check tooling can observe initialization state without
+   * reaching into `_sessionWindowId` via a private-field cast — SD-09.
+   * Returns undefined before the first successful `ensureSessionWindow`.
+   */
+  getSessionWindowId(): number | undefined {
+    return this._sessionWindowId;
+  }
+
   private get sessionTabUrl(): string {
     return `http://127.0.0.1:19475/session?id=${this.sessionId}`;
   }
