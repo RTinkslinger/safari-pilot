@@ -14,15 +14,40 @@
  * Per CLAUDE.md "Unit Tests (HARD RULES)": mocking `node:net` is allowed;
  * mocking `DaemonEngine` or any other internal module is not.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
 import { EventEmitter } from 'node:events';
 
-vi.mock('node:net', () => ({
-  createConnection: vi.fn(),
-}));
+// SD-29 — vitest.config.ts sets `isolate: false` + `singleFork: true` so
+// the worker process and its module cache are shared across test files.
+// When ANOTHER file (e.g. test/unit/server/pre-call-gate.test.ts) imports
+// SafariPilotServer first, DaemonEngine evaluates its top-level
+// `import { createConnection } from 'node:net'` against the REAL Node API.
+// A subsequent top-level `vi.mock('node:net', ...)` here would arrive too
+// late — DaemonEngine has already captured the real reference, and the
+// "mock" silently no-ops while the real daemon answers test calls
+// (port 19474 is open on dev machines).
+//
+// Fix: register the mock with `vi.doMock` AFTER `vi.resetModules()` clears
+// the cache, then dynamic-import both `node:net` and DaemonEngine. The
+// dynamic import re-evaluates daemon.ts against the mocked module, so the
+// engine binds to `vi.fn()` regardless of who loaded it earlier.
+let createConnection: ReturnType<typeof vi.fn>;
+type DaemonEngineCtor = new (opts: { daemonPath: string; tcpPort: number; timeoutMs?: number }) => {
+  command: (method: string, params: Record<string, unknown>, timeoutMs?: number) => Promise<{ ok: boolean }>;
+  isTcpMode: () => boolean;
+};
+let DaemonEngine: DaemonEngineCtor;
 
-import { createConnection } from 'node:net';
-import { DaemonEngine } from '../../../src/engines/daemon.js';
+beforeAll(async () => {
+  vi.resetModules();
+  vi.doMock('node:net', () => ({
+    createConnection: vi.fn(),
+  }));
+  const netMod = await import('node:net');
+  createConnection = netMod.createConnection as unknown as ReturnType<typeof vi.fn>;
+  const daemonMod = await import('../../../src/engines/daemon.js');
+  DaemonEngine = daemonMod.DaemonEngine as unknown as DaemonEngineCtor;
+});
 
 type MockSocket = EventEmitter & {
   write: ReturnType<typeof vi.fn>;
