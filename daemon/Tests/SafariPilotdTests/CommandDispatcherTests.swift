@@ -289,14 +289,14 @@ func registerCommandDispatcherTests() {
     // SD-16: generate_pdf coverage was originally planned here (T2-T4 covering
     // the three INVALID_OUTPUT_PATH guards in PdfGenerator.init), but exercising
     // PdfGenerator from `syncAwait { await dispatcher.dispatch(...) }` deadlocks
-    // the test process. Diagnosis: PdfGenerator inherits from NSObject +
-    // WKNavigationDelegate; first reference loads the WebKit framework, whose
-    // +initialize requires main-thread runloop coordination. The main thread is
-    // blocked in syncAwait's `semaphore.wait()` while a coop-pool task drives
-    // the dispatch — classic main-thread deadlock with framework lazy loading.
-    // Filed as SD-25 (test infra: WebKit-touching SUT paths must run with the
-    // main runloop pumping, OR be exercised via a different async harness).
-    // T1 (watch_download) and T5 (internal-method routing) remain in this batch.
+    // the test process. SD-25 attempted option (a) — pre-load WebKit at main.swift
+    // startup via `_ = WKWebView.self`. Empirically confirmed (2026-04-25): does
+    // NOT fix the deadlock. Hypothesis revised: the deadlock is more likely
+    // partial-init NSObject deallocation (PdfGenerator's `throw` at lines
+    // 88/103/110 fires BEFORE `super.init()` at line 149) than WebKit framework
+    // lazy-load. SD-25 remains open with refined remediation paths captured in
+    // FOLLOW-UPS. T1 (watch_download) and T5 (internal-method routing) remain
+    // in this batch.
 
     // SD-16/T5: dispatcher's internal command sentinel
     // (`__SAFARI_PILOT_INTERNAL__ <method>`) routes through handleInternalCommand
