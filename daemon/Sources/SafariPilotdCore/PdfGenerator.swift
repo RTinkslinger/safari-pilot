@@ -66,15 +66,18 @@ public final class PdfGenerator: NSObject, WKNavigationDelegate, @unchecked Send
 
     // MARK: - Init
 
-    /// Creates a PdfGenerator from daemon command params.
+    /// SD-25 option (d): static factory replaces the throwing designated init.
+    /// Validates params, throws on error, then instantiates via a non-throwing
+    /// private init. The original throwing init had `throw` calls BEFORE
+    /// `super.init()` (Swift/ObjC interop edge case) which appeared to
+    /// deadlock test processes via partial-deinit on an NSObject subclass
+    /// with uninitialized stored properties. With this refactor, validation
+    /// happens entirely outside the init lifecycle, so a thrown
+    /// PdfError.invalidOutputPath leaves no PdfGenerator instance to deinit.
     ///
-    /// Extracts content source (`html` or `url`), paper dimensions, margins, scale,
-    /// orientation, page ranges, and font timeout from the params dictionary.
-    ///
-    /// - Parameter params: The `[String: AnyCodable]` dictionary from the daemon command.
-    /// - Throws: `PdfError.invalidOutputPath` if the output directory doesn't exist,
-    ///   or if neither `html` nor `url` is provided.
-    public init(params: [String: AnyCodable]) throws {
+    /// - Throws: `PdfError.invalidOutputPath` for missing html/url, missing
+    ///   outputPath, or missing parent directory.
+    nonisolated public static func create(params: [String: AnyCodable]) throws -> PdfGenerator {
         // Content source — exactly one of html or url required
         let htmlParam = params["html"]?.value as? String
         let urlParam: URL? = {
@@ -88,16 +91,6 @@ public final class PdfGenerator: NSObject, WKNavigationDelegate, @unchecked Send
             throw PdfError.invalidOutputPath("Either 'html' or 'url' parameter is required")
         }
 
-        self.html = htmlParam
-        self.url = urlParam
-
-        // Base URL for resolving relative resources in HTML
-        if let baseStr = params["baseURL"]?.value as? String {
-            self.baseURL = URL(string: baseStr)
-        } else {
-            self.baseURL = nil
-        }
-
         // Output path — validate parent directory exists
         guard let outputStr = params["outputPath"]?.value as? String else {
             throw PdfError.invalidOutputPath("'outputPath' parameter is required")
@@ -109,43 +102,80 @@ public final class PdfGenerator: NSObject, WKNavigationDelegate, @unchecked Send
               isDir.boolValue else {
             throw PdfError.invalidOutputPath("Parent directory does not exist: \(parentDir)")
         }
-        self.outputPath = outputURL
 
-        // Paper dimensions (nil = let @page CSS control)
-        self.paperWidth = params["paperWidth"]?.value as? Double
-        self.paperHeight = params["paperHeight"]?.value as? Double
-
-        // Margins (default 72pt = 1 inch each)
-        self.marginTop = (params["marginTop"]?.value as? Double) ?? 72.0
-        self.marginRight = (params["marginRight"]?.value as? Double) ?? 72.0
-        self.marginBottom = (params["marginBottom"]?.value as? Double) ?? 72.0
-        self.marginLeft = (params["marginLeft"]?.value as? Double) ?? 72.0
-
-        // Scale (default 1.0)
-        self.scale = (params["scale"]?.value as? Double) ?? 1.0
-
-        // Orientation
-        self.landscape = (params["landscape"]?.value as? Bool) ?? false
-
-        // Print background (CSS injection happens in TypeScript, not here)
-        self.printBackground = (params["printBackground"]?.value as? Bool) ?? false
+        // Base URL (optional)
+        let baseURL: URL? = {
+            if let baseStr = params["baseURL"]?.value as? String {
+                return URL(string: baseStr)
+            }
+            return nil
+        }()
 
         // Page ranges (1-based, nil = all pages)
-        if let first = params["pageRangeFirst"]?.value as? Int {
-            self.pageRangeFirst = first
-        } else {
-            self.pageRangeFirst = nil
-        }
-        if let last = params["pageRangeLast"]?.value as? Int {
-            self.pageRangeLast = last
-        } else {
-            self.pageRangeLast = nil
-        }
+        let pageRangeFirst = params["pageRangeFirst"]?.value as? Int
+        let pageRangeLast = params["pageRangeLast"]?.value as? Int
 
         // Font wait timeout (param arrives in milliseconds, convert to seconds)
         let fontWaitMs = (params["fontWaitTimeout"]?.value as? Double) ?? 3000.0
-        self.fontWaitTimeout = fontWaitMs / 1000.0
 
+        return PdfGenerator(
+            html: htmlParam,
+            url: urlParam,
+            baseURL: baseURL,
+            outputPath: outputURL,
+            paperWidth: params["paperWidth"]?.value as? Double,
+            paperHeight: params["paperHeight"]?.value as? Double,
+            marginTop: (params["marginTop"]?.value as? Double) ?? 72.0,
+            marginRight: (params["marginRight"]?.value as? Double) ?? 72.0,
+            marginBottom: (params["marginBottom"]?.value as? Double) ?? 72.0,
+            marginLeft: (params["marginLeft"]?.value as? Double) ?? 72.0,
+            scale: (params["scale"]?.value as? Double) ?? 1.0,
+            landscape: (params["landscape"]?.value as? Bool) ?? false,
+            printBackground: (params["printBackground"]?.value as? Bool) ?? false,
+            pageRangeFirst: pageRangeFirst,
+            pageRangeLast: pageRangeLast,
+            fontWaitTimeout: fontWaitMs / 1000.0
+        )
+    }
+
+    /// Non-throwing private init (SD-25). All validation happens in `create`.
+    /// Marked `nonisolated` so it can be called from the nonisolated `create`
+    /// factory; the rest of PdfGenerator's main-actor-isolated methods stay
+    /// main-actor-isolated for WebKit access.
+    nonisolated private init(
+        html: String?,
+        url: URL?,
+        baseURL: URL?,
+        outputPath: URL,
+        paperWidth: Double?,
+        paperHeight: Double?,
+        marginTop: Double,
+        marginRight: Double,
+        marginBottom: Double,
+        marginLeft: Double,
+        scale: Double,
+        landscape: Bool,
+        printBackground: Bool,
+        pageRangeFirst: Int?,
+        pageRangeLast: Int?,
+        fontWaitTimeout: TimeInterval
+    ) {
+        self.html = html
+        self.url = url
+        self.baseURL = baseURL
+        self.outputPath = outputPath
+        self.paperWidth = paperWidth
+        self.paperHeight = paperHeight
+        self.marginTop = marginTop
+        self.marginRight = marginRight
+        self.marginBottom = marginBottom
+        self.marginLeft = marginLeft
+        self.scale = scale
+        self.landscape = landscape
+        self.printBackground = printBackground
+        self.pageRangeFirst = pageRangeFirst
+        self.pageRangeLast = pageRangeLast
+        self.fontWaitTimeout = fontWaitTimeout
         super.init()
     }
 

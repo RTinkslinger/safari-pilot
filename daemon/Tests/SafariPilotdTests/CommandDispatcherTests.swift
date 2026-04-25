@@ -286,17 +286,88 @@ func registerCommandDispatcherTests() {
         )
     }
 
-    // SD-16: generate_pdf coverage was originally planned here (T2-T4 covering
-    // the three INVALID_OUTPUT_PATH guards in PdfGenerator.init), but exercising
-    // PdfGenerator from `syncAwait { await dispatcher.dispatch(...) }` deadlocks
-    // the test process. SD-25 attempted option (a) — pre-load WebKit at main.swift
-    // startup via `_ = WKWebView.self`. Empirically confirmed (2026-04-25): does
-    // NOT fix the deadlock. Hypothesis revised: the deadlock is more likely
-    // partial-init NSObject deallocation (PdfGenerator's `throw` at lines
-    // 88/103/110 fires BEFORE `super.init()` at line 149) than WebKit framework
-    // lazy-load. SD-25 remains open with refined remediation paths captured in
-    // FOLLOW-UPS. T1 (watch_download) and T5 (internal-method routing) remain
-    // in this batch.
+    // SD-16 generate_pdf coverage. Originally deferred to SD-25 due to test
+    // deadlock. SD-25(a) — pre-load WebKit — empirically rejected. SD-25(d) —
+    // refactor PdfGenerator.init to a static factory pattern (`create(params:)`
+    // does validation BEFORE any instance exists; private non-throwing init
+    // calls super.init() AFTER all stored properties are assigned) — this is
+    // the fix that should unblock the tests if the partial-deinit hypothesis
+    // is right. Restored T2/T3/T4 here. If they pass, SD-25 is closed.
+
+    // SD-16/T2 (restored by SD-25): dispatcher routes generate_pdf →
+    // PdfGenerator.create throws invalidOutputPath when neither html nor
+    // url is provided.
+    test("testDispatcherGeneratePdfMissingHtmlAndUrlReturnsInvalidOutputPath") {
+        let mock = MockExecutor()
+        let dispatcher = CommandDispatcher(
+            lineSource: { nil },
+            outputSink: { _ in },
+            executor: mock,
+            healthStore: makeHealthStoreForTest()
+        )
+
+        let response = syncAwait {
+            await dispatcher.dispatch(
+                line: #"{"id":"pdf-1","method":"generate_pdf","params":{"outputPath":"/tmp/safari-pilot-pdf-test.pdf"}}"#
+            )
+        }
+        try assertFalse(response.ok)
+        try assertEqual(response.error?.code, "INVALID_OUTPUT_PATH",
+                        "missing html+url must return INVALID_OUTPUT_PATH")
+        try assertTrue(
+            (response.error?.message ?? "").contains("html") || (response.error?.message ?? "").contains("url"),
+            "error message must reference the missing html/url guard; got \"\(response.error?.message ?? "")\""
+        )
+    }
+
+    test("testDispatcherGeneratePdfMissingOutputPathReturnsInvalidOutputPath") {
+        let mock = MockExecutor()
+        let dispatcher = CommandDispatcher(
+            lineSource: { nil },
+            outputSink: { _ in },
+            executor: mock,
+            healthStore: makeHealthStoreForTest()
+        )
+
+        let response = syncAwait {
+            await dispatcher.dispatch(
+                line: #"{"id":"pdf-2","method":"generate_pdf","params":{"html":"<html><body>x</body></html>"}}"#
+            )
+        }
+        try assertFalse(response.ok)
+        try assertEqual(response.error?.code, "INVALID_OUTPUT_PATH",
+                        "missing outputPath must return INVALID_OUTPUT_PATH")
+        try assertTrue(
+            (response.error?.message ?? "").contains("outputPath"),
+            "error message must reference the outputPath guard; got \"\(response.error?.message ?? "")\""
+        )
+    }
+
+    test("testDispatcherGeneratePdfNonexistentParentDirReturnsInvalidOutputPath") {
+        let mock = MockExecutor()
+        let dispatcher = CommandDispatcher(
+            lineSource: { nil },
+            outputSink: { _ in },
+            executor: mock,
+            healthStore: makeHealthStoreForTest()
+        )
+
+        let nonexistent = "/tmp/sd25-nonexistent-\(UUID().uuidString)"
+        let outputPath = "\(nonexistent)/output.pdf"
+
+        let line = """
+        {"id":"pdf-3","method":"generate_pdf","params":{"html":"<html><body>x</body></html>","outputPath":"\(outputPath)"}}
+        """
+        let response = syncAwait { await dispatcher.dispatch(line: line) }
+
+        try assertFalse(response.ok)
+        try assertEqual(response.error?.code, "INVALID_OUTPUT_PATH",
+                        "non-existent parent dir must return INVALID_OUTPUT_PATH")
+        try assertTrue(
+            (response.error?.message ?? "").contains("Parent directory"),
+            "error message must reference the parent-directory guard; got \"\(response.error?.message ?? "")\""
+        )
+    }
 
     // SD-16/T5: dispatcher's internal command sentinel
     // (`__SAFARI_PILOT_INTERNAL__ <method>`) routes through handleInternalCommand

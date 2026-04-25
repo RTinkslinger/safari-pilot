@@ -360,7 +360,7 @@ public final class CommandDispatcher: @unchecked Sendable {
 
         let generator: PdfGenerator
         do {
-            generator = try PdfGenerator(params: params)
+            generator = try PdfGenerator.create(params: params)
         } catch PdfError.invalidOutputPath(let msg) {
             let elapsed = (CFAbsoluteTimeGetCurrent() - start) * 1000
             return Response.failure(
