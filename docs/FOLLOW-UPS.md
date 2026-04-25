@@ -43,30 +43,6 @@ Running list of findings surfaced by reviewers (Codex, `upp:test-reviewer`, advi
   - `daemon/Tests/SafariPilotdTests/ExtensionBridgeTests.swift` (testExecutedLogExpiresAfterTTL)
   - `daemon/Tests/SafariPilotdTests/ExtensionHTTPServerTests.swift` (testDisconnectCheckFiresWhenIdleBeyondThreshold + testDisconnectCheckPreservesConnectionWhenFresh)
 
-### SD-25 — PdfGenerator + syncAwait deadlock blocks generate_pdf testing
-- **Severity:** P3 (test-infra; production daemon's PdfGenerator usage runs from a long-lived async context with a live runloop, so this affects ONLY the test harness)
-- **Source:** Filed during SD-16 work (2026-04-25). Reproduced deterministically.
-- **Symptom:** Calling `dispatcher.dispatch(line: <generate_pdf-NDJSON>)` from inside `syncAwait { ... }` deadlocks the test process. The main thread is blocked in `syncAwait`'s `semaphore.wait()` while a coop-pool task drives the dispatch. PdfGenerator inherits `NSObject + WKNavigationDelegate` and throws at lines 88/103/110 BEFORE `super.init()` at line 149 (Swift/ObjC interop edge case). Verified by isolation: a `test("smoke") { try assertTrue(true) }` placed right after a passing `watch_download` test PASSes; the next `dispatcher.dispatch` call into `generate_pdf` hangs the process indefinitely.
-- **Reproduction:** any test of the form
-  ```swift
-  test("anyPdfTest") {
-      let dispatcher = CommandDispatcher(...)
-      let response = syncAwait { await dispatcher.dispatch(line: <any generate_pdf NDJSON>) }
-      ...
-  }
-  ```
-  hangs after the previous test prints PASS. Killing the process is required.
-- **Empirical findings (2026-04-25):**
-  - **(a) WebKit pre-load — REJECTED.** Adding `private let _webKitPreload = WKWebView.self` to main.swift before register*Tests does NOT fix the deadlock. Tested with the 3 SD-16 deferred PDF tests restored; same hang pattern. Hypothesis "WebKit framework lazy-load needs main-thread coordination" is now suspect — the deadlock occurs during PdfGenerator's `throw` BEFORE `super.init()`, which doesn't reach the WebKit class initialization.
-- **Remaining viable fixes (untested):**
-  - **(b)** Replace `syncAwait`'s blocking `semaphore.wait()` with a runloop-pumping wait (`RunLoop.current.run(until:)` style) so main-thread tasks can run during the test's await.
-  - **(c)** Move PdfGenerator tests to a fully async harness that doesn't block the main thread (separate XCTest target — but the project deliberately avoids XCTest per HealthStoreTests comment, so this is a bigger refactor).
-  - **(d) NEW HYPOTHESIS** — PdfGenerator's designated `init` throws BEFORE `super.init()`, which in NSObject subclasses requires partial-deinit handling that may demand main-thread coordination. Refactor PdfGenerator.init to validate params via a static factory `PdfGenerator.create(params:) throws -> PdfGenerator`, then call a non-throwing private init that calls `super.init()` first. Try this BEFORE option (b)/(c) — it's a more targeted hypothesis given the empirical (a) failure.
-- **Discriminator for the fix:** with any workaround in place, restore the three deferred `generate_pdf` tests from SD-16's design (INVALID_OUTPUT_PATH for missing-html-and-url, missing-outputPath, non-existent parent dir guards in `PdfGenerator.init` at lines 88, 103, 110). Each must complete in <1s.
-- **Entry points / files:**
-  - `daemon/Sources/SafariPilotdCore/PdfGenerator.swift:77-150` (init structure for option d)
-  - `daemon/Tests/SafariPilotdTests/main.swift` (option a tested + reverted)
-  - `daemon/Tests/SafariPilotdTests/CommandDispatcherTests.swift` (potential restored T2/T3/T4 once unblocked)
 
 ### SD-26 — `watch_download` timeout param: AnyCodable Int decode bypassed; integer JSON literals fall back to 30s default
 - **Severity:** P2 (production bug — silently changes the user-visible timeout from "the value I passed" to 30 seconds)
@@ -103,6 +79,29 @@ Running list of findings surfaced by reviewers (Codex, `upp:test-reviewer`, advi
 ---
 
 ## Resolved
+
+### SD-25 — PdfGenerator + syncAwait deadlock fixed via nonisolated static factory (2026-04-25, commit `003882a`)
+
+Real root cause discovered through option (d) refactor + Swift compiler diagnostic: PdfGenerator's class-level main-actor isolation (inherited from its WKWebView-using methods) propagated to the init/static-factory by Swift's actor-isolation inference. Calling a main-actor-isolated method from a coop-pool task driven by `syncAwait { ... }` requires hopping to the main thread — but the main thread is blocked in `semaphore.wait()` → deadlock. The compiler said it directly:
+
+```
+warning: main actor-isolated static method 'create(params:)' cannot be
+called from outside of the actor; this is an error in the Swift 6
+language mode
+```
+
+Original SD-25 hypothesis (WebKit framework lazy-load needs main thread) was wrong — option (a) WebKit pre-load was empirically rejected (commit `00f889d`). Option (d) refactor alone wasn't enough until the `nonisolated` annotation was added.
+
+Fix:
+1. Refactored `PdfGenerator.init(params:) throws` into:
+   - `nonisolated public static func create(params:) throws -> PdfGenerator` — validates BEFORE any instance exists
+   - `nonisolated private init(...)` — takes already-validated parameters; calls super.init() AFTER all stored properties assigned
+2. Updated dispatcher's call site: `try PdfGenerator(params:)` → `try PdfGenerator.create(params:)`
+3. Restored SD-16's 3 deferred PDF tests (missing-html-and-url, missing-outputPath, non-existent-parent-dir guards)
+
+Other PdfGenerator methods (generate, the WKNavigationDelegate implementations) stay main-actor-isolated for WebKit thread-safety; only the validation factory + non-throwing init are nonisolated.
+
+No reviewer dispatched (SUT refactor — the discrimination is mechanical: PdfGenerator's three INVALID_OUTPUT_PATH guards each have a distinct error message that the test asserts against). Total tests: 103 unit (TS) + 28 canary + 41 e2e + 121 Swift = 293 (Swift was 118 pre-SD-25; +3).
 
 ### SD-24 — Synchronous graceful shutdown for ExtensionHTTPServer (2026-04-25, commit `ba4e5c1`)
 
