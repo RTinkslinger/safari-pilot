@@ -53,21 +53,6 @@ Running list of findings surfaced by reviewers (Codex, `upp:test-reviewer`, advi
   - `test/unit/server/ensure-session-window.test.ts` — extend with timeout scenario for option (a)
   - New e2e test for option (b)
 
-### SD-20 — Pre-call gate negative-path test (split off from SD-03 Phase 1)
-- **Severity:** P2 (not blocking — the gate's healthy path is implicitly tested by every successful tool call; only the failure-mode + recovery branches lack direct coverage)
-- **Source:** SD-03 Phase 1 systematic-debugging investigation (2026-04-25). Filed when Phase 1 concluded the SD-03-Test-1 oracle could not be made discriminating from happy-path e2e without manufactured SUT changes.
-- **Symptom:** The pre-call gate at `server.ts:413-432` runs `checkExtensionStatus()` + `checkWindowExists()` before every tool call and either invokes `recoverSession` (10s budget, emits `recovery_start/success/failed` trace events) or throws `SessionRecoveryError`. Its healthy path emits no observable signal, and its failure modes cannot be triggered cleanly from an e2e harness:
-  - `checkWindowExists` uses `exists window id N`, which Safari leaves permanently `true` after `close window id N` (ghost-window quirk per CHECKPOINT.md / TRACES Iter 22). Closing a session window from the test does not flip the gate.
-  - Killing the daemon process would tear down `getSharedClient()`'s MCP server, breaking every other test in the run.
-  - Disabling extension connectivity from Safari requires user-visible interaction and violates the "never switch user tabs" rule.
-- **Consequence:** the previously-named "pre-call gate detects and reports system status" test at `initialization.test.ts:82-87` was deleted in SD-03 (its oracle was tautological and unrepairable from this side of the boundary). Coverage for the gate's recovery and `SessionRecoveryError` branches is currently zero.
-- **Current understanding (from review, not verified):** two viable paths, pick one:
-  - (a) **Unit-level**: spec out a unit test against `SafariPilotServer.executeToolWithSecurity` with `checkExtensionStatus` / `checkWindowExists` substituted via the boundary-mock pattern (see `test/unit/server/ensure-session-window.test.ts` for `vi.mock('node:child_process', importOriginal)` precedent). Assert that a returning-false probe triggers `recoverSession`, and that exhausted recovery throws `SessionRecoveryError` with the right code.
-  - (b) **Own-spawn e2e**: a test in `initialization.test.ts` that owns its own `initClient('dist/index.js')` (precedent at lines 15-28), then *changes the gate's window-check to use `visible of window id`* (one-line SUT change, useful regardless), closes its own session window, calls a tool, and asserts the recovery trace events fire OR `SessionRecoveryError` propagates.
-- **Discriminator for the fix:** revert `recoverSession` to a no-op or comment out the gate's `if (!preStatus.ext || !windowOk)` branch — the new test must fail because either no recovery runs or no `SessionRecoveryError` is thrown when the system is broken. Restoring the gate must pass.
-- **Entry points / files:**
-  - `src/server.ts:413-432` (gate body), `1077-1085` (checkExtensionStatus), `1090-1102` (checkWindowExists), `1108-1136` (recoverSession)
-  - `test/unit/server/` (new file for option a) OR `test/e2e/initialization.test.ts` (new own-spawn test for option b)
 
 ### SD-28 — Clock-protocol injection on ExtensionBridge + ExtensionHTTPServer (delete `*ForTest` test-only public methods)
 - **Severity:** P3 (cosmetic; the `*ForTest` methods work and the test discipline note is in code comments — but they're a test-leak into the production surface)
@@ -167,6 +152,21 @@ Running list of findings surfaced by reviewers (Codex, `upp:test-reviewer`, advi
 ---
 
 ## Resolved
+
+### SD-20 — Pre-call gate negative-path test (path A: unit-level, mocked boundaries) (2026-04-25, commit `eea79bb`)
+
+Resolved via path (a) per the FOLLOW-UPS spec: new `test/unit/server/pre-call-gate.test.ts` mocking the two probe boundaries (`node:child_process.execSync` for `checkWindowExists`, global `fetch` for `checkExtensionStatus`) — matches the precedent set by `test/unit/server/ensure-session-window.test.ts`.
+
+Three tests:
+1. **SessionRecoveryError when extension unreachable + recovery times out** — the load-bearing discriminator. execSync returns 'true' (window OK), fetch returns ext=false on every call, vi fake timers skip the 10× × 1s polling wall wait. Multi-field oracle: instance + msg contains 'extension not connected' + retryable=true + hints contain repair string + fetch URL hits production /status.
+2. **SessionRecoveryError with `session window closed` in message** — sequenced execSync mock (`'false'` once for gate's checkWindowExists, then `'true'` for recoverSession's subsequent checks) so the recovery loop actually runs and SessionRecoveryError surfaces with `window=initial=false` triggering the `'session window closed'` push in the constructor.
+3. **Gate does NOT trigger recovery when probes are healthy** — negative form with a `fetchMock.calls.length === 1` assertion that catches a regression replacing the gate predicate with `if (true)` (would fire 11 fetch calls instead of 1).
+
+`upp:test-reviewer` (fast mode, Checks 6/7/8) verdict: **PASS** (1 MAJOR + 3 ADVISORY, all addressed). MAJOR — Test 2's OR-alternation oracle didn't actually exercise the SessionRecoveryError window-down branch — fixed via sequenced mock. ADVISORY — Test 3 description-behavior gap + missing count assertion — both fixed. Test idiom: `expect(promise).rejects.toBeInstanceOf(...)` registered BEFORE `vi.advanceTimersByTimeAsync` to avoid unhandled-rejection windows.
+
+Total tests: 100 unit (TS) + 28 canary + 41 e2e + 116 Swift = 285 (TS unit was 97 pre-SD-20; +3).
+
+Reviewer-calibration data point: another correct call (caught my Test 2 not exercising the stated branch). Cumulative: SD-13 ADVISORY (correct), SD-15 MAJOR (state-machine miss — rejected), SD-19 CRITICAL (correct — caught my tautology), SD-20 MAJOR (correct). 3 of 4 reviewer flags landed; the gate is doing useful work.
 
 ### SD-19 — Shape-only / self-fulfilling Swift assertions strengthened (batch; 1 REVISE cycle) (2026-04-25, commit `b5a7b43`)
 
