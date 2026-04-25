@@ -1220,6 +1220,11 @@ end tell`;
     // T28 — for tools that don't need the extension, window-only recovery is
     // enough; routing falls through to AppleScript/Daemon downstream.
     if (!extensionRecovery) {
+      // T38: re-register with daemon. Recovery may follow a daemon restart
+      // that wiped the in-memory session registry; without this the next
+      // session's startup will see otherSessions=0 and run orphan-cleanup
+      // against this session's window (defeating SD-32).
+      await this.registerWithDaemon();
       const duration = Date.now() - start;
       trace(traceId, 'server', 'recovery_success', {
         durationMs: duration,
@@ -1233,6 +1238,8 @@ end tell`;
       const status = await this.checkExtensionStatus();
       if (status.ext) {
         this.setEngineAvailability({ ...this.engineAvailability, extension: true });
+        // T38: re-register with daemon — see comment in window-only branch above.
+        await this.registerWithDaemon();
         const duration = Date.now() - start;
         trace(traceId, 'server', 'recovery_success', { durationMs: duration });
         console.error(`Safari Pilot: session recovered in ${duration}ms`);
