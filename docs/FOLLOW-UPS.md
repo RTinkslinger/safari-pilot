@@ -8,20 +8,6 @@ Running list of findings surfaced by reviewers (Codex, `upp:test-reviewer`, advi
 
 ## Open
 
-### SD-02 — `test/canary/` inherits e2e `globalSetup` probes (hidden dependency + latency cost)
-- **Severity:** P2 (degraded, not broken; worth a cheap split)
-- **Source:** Codex branch review (2026-04-24, job `bk54t3qu6`); **severity corrected by upp:test-reviewer retro #2**
-- **Symptom:** `test/canary/preuninstall.test.ts` and `test/canary/release-universal-binary.test.ts` are static file / config assertions. `npm run test:canary` uses the default `vitest.config.ts`, which runs `test/e2e/setup-production.ts` via `globalSetup`. **Correction** (Codex overstated this; test-reviewer #2 caught it): `setup-production.ts` returns early when `isE2eRun` is false, so the canary run does NOT abort on machines without Safari/daemon. It DOES still execute the precondition probes (`createConnection` on 19474 with 3s timeout, extension_health NDJSON round-trip with 5s timeout, `osascript` shell-out, `existsSync` on `dist/index.js`). That's ~8s of hidden-dependency latency per canary run and an invisible coupling to Safari being installed on the host.
-- **Current understanding (from review #2, not verified):**
-  - Fix shape: add `vitest.config.canary.ts` mirroring `vitest.config.unit.ts`, no globalSetup, include `test/canary/**/*.test.ts`. Point `package.json scripts["test:canary"]` at the new config.
-  - Second-order: should `test:all` include canary? Probably yes after the split (canary is now genuinely cheap).
-- **Discriminator for the fix:** `npm run test:canary` must complete in <500ms on a machine with no Safari installed at all (no osascript, no daemon binary). Current behavior: ~8s even on that machine because probes run.
-- **Entry points / files:**
-  - `vitest.config.ts` / new `vitest.config.canary.ts`
-  - `vitest.config.unit.ts` — split-config precedent
-  - `test/e2e/setup-production.ts` — the probes being inherited
-  - `package.json` — scripts to update
-
 ### SD-04 — 7 of 9 security layers have zero e2e coverage
 - **Severity:** P1 (the product's core value is the 9-layer pipeline; 7 layers can be deleted without any test failing)
 - **Source:** `upp:test-reviewer` retro review #1 (2026-04-24)
@@ -253,6 +239,16 @@ Running list of findings surfaced by reviewers (Codex, `upp:test-reviewer`, advi
 ---
 
 ## Resolved
+
+### SD-02 — `test/canary/` inherits e2e `globalSetup` probes (2026-04-25, commit `84abc17`)
+
+Resolved by adding a dedicated `vitest.config.canary.ts` (no `globalSetup`, scoped `include: ['test/canary/**/*.test.ts']`) and rewiring `package.json scripts.test:canary` to invoke vitest with that config. `scripts.test:all` now runs unit → canary → e2e in that order so a packaging regression surfaces in seconds rather than after the ~30+ min e2e suite.
+
+Coverage: 7-test regression guard at `test/canary/config-isolation.test.ts` — file existence, no `globalSetup:` config key, no `setup-production` reference (defense-in-depth against `setupFiles:` regressions), include scoped to canary not e2e, package.json wiring (script + ordering in test:all), plus a behavioural test that invokes vitest with the canary config and asserts the e2e setup log lines are absent. Discrimination: pre-fix tests 1-6 fail (file missing, package.json unchanged); test 7 would catch a future `setupFiles` injection. Post-fix all 7 pass.
+
+`upp:test-reviewer` (full mode, 9 checks) verdict: **PASS** (CRITICAL: 0, MAJOR: 1 — addressed in this commit; ADVISORY: 3 — addressed: switched to negative-form regex, added defense-in-depth, added behavioural guard).
+
+Total test count: 25 unit + 14 canary (was 7) + 36 e2e = 75.
 
 ### SD-01 — `safari_evaluate` regresses on non-extension engines after the async-wrapper change (2026-04-25, commit `687f877`)
 
