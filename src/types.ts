@@ -120,7 +120,6 @@ export interface DomainPolicy {
   domain: string;
   trust: 'trusted' | 'untrusted' | 'unknown';
   privateWindow: boolean;
-  extensionAllowed: boolean;
   maxActionsPerMinute: number;
 }
 

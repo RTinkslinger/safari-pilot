@@ -26,7 +26,6 @@ describe('DomainPolicy (SD-04)', () => {
     const result = dp.evaluate('https://paypal.com/checkout/test');
     expect(result.trust).toBe('untrusted');
     expect(result.privateWindow).toBe(true);
-    expect(result.extensionAllowed).toBe(false);
     expect(result.blocked).toBe(false); // untrusted ≠ blocked
   });
 
@@ -41,7 +40,6 @@ describe('DomainPolicy (SD-04)', () => {
     const dp = new DomainPolicy({ trusted: ['internal.test'] });
     const result = dp.evaluate('https://internal.test/path');
     expect(result.trust).toBe('trusted');
-    expect(result.extensionAllowed).toBe(true);
   });
 
   it('default policy for unknown domains is "unknown" trust, not blocked', () => {

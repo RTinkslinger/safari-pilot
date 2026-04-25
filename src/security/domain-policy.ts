@@ -11,14 +11,12 @@ type TrustLevel = 'trusted' | 'untrusted' | 'unknown';
 interface PolicyRule {
   trust: TrustLevel;
   privateWindow: boolean;
-  extensionAllowed: boolean;
   maxActionsPerMinute: number;
 }
 
 export interface EvaluateResult {
   trust: TrustLevel;
   privateWindow: boolean;
-  extensionAllowed: boolean;
   maxActionsPerMinute: number;
   /** True when the domain is in the operator's explicit blocked list. */
   blocked: boolean;
@@ -35,7 +33,6 @@ export interface DomainPolicyOptions {
 const BASE_DEFAULT_POLICY: PolicyRule = {
   trust: 'unknown',
   privateWindow: false,
-  extensionAllowed: false,
   maxActionsPerMinute: DEFAULT_MAX_ACTIONS,
 };
 
@@ -62,7 +59,6 @@ const SENSITIVE_PATTERNS: string[] = [
 const SENSITIVE_POLICY: PolicyRule = {
   trust: 'untrusted',
   privateWindow: true,
-  extensionAllowed: false,
   maxActionsPerMinute: 30,
 };
 
@@ -118,7 +114,6 @@ export class DomainPolicy {
         this.rules.set(domain, {
           trust: 'untrusted',
           privateWindow: false,
-          extensionAllowed: false,
           maxActionsPerMinute: maxActions,
         });
       }
@@ -129,7 +124,6 @@ export class DomainPolicy {
         this.rules.set(domain, {
           trust: 'trusted',
           privateWindow: false,
-          extensionAllowed: true,
           maxActionsPerMinute: maxActions,
         });
       }
