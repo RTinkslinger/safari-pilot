@@ -1103,4 +1103,149 @@ func registerExtensionBridgeTests() {
                 + "got \(String(describing: execResponse.value?.value))"
         )
     }
+
+    // MARK: - SD-14: dispatcher-level routing for extension_result/_execute/_disconnected
+
+    test("testDispatcherRoutesExtensionResultResolvesPendingCommand") {
+        // Discrimination target: CommandDispatcher.swift:145-146
+        //     case "extension_result":
+        //         return extensionBridge.handleResult(commandID: command.id, params: command.params)
+        // Pre-SD-14: ExtensionBridge tests called handleResult directly. Production
+        // sends `extension_result` over NDJSON; if that case branch is deleted,
+        // the dispatcher returns UNKNOWN_METHOD, the bridge never sees the result,
+        // and the queued execute hangs on the 90s default timeout.
+        let mock = MockExecutor()
+        let bridge = ExtensionBridge()
+        let dispatcher = CommandDispatcher(
+            lineSource: { nil },
+            outputSink: { _ in },
+            executor: mock,
+            extensionBridge: bridge,
+            healthStore: makeHealthStoreForTest()
+        )
+
+        // Queue a command directly via the bridge (the execute happens via stdin
+        // in production; we're testing the result path specifically here).
+        let executeTask = Task {
+            await bridge.handleExecute(
+                commandID: "exec-disp-result-1",
+                params: ["script": AnyCodable("return 42")]
+            )
+        }
+        Thread.sleep(forTimeInterval: 0.1)
+
+        // Drive the result through the dispatcher's NDJSON path.
+        let line = #"{"id":"res-disp-1","method":"extension_result","params":{"requestId":"exec-disp-result-1","result":42}}"#
+        let dispatchResp = syncAwait { await dispatcher.dispatch(line: line) }
+        try assertTrue(dispatchResp.ok,
+                       "extension_result NDJSON dispatch must succeed (ok=true)")
+        try assertEqual(dispatchResp.id, "res-disp-1",
+                        "dispatch response id must match the inbound NDJSON id, "
+                            + "not the bridge command id")
+
+        // Verify the pending command's continuation was resumed with the result.
+        let execResponse = syncAwait { await executeTask.value }
+        try assertTrue(execResponse.ok,
+                       "queued execute must resolve when extension_result is dispatched")
+        try assertEqual(execResponse.value?.value as? Int, 42,
+                        "resumed execute must surface the inner result value")
+    }
+
+    test("testDispatcherRoutesExtensionExecuteQueuesCommand") {
+        // Discrimination target: CommandDispatcher.swift:148-149
+        //     case "extension_execute":
+        //         return await extensionBridge.handleExecute(commandID: command.id, params: command.params)
+        // Pre-SD-14: ExtensionBridge tests called handleExecute directly. Production
+        // queue-from-MCP arrives as an `extension_execute` NDJSON command; if the
+        // case is deleted, the dispatcher returns UNKNOWN_METHOD and no command
+        // ever lands in the bridge's pendingCommands array.
+        let mock = MockExecutor()
+        let bridge = ExtensionBridge()
+        let dispatcher = CommandDispatcher(
+            lineSource: { nil },
+            outputSink: { _ in },
+            executor: mock,
+            extensionBridge: bridge,
+            healthStore: makeHealthStoreForTest()
+        )
+
+        // Drive extension_execute through dispatcher in a Task — handleExecute
+        // suspends until a result arrives, so the dispatch call will not return
+        // until we send the result below.
+        let dispatchTask = Task {
+            await dispatcher.dispatch(
+                line: #"{"id":"exec-disp-1","method":"extension_execute","params":{"script":"document.title","tabUrl":"https://example.com"}}"#
+            )
+        }
+        Thread.sleep(forTimeInterval: 0.15)
+
+        // Verify the command landed in the bridge: a poll must return it.
+        let pollResp = syncAwait { await bridge.handlePoll(commandID: "p-disp") }
+        let pollDict = pollResp.value?.value as? [String: Any]
+        let cmds = pollDict?["commands"] as? [[String: Any]] ?? []
+        try assertEqual(cmds.count, 1,
+                        "extension_execute via dispatcher must land in bridge.pendingCommands")
+        try assertEqual(cmds.first?["id"] as? String, "exec-disp-1",
+                        "polled command id must match the dispatched NDJSON id")
+        try assertEqual(cmds.first?["script"] as? String, "document.title",
+                        "polled command script param must round-trip from NDJSON params")
+        // Reviewer ADVISORY (SD-14): make the params-dict round-trip explicit.
+        // tabUrl is sent in production NDJSON for ownership routing and must
+        // survive the dispatcher → bridge → poll path unchanged.
+        try assertEqual(cmds.first?["tabUrl"] as? String, "https://example.com",
+                        "polled command tabUrl param must round-trip from NDJSON params "
+                            + "(locks general params-dict round-trip beyond just `script`)")
+
+        // Cleanup: feed the result so the dispatch suspension resolves.
+        _ = bridge.handleResult(
+            commandID: "cleanup-disp-exec",
+            params: [
+                "requestId": AnyCodable("exec-disp-1"),
+                "result": AnyCodable(["ok": true, "value": "Test"]),
+            ]
+        )
+        let dispatchResp = syncAwait { await dispatchTask.value }
+        try assertTrue(dispatchResp.ok,
+                       "dispatch of extension_execute must succeed after result arrives")
+    }
+
+    test("testDispatcherRoutesExtensionDisconnectedFlipsConnectedState") {
+        // Symmetric gap with the existing testDispatcherRoutesExtensionConnected
+        // — discovered while running SD-14. Discrimination target:
+        // CommandDispatcher.swift:142-143
+        //     case "extension_disconnected":
+        //         return extensionBridge.handleDisconnected(commandID: command.id)
+        // If the case is deleted, the dispatcher returns UNKNOWN_METHOD and the
+        // bridge stays in `_isConnected=true` after the extension event page
+        // unloads — wake-from-disconnect semantics break silently.
+        let mock = MockExecutor()
+        let bridge = ExtensionBridge()
+        let dispatcher = CommandDispatcher(
+            lineSource: { nil },
+            outputSink: { _ in },
+            executor: mock,
+            extensionBridge: bridge,
+            healthStore: makeHealthStoreForTest()
+        )
+
+        // Pre-state: connect via dispatcher (separate code path than the
+        // disconnect branch — locks the round-trip cleanly).
+        let connectResp = syncAwait {
+            await dispatcher.dispatch(line: #"{"id":"conn-disp","method":"extension_connected"}"#)
+        }
+        try assertTrue(connectResp.ok)
+        try assertTrue(bridge.isExtensionConnected,
+                       "bridge must be connected before disconnect dispatch")
+
+        let disconnectResp = syncAwait {
+            await dispatcher.dispatch(line: #"{"id":"disc-disp","method":"extension_disconnected"}"#)
+        }
+        try assertTrue(disconnectResp.ok,
+                       "extension_disconnected NDJSON dispatch must succeed")
+        try assertEqual(disconnectResp.id, "disc-disp")
+        try assertFalse(
+            bridge.isExtensionConnected,
+            "extension_disconnected via dispatcher must flip isExtensionConnected → false"
+        )
+    }
 }
