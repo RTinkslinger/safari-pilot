@@ -8,22 +8,6 @@ Running list of findings surfaced by reviewers (Codex, `upp:test-reviewer`, advi
 
 ## Open
 
-### SD-01 — `safari_evaluate` regresses on non-extension engines after the async-wrapper change
-- **Severity:** P1 (real regression in shipped behavior)
-- **Source:** Codex branch review (2026-04-24, job `bk54t3qu6`)
-- **Symptom:** After commit `99fec1f` switched `handleEvaluate` to an async IIFE that returns a Promise to `executeJsInTab`, the daemon and AppleScript engines' JS wrappers don't await the returned Promise. On any path that doesn't route to the extension engine (extension disabled / disconnected / engine breaker tripped), even synchronous `safari_evaluate` calls now serialize the Promise object instead of resolving it. Promise-returning scripts fail on every non-extension path.
-- **Current understanding (from review, not verified):**
-  - The async wrapper was paired with `content-main.js`'s `await fn()` (T6), which only runs on the extension engine.
-  - Daemon + AppleScript paths use their own JS wrappers that serialize synchronously.
-  - Fix pattern is already established: T6 added `requiresAsyncJs: true` to the IDB tools in `src/types.ts` + `src/engine-selector.ts` + the tool definitions. Apply the same pattern to `safari_evaluate`.
-- **Discriminator for the fix:** an e2e test that forces the extension engine OFF (kill-switch config, or stub engineAvailability in a dedicated test harness) and calls `safari_evaluate` with a sync script — must either succeed via async-capable engine or throw `EngineUnavailableError`. The current behavior (silent wrong return) must be impossible.
-- **Entry points / files:**
-  - `src/tools/extraction.ts:143-160` — `safari_evaluate` tool definition + `handleEvaluate`
-  - `src/types.ts` — `ToolRequirements.requiresAsyncJs`
-  - `src/engine-selector.ts` — `requiresAsyncJs` check
-  - `src/tools/storage.ts` — existing `requiresAsyncJs: true` precedent from T6
-  - `test/e2e/evaluate-async.test.ts` — test to extend
-
 ### SD-02 — `test/canary/` inherits e2e `globalSetup` probes (hidden dependency + latency cost)
 - **Severity:** P2 (degraded, not broken; worth a cheap split)
 - **Source:** Codex branch review (2026-04-24, job `bk54t3qu6`); **severity corrected by upp:test-reviewer retro #2**
@@ -269,6 +253,16 @@ Running list of findings surfaced by reviewers (Codex, `upp:test-reviewer`, advi
 ---
 
 ## Resolved
+
+### SD-01 — `safari_evaluate` regresses on non-extension engines after the async-wrapper change (2026-04-25, commit `687f877`)
+
+Resolved by adding `requiresAsyncJs: true` to `safari_evaluate`'s tool requirements in `src/tools/extraction.ts` (one-line change + comment). The engine selector reads this flag as a hard gate (`src/engine-selector.ts:54-68`); when extension is unavailable (config-killed, breaker-tripped, or not yet connected), `selectEngine` throws `EngineUnavailableError` (`server.ts` returns a degraded `EXTENSION_REQUIRED` envelope) instead of silently falling through to daemon/applescript with the IIFE's unresolved Promise. Same pattern as `safari_idb_list`/`safari_idb_get` from T6.
+
+Coverage: 5-test unit suite at `test/unit/tools/extraction-requirements.test.ts` asserting both the contract (`requirements.requiresAsyncJs === true`) and the behavioural consequence (`selectEngine` throws when extension is down). Discrimination via the RED→GREEN transition: pre-fix tests 2 and 4 fail; post-fix all 5 pass.
+
+`upp:test-reviewer` (full mode, 9 checks) verdict: **PASS** (CRITICAL: 0, MAJOR: 0, ADVISORY: 2). ADVISORY items: tests 1 and 5 are non-discriminating side-guards (the discriminator pair is tests 2 + 4) — not gating, kept for context.
+
+`ARCHITECTURE.md` updated with the engine-routing constraint paragraph following the existing async-wrapper paragraph.
 
 ### SD-03 — Three CRITICAL weak oracles on core happy-path tools (2026-04-25, branch `fix/sd-03-weak-oracles`)
 
