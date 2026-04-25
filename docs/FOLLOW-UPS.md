@@ -8,18 +8,6 @@ Running list of findings surfaced by reviewers (Codex, `upp:test-reviewer`, advi
 
 ## Open
 
-### SD-06 — 18 of 21 error classes untested
-- **Severity:** P2 (error paths regress most often; prioritize security-consequence ones first)
-- **Source:** `upp:test-reviewer` retro review #1
-- **Symptom:** `src/errors.ts` defines 21 `SafariPilotError` subclasses. Only 3 have coverage:
-  - `TabUrlNotRecognizedError` (T8 e2e), `SessionWindowInitError` (T11 unit), `DaemonTimeoutError` (T9 unit).
-  Untested: `ELEMENT_NOT_FOUND`, `ELEMENT_NOT_VISIBLE`, `ELEMENT_NOT_INTERACTABLE`, `TIMEOUT`, `NAVIGATION_FAILED`, `CSP_BLOCKED`, `SHADOW_DOM_CLOSED`, `CROSS_ORIGIN_FRAME`, `SAFARI_NOT_RUNNING`, `SAFARI_CRASHED`, `PERMISSION_DENIED`, `TAB_NOT_FOUND`, `DOMAIN_NOT_ALLOWED`, `RATE_LIMITED`, `EXTENSION_REQUIRED`, `KILL_SWITCH_ACTIVE`, `HUMAN_APPROVAL_REQUIRED`, `DIALOG_UNEXPECTED`, `FRAME_NOT_FOUND`, `CIRCUIT_BREAKER_OPEN`, `EXTENSION_UNCERTAIN`, `SESSION_RECOVERY_FAILED`.
-- **Current understanding (from review, not verified):** prioritize by security consequence — the four security-layer codes (SD-04) cover 4 of these already. The DOM-level ones (`ELEMENT_*`) can wait until a regression surfaces.
-- **Discriminator per error class:** test that the error code + message prefix matches (same pattern as T8's `rejects.toThrow(/TAB_NOT_OWNED|Tab URL not recognized/)`).
-- **Entry points / files:**
-  - `src/errors.ts` — the 21-class hierarchy
-  - Each error's throw site across `src/tools/`, `src/engines/`, `src/security/`
-
 ### SD-07 — Quick-win batch: 4 tautological/shape-only oracles
 - **Severity:** P2 (each is a one-line fix; ~1-2 hours total)
 - **Source:** `upp:test-reviewer` retro review #1 (MAJOR oracle findings)
@@ -174,6 +162,22 @@ Running list of findings surfaced by reviewers (Codex, `upp:test-reviewer`, advi
   - `src/engines/daemon.ts` — add `isTcpMode()`
   - `test/unit/server/ensure-session-window.test.ts`, `test/unit/server/record-tool-failure.test.ts`, `test/unit/engines/daemon.test.ts` — swap peeks for getter calls
 
+### SD-22 — 4 ERROR_CODES values declared but unused (no concrete class, no throw sites)
+- **Severity:** P3 (dead declaration; cosmetic but asymmetric with the other 17 codes)
+- **Source:** Filed during SD-06 work (2026-04-25). grep-zero verified across `src/`, `daemon/Sources/`, `extension/`.
+- **Symptom:** `src/errors.ts` ERROR_CODES object declares `ELEMENT_NOT_INTERACTABLE`, `CROSS_ORIGIN_FRAME`, `DIALOG_UNEXPECTED`, `FRAME_NOT_FOUND` as members of the const object — but no concrete `SafariPilotError` subclass uses them, and no code anywhere references the strings. They are pure dead declarations that implicitly promise error-class semantics the codebase does not actually offer.
+- **Current understanding (not verified):** two viable paths:
+  - **(a) Delete them.** Simplest; removes the dead declaration.
+  - **(b) Add concrete classes** for each (ElementNotInteractableError, CrossOriginFrameError, DialogUnexpectedError, FrameNotFoundError) and wire up the throw sites that SHOULD be using them — e.g. `safari_click` actionability checks for ELEMENT_NOT_INTERACTABLE, `safari_eval_in_frame` / `safari_list_frames` for FRAME_NOT_FOUND, dialog-unexpected for safari_handle_dialog race conditions.
+- **Discriminator for the fix:**
+  - Path (a): grep shows zero references to any of the 4 codes after deletion; tool handlers that would have thrown a specific code throw a plain Error or a different existing code instead.
+  - Path (b): a new unit test per new class + at least one integration/e2e test that asserts the throw-site uses the new class (e.g. safari_eval_in_frame with a non-matching frameSelector throws FrameNotFoundError).
+- **Entry points / files:**
+  - `src/errors.ts` (ERROR_CODES + no-class codes)
+  - `src/tools/interaction.ts` (safari_click's actionability check — likely home for ElementNotInteractableError)
+  - `src/tools/frames.ts` (FrameNotFoundError throw sites)
+  - `src/tools/interaction.ts` (DialogUnexpectedError — safari_handle_dialog)
+
 ### SD-21 — `ensureSessionWindow` 5s execSync timeout fragile under Safari load
 - **Severity:** P2 (intermittent flake; not blocking but actively pollutes the e2e feedback loop and forces manual leaked-window cleanup + retry)
 - **Source:** Filed 2026-04-25 during SD-03 sprint. Repeated occurrences: T11/T12 e2e runs (CHECKPOINT.md), this session's SD-03 first phase3 run (10/14 timeouts), this session's first `npm run test:all` (9/36 phase2 timeouts). Previously deferred in CHECKPOINT.md ("file as SD-NN if it keeps flaring") — repeat now confirmed.
@@ -209,6 +213,16 @@ Running list of findings surfaced by reviewers (Codex, `upp:test-reviewer`, advi
 ---
 
 ## Resolved
+
+### SD-06 — 18 of 21 error classes untested (2026-04-25, commit `e4a8ef3`)
+
+Resolved by adding `test/unit/errors.test.ts` with 15 tests covering 13 previously-untested concrete `SafariPilotError` subclasses (the other 6 were already covered: TabUrlNotRecognizedError/T8, SessionWindowInitError/T11, DaemonTimeoutError/T9, plus Rate/Kill/Human/Breaker from SD-04). Each per-class test asserts class inheritance, code constant match, retryable, and constructor arg round-trip into message/selector/url. Plus a dedicated `formatToolError` test covering the `ExtensionUncertainError` branch (unverified before this commit).
+
+`upp:test-reviewer` (full mode, 9 checks) verdict: **PASS** (CRITICAL: 0, MAJOR: 1 — tautological `ERROR_CODES constant` test replaced with the formatToolError branch fix, per reviewer's alternate recommendation; ADVISORY: 2 non-gating).
+
+Discovery: 4 ERROR_CODES values (ELEMENT_NOT_INTERACTABLE, CROSS_ORIGIN_FRAME, DIALOG_UNEXPECTED, FRAME_NOT_FOUND) have no concrete class and are grep-zero across the codebase. Filed as **SD-22** above.
+
+Total tests: 97 unit + 14 canary + 41 e2e = 152.
 
 ### SD-05 — No end-to-end lifecycle workflow test (2026-04-25, commit `b1c4eb5`)
 
