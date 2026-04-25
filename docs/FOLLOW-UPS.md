@@ -8,18 +8,6 @@ Running list of findings surfaced by reviewers (Codex, `upp:test-reviewer`, advi
 
 ## Open
 
-### SD-15 — Lifecycle gap (Check 9): canary distribution + bridge full-journey
-- **Severity:** P2 (state-machine coverage, matches SD-05 for TypeScript e2e)
-- **Source:** `upp:test-reviewer` retro review #2 (2026-04-24)
-- **Symptom:** Two lifecycle gaps:
-  - **Canary**: T3 covers uninstall-config-shape; T4 covers release-YAML-text. No test walks `npm pack` → sandboxed install → uninstall → verify-no-LaunchAgent-remains, nor install-tarball-and-run-binary.
-  - **ExtensionBridge**: individual ops (connect, execute, poll, result, reconcile, disconnect) and pairwise wake sequences are tested. No test walks the full real-world sequence daemon-start → extension-connect → queue-N-commands → extension-disconnect (event page wake) → reconcile → redeliver → get-results → teardown.
-- **Current understanding (from review):** one integration-style canary test per lifecycle (pack → extract → assert); one long-form bridge test driving all six ops in sequence with correct classification at each hop.
-- **Discriminator:** for the bridge journey, break the wake-semantics code at any hop — the full-journey test must fail at THAT hop, not later; restore → full journey passes.
-- **Entry points / files:**
-  - `test/canary/` — new integration-style lifecycle test
-  - `daemon/Tests/SafariPilotdTests/ExtensionBridgeTests.swift` — new full-journey test
-
 ### SD-16 — CommandDispatcher: `watch_download` + `generate_pdf` subtrees + 8 error branches untested
 - **Severity:** P2 (distribution-shipped code paths with zero test coverage)
 - **Source:** `upp:test-reviewer` retro review #2 (2026-04-24)
@@ -144,6 +132,24 @@ Running list of findings surfaced by reviewers (Codex, `upp:test-reviewer`, advi
 ---
 
 ## Resolved
+
+### SD-15 — Lifecycle gap (Check 9): canary tarball-shape + bridge full-journey (2026-04-25, commit `7dbc16f`)
+
+Two parallel coverage gaps closed:
+
+**Canary half** — `test/canary/release-tarball-shape.test.ts` adds 8 tests exercising real `npm pack --dry-run --json` (no on-disk tarball, no install). Each test asserts a persona-critical path in the tarball: bin/SafariPilotd present + size > 1MB, postinstall+preuninstall scripts, LaunchAgent plist, dist/index.js+server.js, .mcp.json + plugin metadata, bin/Safari Pilot.app/* tree, NEGATIVE-form (test/+src/+daemon/Sources/+daemon/Tests/ NOT shipped), name+version+filename round-trip vs package.json. Per reviewer ADVISORY, refactored to one shared `beforeAll` `npm pack` invocation: 17.7s → 2.3s (8× speedup).
+
+**Bridge half** — `daemon/Tests/SafariPilotdTests/ExtensionBridgeTests.swift` adds `testBridgeFullJourneyConnectExecutePollDisconnectReconcileResultTeardown`, walking 10 hops with assertions at each: daemon-start → connect → queue 3 → poll → disconnect (wake-semantics) → reconnect → reconcile (asserts reQueued={cmd1,cmd2}, pushNew=[cmd3], inFlight=[]) → results in non-queue order → teardown executedLog → post-teardown reconcile classifies all 3 as acked. Per-hop assertions + back-pointing error messages surface a regression at the broken hop.
+
+`upp:test-reviewer` (full mode, 9 checks) verdict: **PASS** (CRITICAL: 0, MAJOR: 1, ADVISORY: 5).
+
+The MAJOR ("add Hop 5.5 poll for direct delivered-flip observation") was REJECTED after state-machine trace + advisor reconciliation. handlePoll mutates delivered=true, breaking Hop 7's reQueued classification (commands would classify as inFlight). Production never polls between disconnect and reconcile — daemon waits passively for /connect. The dedicated test `testHandleDisconnectedFlipsDeliveredBackForUnacked` already locks the wake-semantics in isolation; the lifecycle test verifies it transitively at Hop 7 with a back-pointing error message. Accepting one-hop-late discrimination preserves production fidelity (Chicago-school TDD).
+
+5 ADVISORIES all addressed: A1 Hop 1 tautology comment, A2 beforeAll canary refactor, A3 readFileSync over `cat` execSync, A4 200ms sleep deferred to SD-17, A5 size threshold confirmed. Plus optional Hop 10 added (post-teardown reconcile locks executedLog read path).
+
+Reviewer-calibration note: this is the second time the test-reviewer has produced a recommendation that didn't survive a careful state trace. Worth tracking; not yet enough to change the gating policy.
+
+Total tests: 97 unit (TS) + 28 canary + 41 e2e + 114 Swift = 280 (canary was 20 pre-SD-15; +8. Swift was 113; +1).
 
 ### SD-14 — ExtensionBridge tests UNWIRED: dispatcher-level routing for extension_result/_execute/_disconnected (2026-04-25, commit `e6dde0c`)
 
