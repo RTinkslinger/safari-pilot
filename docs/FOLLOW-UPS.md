@@ -8,16 +8,6 @@ Running list of findings surfaced by reviewers (Codex, `upp:test-reviewer`, advi
 
 ## Open
 
-### SD-16 — CommandDispatcher: `watch_download` + `generate_pdf` subtrees + 8 error branches untested
-- **Severity:** P2 (distribution-shipped code paths with zero test coverage)
-- **Source:** `upp:test-reviewer` retro review #2 (2026-04-24)
-- **Symptom:** `CommandDispatcher.swift` has ~12 error branches (INVALID_PARAMS, PARSE_ERROR, UNKNOWN_METHOD, UNKNOWN_INTERNAL_METHOD, DOWNLOAD_DIR_NOT_FOUND, DOWNLOAD_INIT_ERROR, FSEVENTS_UNAVAILABLE, DOWNLOAD_TIMEOUT, DOWNLOAD_CANCELLED, DOWNLOAD_ERROR, PDF-family errors, SERIALIZATION_ERROR). Tests cover 4: PARSE_ERROR, UNKNOWN_METHOD, INVALID_PARAMS (missing script), SAFARI_NOT_RUNNING mapping. **`watch_download` and `generate_pdf` entire code paths have zero coverage.**
-- **Current understanding (from review):** at minimum smoke-test `watch_download` with an obviously-missing directory (`DOWNLOAD_DIR_NOT_FOUND`) and `generate_pdf` with an invalid output path (`INVALID_OUTPUT_PATH`). Full error-parity can be progressive.
-- **Discriminator:** delete either handler entirely — new smoke test must fail with a dispatcher-level routing error.
-- **Entry points / files:**
-  - `daemon/Sources/SafariPilotdCore/CommandDispatcher.swift`
-  - `daemon/Tests/SafariPilotdTests/CommandDispatcherTests.swift`
-
 ### SD-17 — Swift test infrastructure brittleness
 - **Severity:** P3 (cosmetic / foot-guns, low-impact until they aren't)
 - **Source:** `upp:test-reviewer` retro review #2 (2026-04-24)
@@ -116,6 +106,60 @@ Running list of findings surfaced by reviewers (Codex, `upp:test-reviewer`, advi
   - `src/server.ts:413-432` (gate body), `1077-1085` (checkExtensionStatus), `1090-1102` (checkWindowExists), `1108-1136` (recoverSession)
   - `test/unit/server/` (new file for option a) OR `test/e2e/initialization.test.ts` (new own-spawn test for option b)
 
+### SD-25 — PdfGenerator + syncAwait WebKit lazy-load deadlock blocks generate_pdf testing
+- **Severity:** P3 (test-infra; the production daemon's PdfGenerator usage runs from a long-lived async context with a live runloop, so this affects ONLY the test harness)
+- **Source:** Filed during SD-16 work (2026-04-25). Reproduced deterministically.
+- **Symptom:** Calling `dispatcher.dispatch(line: <generate_pdf-NDJSON>)` from inside `syncAwait { ... }` deadlocks the test process. Diagnosis: PdfGenerator inherits `NSObject + WKNavigationDelegate`. First reference triggers WebKit framework lazy-load. WebKit's `+initialize` requires main-thread runloop coordination. The main thread is blocked in `syncAwait`'s `semaphore.wait()` while a coop-pool task drives the dispatch — classic main-thread deadlock with framework lazy loading. Verified by isolation: a `test("smoke") { try assertTrue(true) }` placed right after a passing `watch_download` test PASSes; the next `dispatcher.dispatch` call into `generate_pdf` hangs the process indefinitely.
+- **Reproduction:** any test of the form
+  ```swift
+  test("anyPdfTest") {
+      let dispatcher = CommandDispatcher(...)
+      let response = syncAwait { await dispatcher.dispatch(line: <any generate_pdf NDJSON>) }
+      ...
+  }
+  ```
+  hangs after the previous test prints PASS. Killing the process is required.
+- **Current understanding (not verified):** three viable fixes:
+  - **(a)** Pre-load WebKit on the main thread BEFORE `register*Tests()` in `daemon/Tests/SafariPilotdTests/main.swift` — e.g. `_ = WKWebView()` once. Forces +initialize to run while the main thread is unblocked.
+  - **(b)** Replace `syncAwait`'s blocking `semaphore.wait()` with a runloop-pumping wait (`RunLoop.current.run(until:)` style) so main-thread tasks can run during the test's await.
+  - **(c)** Move PdfGenerator tests to a fully async harness that doesn't block the main thread (a separate XCTest target — but the project deliberately avoids XCTest per HealthStoreTests comment, so this is a bigger refactor).
+- **Discriminator for the fix:** with the workaround in place, restore the three deferred `generate_pdf` tests from SD-16's design — covering `INVALID_OUTPUT_PATH` for missing-html-and-url, missing-outputPath, and non-existent parent dir guards in `PdfGenerator.init` (PdfGenerator.swift:88, 103, 110). Each must complete in <1s.
+- **Entry points / files:**
+  - `daemon/Sources/SafariPilotdCore/PdfGenerator.swift` (NSObject + WKNavigationDelegate)
+  - `daemon/Tests/SafariPilotdTests/main.swift` (potential pre-load of WebKit)
+  - `daemon/Tests/SafariPilotdTests/CommandDispatcherTests.swift` (potential restored T2/T3/T4)
+
+### SD-26 — `watch_download` timeout param: AnyCodable Int decode bypassed; integer JSON literals fall back to 30s default
+- **Severity:** P2 (production bug — silently changes the user-visible timeout from "the value I passed" to 30 seconds)
+- **Source:** Filed during SD-16 work (2026-04-25). Test author had to discover the AnyCodable Int-first decoder behaviour by writing fractional `200.5` to make the test work.
+- **Symptom:** `CommandDispatcher.handleWatchDownload` (line 247) reads `(params["timeout"]?.value as? Double) ?? 30000.0`. AnyCodable's decoder (Models.swift:13-35) tries `Int.self` BEFORE `Double.self`, so any integer JSON literal (e.g. `"timeout":200`) parses as Int. `Int as? Double` returns nil in Swift — the cast fails and the SUT falls back to the 30-second default. Real production callers writing `{"timeout": 5000}` get a 30-second wait, not a 5-second wait.
+- **Current understanding (not verified):** two viable fixes:
+  - **(a)** Widen the cast in `handleWatchDownload` (and similar sites — `extension_poll`'s `waitTimeout`, `pageRangeFirst`/`pageRangeLast` in PdfGenerator) to accept either type:
+    ```swift
+    let timeoutMs = (params["timeout"]?.value as? Double)
+        ?? Double(params["timeout"]?.value as? Int ?? 0)
+        ?? 30000.0
+    ```
+  - **(b)** Fix AnyCodable's decoder to ALWAYS prefer Double over Int (Int values would silently widen). Riskier — affects other call sites that depend on Int-typed params (e.g. session counts, status codes).
+- **Discriminator for the fix:** add a unit test that sends `{"timeout": 200}` (no fractional component) and asserts the timeout fires within ~250ms (currently fires at 30000ms).
+- **Entry points / files:**
+  - `daemon/Sources/SafariPilotdCore/CommandDispatcher.swift:247` (and similar sites: `:152` for waitTimeout, PdfGenerator.swift:115-128 for paper dimensions)
+  - `daemon/Sources/SafariPilotdCore/Models.swift:13-35` (AnyCodable decoder, if option b)
+  - `daemon/Tests/SafariPilotdTests/CommandDispatcherTests.swift` (test for option a)
+
+### SD-27 — `handleInternalCommand` happy-path coverage missing for extension_status / _execute / _health
+- **Severity:** P2 (the production route used by `ExtensionEngine`'s sentinel protocol — a copy-paste regression here goes silently)
+- **Source:** Filed during SD-16 review (2026-04-25). Test reviewer flagged the gap.
+- **Symptom:** `CommandDispatcher.handleInternalCommand` (CommandDispatcher.swift:209-240) routes the `__SAFARI_PILOT_INTERNAL__ <method>` sentinel to one of three happy paths or the `UNKNOWN_INTERNAL_METHOD` default. SD-16's T5 covers the default branch. The three happy paths (`extension_status`, `extension_execute`, `extension_health`) are NOT tested — the existing `testDispatcherExtensionStatusCommand` etc. exercise the OUTER dispatcher cases (`case "extension_status":` at line 156), not the INNER sentinel routes through `__SAFARI_PILOT_INTERNAL__`. A copy-paste regression that broke the inner branch (e.g. wired `extension_status` to the wrong handler) would not fail any test.
+- **Current understanding (from review):** add three dispatcher-level tests, each driving an `execute` NDJSON command with `script: "__SAFARI_PILOT_INTERNAL__ <method> [json]"` and asserting the corresponding SUT side effect:
+  - `extension_status` → `value == "disconnected"` (or "connected" if pre-connected)
+  - `extension_execute` → command lands in bridge.pendingCommands (parallel to SD-14's testDispatcherRoutesExtensionExecuteQueuesCommand but via the INTERNAL route)
+  - `extension_health` → snapshot keys present (mirrors testExtensionHealthReturnsComposite but via the INTERNAL route)
+- **Discriminator:** swap any one of the three case branches in handleInternalCommand to call the wrong handler — the corresponding new test must fail.
+- **Entry points / files:**
+  - `daemon/Sources/SafariPilotdCore/CommandDispatcher.swift:209-240`
+  - `daemon/Tests/SafariPilotdTests/CommandDispatcherTests.swift` — extend with 3 happy-path tests
+
 ### SD-24 — Swift HTTP test suite leaks file descriptors / sockets between tests
 - **Severity:** P2 (transient flake; only surfaces on rapid back-to-back runs of the full Swift suite, but the failure mode is opaque and cascades across unrelated tests)
 - **Source:** Filed during SD-14 work (2026-04-25). Observed once during a re-run of `swift run SafariPilotdTests`: pre-existing `testHTTPPollReturns204WhenEmpty` and `testHTTPPollReturnsCommandWhenAvailable` failed with `[ERROR] HTTP_BIND_FAILED port=19501 error=socket(...): Too many open files in system (errno: 23)`. A 5s pause and second run cleanly produced 113 passed / 0 failed.
@@ -132,6 +176,23 @@ Running list of findings surfaced by reviewers (Codex, `upp:test-reviewer`, advi
 ---
 
 ## Resolved
+
+### SD-16 — CommandDispatcher: watch_download + UNKNOWN_INTERNAL_METHOD coverage (partial; PDF deferred to SD-25) (2026-04-25, commit `c98bcac`)
+
+Resolved with 2 of 5 originally-planned tests in `daemon/Tests/SafariPilotdTests/CommandDispatcherTests.swift`:
+
+- `testDispatcherRoutesWatchDownloadAndReturnsTimeoutOnNoDownload` — drives `watch_download` via `dispatcher.dispatch(line:)` with a fractional 200.5ms timeout (forces Double decoding; see SD-26 for the underlying SUT smell). Triple oracle: `ok=false`, `code=DOWNLOAD_TIMEOUT`, `retryable=true`, plus a reviewer-driven `elapsedMs` band `[150, 5000)` to catch an early-return regression that emits TIMEOUT without actually waiting.
+- `testDispatcherInternalCommandUnknownMethodReturnsUnknownInternalMethod` — drives the production `__SAFARI_PILOT_INTERNAL__ <unknown>` sentinel through the `execute` route. Triple oracle: `ok=false`, `code=UNKNOWN_INTERNAL_METHOD`, `retryable=false`.
+
+**Deferred 3 tests to SD-25** (`generate_pdf` INVALID_OUTPUT_PATH coverage for missing-html-and-url, missing-outputPath, non-existent parent dir): exercising PdfGenerator from `syncAwait { await dispatcher.dispatch(...) }` deadlocks the test process. Diagnosis: PdfGenerator inherits `NSObject + WKNavigationDelegate`; first reference triggers WebKit framework lazy-load whose `+initialize` requires main-thread runloop coordination. The main thread is blocked in `syncAwait`'s `semaphore.wait()` while a coop-pool task drives dispatch — textbook framework lazy-load deadlock. Verified by isolation. SD-25 captures three remediation paths.
+
+`upp:test-reviewer` (fast mode, Checks 6/7/8) verdict: **PASS** (CRITICAL: 0, MAJOR: 0, ADVISORY: 3). One ADVISORY addressed in commit (elapsedMs band on T1); the other two flagged as new SDs:
+- **SD-26** filed: `watch_download` timeout param accepts only Double; integer JSON literals fall back to 30s default (production bug — actual user-facing impact).
+- **SD-27** filed: `handleInternalCommand` happy-path coverage missing for the three INNER sentinel routes (extension_status / _execute / _health). Outer-dispatcher tests don't exercise this path.
+
+Reviewer endorsed the T2-T4 deferral as grounded in a real test-infra deadlock and within the FOLLOW-UPS preamble's "progressive error-parity" allowance. SD-25 captures the recipe + 3 remediation paths so the next implementer doesn't have to rediscover them.
+
+Total tests: 97 unit (TS) + 28 canary + 41 e2e + 116 Swift = 282 (Swift was 114 pre-SD-16; +2).
 
 ### SD-15 — Lifecycle gap (Check 9): canary tarball-shape + bridge full-journey (2026-04-25, commit `7dbc16f`)
 
