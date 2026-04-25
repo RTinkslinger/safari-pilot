@@ -271,10 +271,11 @@
 **Origin:** `15aaec2` (2026-04-12) — designed as detector, wired as annotator at `c1d3b92`.
 **Fix (Option A — rename):** Pure rename to drop the misleading "scanner" framing that implied blocking semantics. File `idpi-scanner.ts` → `idpi-annotator.ts` (git-mv), class `IdpiScanner` → `IdpiAnnotator`, method `scan(text): ScanResult` → `annotate(text): AnnotationResult`. `IdpiThreat` type preserved (the patterns ARE potential threats; the layer just doesn't block on them). Field rename `server.idpiScanner` → `server.idpiAnnotator`. Test file renamed in lockstep. ARCHITECTURE.md, CLAUDE.md, EXECUTION-FLOWS.md, e2e test header updated. Historical plan/spec docs (2026-04-17) intentionally left unchanged. **Option B (real blocking)** deferred — the false-positive risk in the pattern registry needs a threat-model review first; the new class header documents the well-defined route from annotator to scanner. Reviewer-skip per "no-behavioural-change rename" pattern; verified by all 130 unit tests + tsc --noEmit passing against the renamed surface.
 
-### T36. Fix screenshot redaction — inject before capture or remove
+### T36. Fix screenshot redaction — inject before capture or remove ✅ RESOLVED 2026-04-26 (commit `74e4847`, deletion path)
 **Findings:** H2 (security audit)
 **Root cause:** Redaction script attached to result metadata AFTER screenshot captured. `screencapture -x` is immune to CSS blur. File header says "injected before capture" — code does opposite.
 **Origin:** `2ccdc87` created module. `c1d3b92` wired post-execution (wrong timing).
+**Fix (deletion path):** Per user decision (2026-04-26), deleted the no-op layer rather than try to wire real DOM-injection redaction. Why deletion was correct: even a real pre-capture DOM blur would not protect against the OS-level `screencapture -x` chrome (autofill UI, password manager popups, system notifications) that it can capture; the agent has 5+ other read channels for the same content (`safari_get_text` / `safari_get_html` / `safari_evaluate` / `safari_extract_metadata` / `safari_smart_scrape`), so closing the screenshot channel without closing the others is theatre. The actually-useful primitive — domain-allowlist on `safari_take_screenshot` (refuse for banking/payment patterns; throw `ScreenshotBlockedError`) — is filed as T59 for separate scheduling so the scope here stays atomic. Removed: `src/security/screenshot-redaction.ts` (164 LOC), `test/unit/security/screenshot-redaction.test.ts` (7 tests), the e2e layer-8b assertion in `test/e2e/security-layers.test.ts`, and the wiring block at server.ts:945-952. Reviewer-skip per T24 / T31 / T37 deletion-only precedent. Type-check clean; security/ unit subset (50/50) passes.
 
 ### T37. Delete `recordPreExisting` / `isPreExisting` dead code ✅ RESOLVED 2026-04-26 (commit `d82c534`)
 **Findings:** M23 (tab-ownership audit)
@@ -401,6 +402,27 @@
 ### T58. Fix HTTP server bind failure handling
 **Findings:** M20 (daemon-core audit)
 **Root cause:** On port 19475 bind failure, server silently stops. Extension can never connect. No retry, no signal to MCP server. `HealthStore.recordHttpBindFailure()` records it but nobody checks.
+
+### T59. Domain-allowlist screenshot policy (filed during T36 deletion, 2026-04-26)
+**Findings:** Surfaced by T36 deletion review.
+**Root cause:** `safari_take_screenshot` will capture any tab the agent owns, including pages on banking and payment-processor domains. The deleted `ScreenshotRedaction` module attempted to soften this with CSS-blur (a no-op — see T36), but the actual security primitive that would help is a hard wall: refuse `safari_take_screenshot` entirely for sensitive-domain patterns. This closes the screenshot channel cleanly rather than pretending to redact.
+**Why this is the right shape:**
+- DOM-blur cannot protect OS-level `screencapture -x` chrome (autofill UI, password manager popups, system notifications), and a malicious page can remove the blur class before capture. Soft blur was theatre.
+- A domain-allowlist refusal needs no paint timing, no cleanup, no orchestration — just a pre-execution check with a clear `ScreenshotBlockedError`.
+- The agent has multiple alternate read channels for the same DOM content; closing the screenshot channel does not close information-leakage. So the threat model that justifies T59 is not "agent extracts data from screenshot" — it's "agent screenshots accidentally capture human-credentials-in-OS-chrome that aren't in the DOM at all" (autofill suggestions, password manager UI, etc.).
+**Pre-work needed before wiring:**
+1. **Threat-model decision** — same shape as SD-30. Who is the adversary? (Likely: human reviewer of agent transcripts + accidental screenshot of OS chrome.)
+2. **Default-policy decision** — block-list (banking patterns only, default-allow elsewhere) vs allow-list (default-deny everywhere except documented productive sites). SD-30's banking-disable-extension reasoning applies here.
+3. **Configurability** — `safari-pilot.config.json` per-deployment override.
+**Entry-points (when wiring):**
+- `src/tools/extraction.ts` — `safari_take_screenshot` handler; add a pre-execution domain check.
+- `src/security/` — new `screenshot-policy.ts` (or extend `domain-policy.ts`) holding the pattern list. Banking-domain patterns from the deleted `screenshot-redaction.ts` (BANKING_DOMAIN_PATTERNS regex list at commit `74e4847~1`) are the obvious starting point.
+- `src/errors.ts` — new `ScreenshotBlockedError` with code `SCREENSHOT_BLOCKED` and a `domain` field.
+- `safari-pilot.config.json` — new `screenshotPolicy.blocked: string[]` array.
+**Discriminator:**
+- Owned tab on `chase.com` + `safari_take_screenshot` → throws `ScreenshotBlockedError` with `code: 'SCREENSHOT_BLOCKED'`. Tab is preserved (not closed); other tools on the same tab still work.
+- Owned tab on `example.com` + `safari_take_screenshot` → succeeds.
+**Do not wire before threat-model + default-policy decision is recorded.** Same caveat as SD-30.
 
 ---
 

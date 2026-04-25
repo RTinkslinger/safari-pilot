@@ -45,10 +45,7 @@ Source changes to `extension/*.js` are incomplete without rebuild + sign + notar
 Build pipeline: edit → `bash scripts/build-extension.sh` → verify entitlements via `codesign -d --entitlements -` → bump `package.json` version (per "never open app without version bump" memory) → `open "bin/Safari Pilot.app"` → verify in Safari Settings → release.
 
 ### Quality debt — P2
-
-| ID | Surface | One-liner | Linked |
-|---|---|---|---|
-| **T36** | `src/security/screenshot-redaction.ts` + `src/server.ts:591` | redaction script returned but never injected before capture — currently a no-op annotation | |
+*All shipped this sprint.* T34/T37/T38/T39/T40 + T35 + T36 resolved. See "Resolved this sprint" below.
 
 ### Missing features / cosmetic — P3
 
@@ -71,6 +68,7 @@ Build pipeline: edit → `bash scripts/build-extension.sh` → verify entitlemen
 | **T56** | `src/tools/interaction.ts:362` | `safari_handle_dialog` declares `requiresDialogIntercept: true` but works on AppleScript — overstated requirement |
 | **T57** | `daemon/Sources/SafariPilotdCore/NDJSONParser.swift` | silent catch — add logging at parse-failure points |
 | **T58** | `daemon/Sources/SafariPilotdCore/ExtensionHTTPServer.swift` | bind failure on port 19475 logs and continues; should be fatal |
+| **T59** | `src/tools/extraction.ts` (`safari_take_screenshot`) + `src/security/` | domain-allowlist screenshot policy — refuse `safari_take_screenshot` for banking/payment-processor patterns. Filed during T36 deletion (2026-04-26) as the actually-useful security control to replace the deleted no-op CSS-blur module. Hard wall (throw `ScreenshotBlockedError`), not soft DOM blur. Needs threat-model + default-policy decision (like SD-30) before wiring. Banking-domain test fixtures from the deleted `screenshot-redaction.ts` (BANKING_DOMAIN_PATTERNS regex list) preserved in commit history at `74e4847~1` for re-use. |
 
 ### Deferred features (intentional, filed for later)
 
@@ -120,7 +118,8 @@ Lookup-only index; full fix-context paragraphs are in `docs/AUDIT-TASKS.md` / `d
 | T34 | `b7d57b7` | `65c2297` | `ENGINE_CAPS.extension.framesCrossOrigin` flipped `true → false` to match manifest reality (no `all_frames` in content_scripts); cap-vs-manifest parity test guards future drift, will require flip-back when T55 lands |
 | T38 | `1479e63` | `6effb86` | `recoverSession` now re-calls `registerWithDaemon()` after both success branches (window-only + extension-recovery), keeping the daemon session registry consistent across daemon restarts and preserving the SD-32 multi-session contract |
 | T40 | `09d2bf7` | `09d2bf7` | `ARCHITECTURE.md` brought current — verified date refresh, cross-origin frames claim removed (T34), 12-of-17-modules drift, recoverSession T38 step, T39 + SD-33 caveat on the unwired `roundtrip`/`timeout`/`uncertain` counts. Of the audit's original 8 claims, 4 had been resolved by intervening commits (T8/T12/T24); 4 needed actual edits this commit; +1 found via parallel verification (12-vs-13 inconsistency). |
-| T35 | `1626ca9` | (this commit) | Renamed `IdpiScanner` → `IdpiAnnotator` (file, class, method `scan()` → `annotate()`, type `ScanResult` → `AnnotationResult`); dropped "scanner" framing across ARCHITECTURE.md / CLAUDE.md / EXECUTION-FLOWS.md / e2e test header. No behavioural change — pure rename. Class header documents the well-defined route from annotator → scanner if a future threat-model review wants real blocking. |
+| T35 | `1626ca9` | `b1aa987` | Renamed `IdpiScanner` → `IdpiAnnotator` (file, class, method `scan()` → `annotate()`, type `ScanResult` → `AnnotationResult`); dropped "scanner" framing across ARCHITECTURE.md / CLAUDE.md / EXECUTION-FLOWS.md / e2e test header. No behavioural change — pure rename. Class header documents the well-defined route from annotator → scanner if a future threat-model review wants real blocking. |
+| T36 | `74e4847` | (this commit) | Deleted `ScreenshotRedaction` no-op layer (164 LOC + 7 unit tests + 1 e2e test + wiring at server.ts:945-952). The module returned a CSS-blur script in `_meta.redactionScript` but the script was never injected before `screencapture -x`, and the OS-level capture is immune to CSS blur regardless. Domain-block screenshot policy (the actually-useful primitive) filed as T59 for separate scheduling. |
 
 Pre-2026-04-25 sprint resolved entries (SD-01..SD-28, T13..T25 originals): see archives.
 
@@ -128,10 +127,10 @@ Pre-2026-04-25 sprint resolved entries (SD-01..SD-28, T13..T25 originals): see a
 
 ## Tally
 
-- **22** audit items (T-numbered) open — 0 P0, 4 in extension batch, 1 P2 quality debt (T36, awaiting wire-vs-delete decision), 17 P3 missing-feature/cosmetic.
+- **22** audit items (T-numbered) open — 0 P0, 4 in extension batch, 0 P2 quality debt (all shipped this sprint), 18 P3 missing-feature/cosmetic (added T59).
 - **2** SD open — SD-30 (banking-disable-extension, deferred feature); SD-33 (HealthStore unwired increment methods, surfaced by T39 re-scope).
 - **2** ROADMAP backlog items — navigate_back/forward stale URL, NDJSON line-split flake.
 
-Total open: **26**. **All real bugs are now resolved this sprint** (T7, SD-31, SD-32, T38). T38 closed a related multi-session-recovery bug surfaced by SD-32. T40 brought ARCHITECTURE.md current. T35 dropped the misleading "scanner" framing on the IDPI annotation layer. The remainder is missing features, deferred design decisions, or cosmetic.
+Total open: **26**. **P2 quality debt is empty** — every audit-flagged P2 item shipped this sprint (T7, T34, T35, T36, T37, T38, T39, T40 + the SD-31/SD-32 real bugs). T36's deletion surfaced T59 (domain-block screenshot policy) as the actually-useful security primitive to replace the no-op DOM-blur layer; filed under P3 awaiting threat-model decision. The remainder is missing features, deferred design decisions, or cosmetic.
 
 Open follow-up flagged by SD-32 reviewer: an e2e companion test that spawns two concurrent MCP sessions and asserts Session A's keepalive survives Session B's startup would close the unit-test wiring gap (server.ts:1422 stores the otherSessions count into a private field; the unit tests poke the field directly; only an e2e exercises the full registerWithDaemon → field-write → cleanup-skip flow). Worth filing as SD-33 if anyone reports concurrent-session breakage.
