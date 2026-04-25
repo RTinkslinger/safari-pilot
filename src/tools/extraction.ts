@@ -155,7 +155,13 @@ export class ExtractionTools {
           },
           required: ['tabUrl', 'script'],
         },
-        requirements: { idempotent: false },
+        // handleEvaluate's async IIFE wrapper (commit 99fec1f) only resolves
+        // when the engine awaits Promise-returning injected scripts. Only the
+        // extension engine does. Without requiresAsyncJs, the selector falls
+        // through to daemon/applescript on extension-down paths and silently
+        // serializes the unresolved Promise as `[object Promise]` or `{}`.
+        // Same fix pattern as safari_idb_list / safari_idb_get (T6).
+        requirements: { idempotent: false, requiresAsyncJs: true },
       },
       {
         name: 'safari_take_screenshot',

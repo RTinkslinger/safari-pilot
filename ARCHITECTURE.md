@@ -126,6 +126,8 @@ curl -s http://127.0.0.1:19475/poll
 
 **`safari_evaluate` async wrapper (2026-04-24):** `handleEvaluate` in `src/tools/extraction.ts` wraps the user script in an ASYNC IIFE (`return (async () => { var __userResult = await (async function() { ${script} })(); return { value: __userResult, type: typeof __userResult }; })()`). The outer `await` resolves any Promise the user script returns before the value crosses the content-main → content-isolated → background postMessage boundary. Pre-fix a synchronous IIFE returned the Promise object unresolved, and structured-clone threw `DataCloneError`. Pairs with T6's `await fn()` in `content-main.js:execute_script`. Covered by `test/e2e/evaluate-async.test.ts`.
 
+**`safari_evaluate` engine routing (SD-01, 2026-04-25):** The async wrapper above only resolves correctly when the engine awaits Promise-returning injected scripts. Per `engine-selector.ts`, only the extension engine has `EngineCapabilities.asyncJs === true`; daemon and AppleScript serialize the IIFE's Promise as `{}` or `[object Promise]`. The tool definition declares `requirements.requiresAsyncJs: true`, so `selectEngine` routes `safari_evaluate` to the extension engine when available and throws `EngineUnavailableError` (with code `EXTENSION_REQUIRED`) when extension is config-killed, breaker-tripped, or not yet connected — never silently falling through to daemon/applescript. Same pattern as `safari_idb_list` / `safari_idb_get` (T6). Covered by `test/unit/tools/extraction-requirements.test.ts`.
+
 ### Tier 2: Daemon Engine (5ms p50)
 **Capabilities:** Fast AppleScript execution, PDF generation (WKWebView.createPDF), download watching (FSEvents + DispatchSource)
 
