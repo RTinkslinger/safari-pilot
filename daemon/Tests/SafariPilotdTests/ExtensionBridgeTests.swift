@@ -1248,4 +1248,209 @@ func registerExtensionBridgeTests() {
             "extension_disconnected via dispatcher must flip isExtensionConnected → false"
         )
     }
+
+    // MARK: - SD-15: bridge full-journey lifecycle (Check 9)
+
+    test("testBridgeFullJourneyConnectExecutePollDisconnectReconcileResultTeardown") {
+        // SD-15 (lifecycle): the individual ops (connect, execute, poll, result,
+        // reconcile, disconnect) and pairwise wake sequences are tested by other
+        // cases. This test walks the full real-world sequence with intermediate
+        // assertions at EACH HOP. Per the SD-15 discriminator: breaking
+        // wake-semantics at any hop must fail at THAT hop, not later. The hops:
+        //
+        //   1. daemon-start (bridge in initial state)
+        //   2. extension-connect (handleConnected → isConnected=true)
+        //   3. queue 3 commands (handleExecute × 3)
+        //   4. poll (all 3 marked delivered=true)
+        //   5. extension-disconnect — event page wake (handleDisconnected
+        //      MUST flip delivered=true → false on unacked commands)
+        //   6. reconnect
+        //   7. reconcile — extension knows cmd1+cmd2 as pending; doesn't know
+        //      cmd3 → reQueued=[cmd1, cmd2], pushNew=[cmd3]
+        //   8. handleResult for all 3 (out of order to test independence)
+        //   9. teardown — executedLog contains all 3 ids
+        //
+        // Each hop has its own assertion(s) so a regression at any single hop
+        // surfaces at that hop with a precise error message.
+
+        let bridge = ExtensionBridge()
+
+        // Hop 1: daemon-start — bridge in initial state. Covered tighter by
+        // testExtensionBridgeStartsDisconnected; kept here for the lifecycle
+        // narrative + Hop-N indexing.
+        try assertFalse(bridge.isExtensionConnected,
+                        "Hop 1 (daemon-start): bridge must start disconnected")
+        try assertFalse(bridge.isInExecutedLog("any-id"),
+                        "Hop 1 (daemon-start): executedLog must start empty")
+
+        // Hop 2: extension connects
+        let connectResp = bridge.handleConnected(commandID: "j-conn-1")
+        try assertTrue(connectResp.ok, "Hop 2 (connect): handleConnected must succeed")
+        try assertTrue(bridge.isExtensionConnected,
+                       "Hop 2 (connect): isExtensionConnected must flip true")
+
+        // Hop 3: queue 3 commands (Tasks suspend awaiting results)
+        let task1 = Task {
+            await bridge.handleExecute(
+                commandID: "j-cmd-1",
+                params: ["script": AnyCodable("script-a")]
+            )
+        }
+        let task2 = Task {
+            await bridge.handleExecute(
+                commandID: "j-cmd-2",
+                params: ["script": AnyCodable("script-b")]
+            )
+        }
+        let task3 = Task {
+            await bridge.handleExecute(
+                commandID: "j-cmd-3",
+                params: ["script": AnyCodable("script-c")]
+            )
+        }
+        Thread.sleep(forTimeInterval: 0.2)
+
+        // Hop 4: extension polls — all 3 marked delivered=true
+        let pollResp1 = syncAwait { await bridge.handlePoll(commandID: "j-poll-1") }
+        let polled1 = (pollResp1.value?.value as? [String: Any])?["commands"] as? [[String: Any]] ?? []
+        try assertEqual(polled1.count, 3,
+                        "Hop 4 (first poll): must return all 3 queued commands")
+        let polledIds1 = Set(polled1.compactMap { $0["id"] as? String })
+        try assertEqual(polledIds1, Set(["j-cmd-1", "j-cmd-2", "j-cmd-3"]),
+                        "Hop 4 (first poll): ids must match queued")
+
+        // Hop 5: extension-disconnect (event page wake). The bridge MUST flip
+        // delivered=true → false for the 3 polled-but-unacked commands so the
+        // next poll can redeliver them. THIS IS THE WAKE-SEMANTICS HOP.
+        //
+        // Reviewer (SD-15) suggested an intermediate poll here to observe the
+        // delivered-flip directly. Tracing handlePoll (lines 203-261) shows the
+        // poll itself flips delivered=true → which would corrupt Hop 7's
+        // `reQueued` classification (cmds would be classified inFlight, not
+        // reQueued). Production never polls between disconnect and reconcile —
+        // the daemon waits for the extension to call /connect. The dedicated
+        // test `testHandleDisconnectedFlipsDeliveredBackForUnacked` (above) locks
+        // the wake-semantics in isolation; this lifecycle test verifies it
+        // transitively at Hop 7 with a back-pointing error message that names
+        // Hop 5 explicitly.
+        let disconnectResp = bridge.handleDisconnected(commandID: "j-disc-1")
+        try assertTrue(disconnectResp.ok, "Hop 5 (disconnect): handleDisconnected must succeed")
+        try assertFalse(bridge.isExtensionConnected,
+                        "Hop 5 (disconnect): isExtensionConnected must flip false")
+
+        // Hop 6: reconnect (event page came back)
+        _ = bridge.handleConnected(commandID: "j-conn-2")
+        try assertTrue(bridge.isExtensionConnected,
+                       "Hop 6 (reconnect): isExtensionConnected must be true again")
+
+        // Hop 7: reconcile. Extension reports cmd1 + cmd2 as pending (still
+        // queued in service worker), and is unaware of cmd3 (it was queued
+        // AFTER the extension's last sync). Expected classification:
+        //   - reQueued = [j-cmd-1, j-cmd-2] (delivered=false from Hop 5 flip,
+        //     present in extension's pendingIds)
+        //   - pushNew  = [j-cmd-3]            (delivered=false, NOT in
+        //     extension's pendingIds AND NOT in reQueued)
+        //   - acked, uncertain, inFlight = empty
+        //
+        // Discrimination: if Hop 5's wake-semantics is broken (delivered stays
+        // true), reQueued is empty AND inFlight = [cmd1, cmd2] instead. Hop 7
+        // assertions fail.
+        let reconResp = bridge.handleReconcile(
+            commandID: "j-rec-1",
+            executedIds: [],
+            pendingIds: ["j-cmd-1", "j-cmd-2"]
+        )
+        try assertTrue(reconResp.ok, "Hop 7 (reconcile): handleReconcile must succeed")
+        let reconDict = reconResp.value?.value as? [String: Any]
+        let acked = reconDict?["acked"] as? [String] ?? []
+        let uncertain = reconDict?["uncertain"] as? [String] ?? []
+        let reQueued = reconDict?["reQueued"] as? [String] ?? []
+        let inFlight = reconDict?["inFlight"] as? [String] ?? []
+        let pushNew = reconDict?["pushNew"] as? [[String: Any]] ?? []
+
+        try assertEqual(acked, [], "Hop 7: acked must be empty (no executedIds)")
+        try assertEqual(uncertain, [], "Hop 7: uncertain must be empty")
+        try assertEqual(Set(reQueued), Set(["j-cmd-1", "j-cmd-2"]),
+                        "Hop 7: reQueued must contain cmd1 + cmd2 (delivered=false post-disconnect, "
+                            + "in extension's pendingIds). If empty → Hop 5 wake-semantics broken.")
+        try assertEqual(inFlight, [],
+                        "Hop 7: inFlight must be empty (delivered was flipped to false at Hop 5). "
+                            + "If non-empty → handleDisconnected didn't flip delivered.")
+        try assertEqual(pushNew.count, 1,
+                        "Hop 7: pushNew must contain exactly cmd3 (the one extension doesn't know)")
+        try assertEqual(pushNew.first?["id"] as? String, "j-cmd-3",
+                        "Hop 7: pushNew id must be j-cmd-3")
+        try assertEqual(pushNew.first?["script"] as? String, "script-c",
+                        "Hop 7: pushNew param round-trip — script must be preserved")
+
+        // Hop 8: send results for all 3 in non-queue order (cmd2, cmd3, cmd1)
+        // — proves out-of-order independence of the continuation resumption.
+        _ = bridge.handleResult(
+            commandID: "j-res-2",
+            params: [
+                "requestId": AnyCodable("j-cmd-2"),
+                "result": AnyCodable(["ok": true, "value": "result-b"]),
+            ]
+        )
+        _ = bridge.handleResult(
+            commandID: "j-res-3",
+            params: [
+                "requestId": AnyCodable("j-cmd-3"),
+                "result": AnyCodable(["ok": true, "value": "result-c"]),
+            ]
+        )
+        _ = bridge.handleResult(
+            commandID: "j-res-1",
+            params: [
+                "requestId": AnyCodable("j-cmd-1"),
+                "result": AnyCodable(["ok": true, "value": "result-a"]),
+            ]
+        )
+
+        let r1 = syncAwait { await task1.value }
+        let r2 = syncAwait { await task2.value }
+        let r3 = syncAwait { await task3.value }
+        try assertTrue(r1.ok, "Hop 8: cmd1 must resolve ok=true")
+        try assertEqual(r1.value?.value as? String, "result-a",
+                        "Hop 8: cmd1 must resolve with the matching result-a value")
+        try assertTrue(r2.ok)
+        try assertEqual(r2.value?.value as? String, "result-b",
+                        "Hop 8: cmd2 must resolve with result-b")
+        try assertTrue(r3.ok)
+        try assertEqual(r3.value?.value as? String, "result-c",
+                        "Hop 8: cmd3 must resolve with result-c")
+
+        // Hop 9: teardown — all 3 ids must be in executedLog (handleResult
+        // appends on success). Verifies the executedLog mutation path runs
+        // for each completed command, which feeds the next reconcile's
+        // acked-classification.
+        try assertTrue(bridge.isInExecutedLog("j-cmd-1"),
+                       "Hop 9 (teardown): cmd1 must be in executedLog post-result")
+        try assertTrue(bridge.isInExecutedLog("j-cmd-2"),
+                       "Hop 9 (teardown): cmd2 must be in executedLog post-result")
+        try assertTrue(bridge.isInExecutedLog("j-cmd-3"),
+                       "Hop 9 (teardown): cmd3 must be in executedLog post-result")
+
+        // Hop 10 (reviewer SD-15 strengthening): the next reconcile from the
+        // extension reports the same 3 ids as executed. The bridge must
+        // classify all 3 as `acked` because handleResult appended them to
+        // executedLog at Hop 8. Locks the executedLog READ path from BOTH
+        // isInExecutedLog (Hop 9) AND handleReconcile (this hop) — a
+        // regression that broke executedLog-write would still surface here
+        // even if isInExecutedLog were faked.
+        let reconResp2 = bridge.handleReconcile(
+            commandID: "j-rec-2",
+            executedIds: ["j-cmd-1", "j-cmd-2", "j-cmd-3"],
+            pendingIds: []
+        )
+        try assertTrue(reconResp2.ok)
+        let reconDict2 = reconResp2.value?.value as? [String: Any]
+        let acked2 = reconDict2?["acked"] as? [String] ?? []
+        try assertEqual(Set(acked2), Set(["j-cmd-1", "j-cmd-2", "j-cmd-3"]),
+                        "Hop 10 (post-teardown reconcile): all 3 ids must classify as acked "
+                            + "via executedLog lookup (locks the read path complementing Hop 9)")
+        let uncertain2 = reconDict2?["uncertain"] as? [String] ?? []
+        try assertEqual(uncertain2, [],
+                        "Hop 10: uncertain must be empty — all 3 are in executedLog")
+    }
 }
