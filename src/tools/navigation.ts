@@ -105,7 +105,7 @@ export class NavigationTools {
           },
           required: [],
         },
-        requirements: { idempotent: true },
+        requirements: { idempotent: false },
       },
       {
         name: 'safari_close_tab',
