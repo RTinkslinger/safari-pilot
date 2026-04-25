@@ -51,7 +51,6 @@ Build pipeline: edit → `bash scripts/build-extension.sh` → verify entitlemen
 | **T34** | `src/engine-selector.ts` ENGINE_CAPS + `extension/manifest.json` | "cross-origin frames" capability claimed in extension caps but manifest lacks `all_frames: true` | Pair with T55 — choose one (deliver via manifest = T55, or remove from caps = T34). |
 | **T35** | `src/security/idpi-scanner.ts` + `src/server.ts:575` | IDPI scanner annotates result metadata but never blocks injected content; documentation honestly says "no block" | Decide: block (rename + add throw path) or rename to "annotator" + drop the "scanner" framing. |
 | **T36** | `src/security/screenshot-redaction.ts` + `src/server.ts:591` | redaction script returned but never injected before capture — currently a no-op annotation | |
-| **T37** | `src/security/tab-ownership.ts` | `recordPreExisting` + `isPreExisting` methods have zero callers — dead code | Deletion-only; reviewer-skip per T24 precedent. |
 | **T38** | `src/server.ts` `recoverSession` | recovery re-opens window + polls extension but never calls `registerWithDaemon()` — multi-session count desyncs after recovery | |
 | **T39** | `daemon/Sources/SafariPilotdCore/HealthStore.swift` | `roundtripTimestamps` / `timeoutTimestamps` / `uncertainTimestamps` arrays grow unbounded; only `forceReloadTimestamps` has pruning | |
 | **T40** | `ARCHITECTURE.md` | 8 documented claims contradict current code (cross-origin frames, ownership-domainMatches deletion, etc.) | doc-only fix. |
@@ -119,7 +118,8 @@ Lookup-only index; full fix-context paragraphs are in `docs/AUDIT-TASKS.md` / `d
 | Tracker | — | `4bec8e3` | Consolidated AUDIT-TASKS + FOLLOW-UPS into this file |
 | SD-31 | `63d4e59` | `ecb32d6` | killSwitch.recordError filters security-pipeline errors (no more TabUrlNotRecognizedError-burst self-DoS) |
 | T7 | `71218d9` | `317527a` | Regression guard for existing safari_close_tab tab-ownership cleanup (server.ts:833-852); audit-flagged leak prevented from silently re-emerging |
-| SD-32 | `6b55ff9` | (this commit) | orphan-cleanup skips when other live sessions exist; multi-session contract restored |
+| SD-32 | `6b55ff9` | `170592e` | orphan-cleanup skips when other live sessions exist; multi-session contract restored |
+| T37 | `d82c534` | (this commit) | Deleted unused `recordPreExisting` + `isPreExisting` from `TabOwnership` (zero callers; positive-ownership model makes them redundant) |
 
 Pre-2026-04-25 sprint resolved entries (SD-01..SD-28, T13..T25 originals): see archives.
 
@@ -127,10 +127,10 @@ Pre-2026-04-25 sprint resolved entries (SD-01..SD-28, T13..T25 originals): see a
 
 ## Tally
 
-- **28** audit items (T-numbered) open — 0 P0, 4 in extension batch, 7 P2 quality debt, 17 P3 missing-feature/cosmetic.
+- **27** audit items (T-numbered) open — 0 P0, 4 in extension batch, 6 P2 quality debt, 17 P3 missing-feature/cosmetic.
 - **1** SD open — SD-30, deferred feature (banking-disable-extension).
 - **2** ROADMAP backlog items — navigate_back/forward stale URL, NDJSON line-split flake.
 
-Total open: **31**. **All real bugs are now resolved this sprint** (T7, SD-31, SD-32). The remainder is quality debt, missing features, deferred design decisions, or cosmetic.
+Total open: **30**. **All real bugs are now resolved this sprint** (T7, SD-31, SD-32). The remainder is quality debt, missing features, deferred design decisions, or cosmetic.
 
 Open follow-up flagged by SD-32 reviewer: an e2e companion test that spawns two concurrent MCP sessions and asserts Session A's keepalive survives Session B's startup would close the unit-test wiring gap (server.ts:1422 stores the otherSessions count into a private field; the unit tests poke the field directly; only an e2e exercises the full registerWithDaemon → field-write → cleanup-skip flow). Worth filing as SD-33 if anyone reports concurrent-session breakage.

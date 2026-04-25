@@ -274,9 +274,10 @@
 **Root cause:** Redaction script attached to result metadata AFTER screenshot captured. `screencapture -x` is immune to CSS blur. File header says "injected before capture" — code does opposite.
 **Origin:** `2ccdc87` created module. `c1d3b92` wired post-execution (wrong timing).
 
-### T37. Delete `recordPreExisting` / `isPreExisting` dead code
+### T37. Delete `recordPreExisting` / `isPreExisting` dead code ✅ RESOLVED 2026-04-26 (commit `d82c534`)
 **Findings:** M23 (tab-ownership audit)
 **Root cause:** Created in `630526e`, never called. The positive-ownership model (fail-closed on unknown tabs) makes pre-existing tracking redundant.
+**Fix:** Deleted both methods + `preExistingTabs: Set<TabId>` backing field from `src/security/tab-ownership.ts` (15 LOC removed). Confirmed zero callers via repo-wide grep. Reviewer-skip per T24/T31 deletion-only precedent. Type-check clean and 126 unit tests pass.
 
 ### T38. Fix `recoverSession()` to re-register with daemon
 **Findings:** M25 (init-session audit)
