@@ -119,7 +119,11 @@ export class FrameTools {
       var userScript = \`${escapedScript}\`;
       var result;
       try {
-        result = win.eval(userScript);
+        // T20: dropped the eval-call pattern in favor of new Function — the
+        // codebase convention. extension/content-main.js:11,323 captures
+        // Function as _Function before any page script runs. User scripts
+        // must use explicit \`return\` (matches content-main.js's contract).
+        result = new win.Function(userScript)();
       } catch (e) {
         if (e instanceof DOMException && e.name === 'SecurityError') {
           throw new Error('Cross-origin frame eval blocked by browser security policy. Use safari_get_text with the frame URL directly instead.');
