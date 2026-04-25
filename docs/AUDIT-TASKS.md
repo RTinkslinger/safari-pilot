@@ -208,10 +208,12 @@
 
 **Fix:** Added `ToolResponse.isError?: boolean` to `src/types.ts`. Both HumanApproval soft-return sites in `executeToolWithSecurity` now set `isError: true` (Site 1 = initial check at line 497; Site 2 = post-engine-degradation re-check at line 650, kept symmetrical against future stateful HumanApproval). The MCP `CallTool` handler in `src/index.ts` spreads the flag into the response envelope so it reaches the wire. Triple-oracle unit test (`human-approval-iserror.test.ts`) uses an OAuth URL to drive Site 1, asserting `response.isError === true`, structured `approvalRequired` payload preserved, and `metadata.degraded` contract intact. Mutation-verified by re-removing the new `isError` field. Site 2 is currently dead code (stateless HumanApproval cannot differ on re-assert) so its fix is enforced by code-review diff symmetry, documented in the test's doc comment. Note: `EngineUnavailableError` soft-return at server.ts:553-571 has the same shape but is out of T30 scope per the original audit.
 
-### T31. Remove `extensionAllowed` from DomainPolicy or wire into engine selector
+### T31. Remove `extensionAllowed` from DomainPolicy or wire into engine selector ✅ RESOLVED 2026-04-25 (commit `54c2ae1`)
 **Findings:** M4 (security audit)
 **Root cause:** Computed per-domain (`false` for banking) but `selectEngine()` never reads domain policy. Extension can execute against `chase.com` despite `extensionAllowed: false`.
 **Origin:** `7adb53d` (2026-04-12) — forward declaration never connected.
+
+**Fix:** Picked the audit's deletion option per advisor review and the T24 deletion precedent. Wiring the field would have introduced a security feature with new failure modes that needed its own threat model + tests, not a quiet inclusion in a debt-cleanup batch — particularly because `BASE_DEFAULT_POLICY.extensionAllowed` was `false`, so strict wiring would have blocked extension on every unknown domain. Removed the field from `src/types.ts` (DomainPolicy interface), `src/security/domain-policy.ts` (PolicyRule interface, EvaluateResult, BASE_DEFAULT_POLICY, SENSITIVE_POLICY, blocked/trusted ctor branches), and 2 stale assertions in `test/unit/security/domain-policy.test.ts`. Reviewer skipped (deletion-only). The legitimate banking-disable-extension security feature is filed as SD-30 in FOLLOW-UPS.md.
 
 ### T32. Eliminate DaemonEngine `executeJsInTab` duplication
 **Findings:** M6 (engine audit)

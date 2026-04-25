@@ -8,6 +8,16 @@ Running list of findings surfaced by reviewers (Codex, `upp:test-reviewer`, advi
 
 ## Open
 
+### SD-30 — Banking-disable-extension is a legitimate security feature, currently unimplemented
+
+Filed during T31 deletion. The original `extensionAllowed` field on `DomainPolicy` was computed per domain (false for `SENSITIVE_PATTERNS` like banks/payment-processors) but never read by `selectEngine`. T31 chose deletion over wiring because wiring requires (a) flipping `BASE_DEFAULT_POLICY.extensionAllowed` to `true` so the default isn't "extension blocked on every unknown domain", (b) deciding the user-facing semantic when a tool needs the extension on a banking domain (throw `EngineUnavailableError`? degrade silently? log + proceed?), and (c) discriminating tests for both the block path and the non-block default path.
+
+If the security feature is wanted: re-add `extensionAllowed` to PolicyRule + EvaluateResult, default it to `true` on BASE_DEFAULT_POLICY (NOT `false`), keep `false` on SENSITIVE_POLICY, extend `selectEngine` with an optional `domainPolicy?: { extensionAllowed: boolean }` parameter, refuse `extension` when extensionAllowed=false (independent of breaker/availability), update both call sites in server.ts (line 547+ and 996+), and write a test that asserts: (a) banking URL + extension-required tool → throws `EngineUnavailableError`; (b) banking URL + extension-optional tool → routes to daemon/applescript; (c) non-banking URL → extension as before. Banking-domain test fixtures in `test/unit/security/screenshot-redaction.test.ts` already exist and could anchor the test data.
+
+**Discriminator:** revert the new selectEngine guard → at least the banking-extension-required test must fail.
+
+**Entry-points:** `src/security/domain-policy.ts:35` (BASE_DEFAULT_POLICY), `src/engine-selector.ts:65` (selectEngine), `src/server.ts:547,996` (call sites).
+
   - `ARCHITECTURE.md` (§Test Architecture, Daemon Tests section)
 
 
