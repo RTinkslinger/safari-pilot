@@ -400,4 +400,167 @@ func registerCommandDispatcherTests() {
         try assertEqual(response.error?.retryable, false,
                         "UNKNOWN_INTERNAL_METHOD must be non-retryable")
     }
+
+    // MARK: - SD-27: handleInternalCommand happy-path coverage
+    //
+    // The OUTER dispatcher cases (extension_status / extension_execute /
+    // extension_health at CommandDispatcher.swift:170/161/195) ARE tested
+    // (testDispatcherExtensionStatusCommand, testDispatcherRoutesExtensionExecuteQueuesCommand,
+    // testExtensionHealthReturnsComposite — all in ExtensionBridgeTests.swift).
+    //
+    // The INNER routes via `__SAFARI_PILOT_INTERNAL__ <method>` script
+    // (CommandDispatcher.swift:224-254, used in production by ExtensionEngine)
+    // are NOT tested. SD-16's T5 covers the `default → UNKNOWN_INTERNAL_METHOD`
+    // branch, but the three happy paths are uncovered. A copy-paste regression
+    // in any of the three case branches (e.g. wiring `extension_status` to
+    // `handleExecute`) would not fail any existing test.
+    //
+    // Discriminator (verified by mutation testing during SD-27 development):
+    // swapping any one of the three case branches in handleInternalCommand to
+    // call a different handler causes ONLY the matching test below to fail —
+    // each test uniquely identifies its target branch.
+
+    // SD-27 / Test 1: extension_status route through `__SAFARI_PILOT_INTERNAL__`
+    // exercises CommandDispatcher.swift:238-239. Two phases discriminate against
+    // a hardcoded `"disconnected"` regression (per advisor): default state must
+    // surface "disconnected"; after `bridge.handleConnected`, the same route
+    // must surface "connected". A regression returning a literal "disconnected"
+    // would pass phase 1 but fail phase 2.
+    test("testDispatcherInternalCommandRoutesExtensionStatus") {
+        let mock = MockExecutor()
+        let bridge = ExtensionBridge()
+        let dispatcher = CommandDispatcher(
+            lineSource: { nil },
+            outputSink: { _ in },
+            executor: mock,
+            extensionBridge: bridge,
+            healthStore: makeHealthStoreForTest()
+        )
+
+        // Phase 1: default state → handleStatus returns "disconnected"
+        let line1 = #"{"id":"int-status-1","method":"execute","params":{"script":"__SAFARI_PILOT_INTERNAL__ extension_status"}}"#
+        let resp1 = syncAwait { await dispatcher.dispatch(line: line1) }
+        try assertTrue(resp1.ok,
+                       "internal extension_status must succeed; got error: \(resp1.error?.message ?? "<nil>")")
+        try assertEqual(resp1.id, "int-status-1",
+                        "dispatch response id must echo the inbound NDJSON id")
+        try assertEqual(resp1.value?.value as? String, "disconnected",
+                        "internal extension_status when bridge is fresh must return \"disconnected\"")
+
+        // Phase 2: flip bridge to connected → handleStatus must now return "connected".
+        // This rules out a regression that hardcodes "disconnected" (e.g. the
+        // case branch was deleted and dispatcher fell through to a literal).
+        _ = bridge.handleConnected(commandID: "ext-conn-1")
+        let line2 = #"{"id":"int-status-2","method":"execute","params":{"script":"__SAFARI_PILOT_INTERNAL__ extension_status"}}"#
+        let resp2 = syncAwait { await dispatcher.dispatch(line: line2) }
+        try assertTrue(resp2.ok)
+        try assertEqual(resp2.value?.value as? String, "connected",
+                        "internal extension_status after handleConnected must return \"connected\" "
+                            + "(rules out hardcoded-string regression)")
+    }
+
+    // SD-27 / Test 2: extension_execute route through `__SAFARI_PILOT_INTERNAL__`
+    // exercises CommandDispatcher.swift:240-241. Asserts not just that the
+    // command lands in pendingCommands, but that the JSON-parsed inner params
+    // round-trip from the script remainder — locks the JSON-parse path
+    // (CommandDispatcher.swift:232-235) too, not just the case-branch
+    // dispatch. tabUrl is a non-script param chosen for parity with SD-14's
+    // testDispatcherRoutesExtensionExecuteQueuesCommand.
+    test("testDispatcherInternalCommandRoutesExtensionExecute") {
+        let mock = MockExecutor()
+        let bridge = ExtensionBridge()
+        let dispatcher = CommandDispatcher(
+            lineSource: { nil },
+            outputSink: { _ in },
+            executor: mock,
+            extensionBridge: bridge,
+            healthStore: makeHealthStoreForTest()
+        )
+
+        // Drive __SAFARI_PILOT_INTERNAL__ extension_execute in a Task — handleExecute
+        // suspends until a result arrives. The inner JSON has no spaces, so the
+        // dispatcher's split-on-first-space + JSONSerialization.jsonObject path
+        // can recover the params dict cleanly.
+        let dispatchTask = Task {
+            await dispatcher.dispatch(
+                line: #"{"id":"int-exec-1","method":"execute","params":{"script":"__SAFARI_PILOT_INTERNAL__ extension_execute {\"script\":\"document.title\",\"tabUrl\":\"https://example.com\"}"}}"#
+            )
+        }
+        Thread.sleep(forTimeInterval: 0.15)
+
+        // Verify the command landed in the bridge by polling.
+        let pollResp = syncAwait { await bridge.handlePoll(commandID: "p-int") }
+        let pollDict = pollResp.value?.value as? [String: Any]
+        let cmds = pollDict?["commands"] as? [[String: Any]] ?? []
+        try assertEqual(cmds.count, 1,
+                        "extension_execute via __SAFARI_PILOT_INTERNAL__ must land in bridge.pendingCommands; "
+                            + "got \(cmds.count) command(s)")
+        try assertEqual(cmds.first?["id"] as? String, "int-exec-1",
+                        "polled command id must match the dispatched NDJSON id, not the bridge sentinel")
+        try assertEqual(cmds.first?["script"] as? String, "document.title",
+                        "polled command script param must round-trip from inner JSON")
+        try assertEqual(cmds.first?["tabUrl"] as? String, "https://example.com",
+                        "polled command tabUrl param must round-trip from inner JSON "
+                            + "(locks general params-dict round-trip beyond \"script\")")
+
+        // Cleanup: feed the result so the suspended dispatch resolves.
+        _ = bridge.handleResult(
+            commandID: "cleanup-int-exec",
+            params: [
+                "requestId": AnyCodable("int-exec-1"),
+                "result": AnyCodable(["ok": true, "value": "Test"]),
+            ]
+        )
+        let dispatchResp = syncAwait { await dispatchTask.value }
+        try assertTrue(dispatchResp.ok,
+                       "dispatch of __SAFARI_PILOT_INTERNAL__ extension_execute must succeed after result arrives")
+    }
+
+    // SD-27 / Test 3: extension_health route through `__SAFARI_PILOT_INTERNAL__`
+    // exercises CommandDispatcher.swift:242-244. Mirrors testExtensionHealthReturnsComposite
+    // (ExtensionBridgeTests.swift:365) but via the INTERNAL route. Counters are
+    // pre-incremented so the assertions discriminate against a regression that
+    // returns a hardcoded skeleton dict — only a real call to healthSnapshot
+    // can surface the post-increment values.
+    test("testDispatcherInternalCommandRoutesExtensionHealth") {
+        let tmpPath = FileManager.default.temporaryDirectory
+            .appendingPathComponent("test-health-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: tmpPath) }
+        let health = HealthStore(persistPath: tmpPath)
+        let mock = MockExecutor()
+        let bridge = ExtensionBridge()
+        let dispatcher = CommandDispatcher(
+            lineSource: { nil },
+            outputSink: { _ in },
+            executor: mock,
+            extensionBridge: bridge,
+            healthStore: health
+        )
+
+        // Pre-increment so the assertions can't pass against a hardcoded
+        // skeleton — only a live healthSnapshot call surfaces these values.
+        health.incrementRoundtrip()
+        health.incrementTimeout()
+
+        let line = #"{"id":"int-health-1","method":"execute","params":{"script":"__SAFARI_PILOT_INTERNAL__ extension_health"}}"#
+        let response = syncAwait { await dispatcher.dispatch(line: line) }
+
+        try assertTrue(response.ok,
+                       "internal extension_health must succeed; got error: \(response.error?.message ?? "<nil>")")
+        try assertEqual(response.id, "int-health-1",
+                        "dispatch response id must echo the inbound NDJSON id")
+        let dict = response.value?.value as? [String: Any]
+        try assertTrue(dict != nil,
+                       "internal extension_health value must be a dict (snapshot); "
+                           + "got \(String(describing: response.value?.value))")
+        try assertEqual(dict?["roundtripCount1h"] as? Int, 1,
+                        "snapshot must reflect the pre-incremented roundtrip counter "
+                            + "(rules out hardcoded-skeleton regression)")
+        try assertEqual(dict?["timeoutCount1h"] as? Int, 1,
+                        "snapshot must reflect the pre-incremented timeout counter")
+        try assertEqual(dict?["isConnected"] as? Bool, false,
+                        "snapshot must include bridge state — fresh bridge is disconnected")
+        try assertEqual(dict?["pendingCommandsCount"] as? Int, 0,
+                        "snapshot must include bridge pendingCommandsCount")
+    }
 }
