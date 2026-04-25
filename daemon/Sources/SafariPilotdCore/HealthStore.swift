@@ -160,6 +160,17 @@ public final class HealthStore: @unchecked Sendable {
         }
     }
 
+    /// Read-only accessor for a session's `lastSeen` timestamp. Returns nil
+    /// if the session is not registered. Exposed primarily so tests can
+    /// observe `registerSession`'s deduplication-vs-update contract and
+    /// `touchSession`'s existing-session update without reaching into
+    /// the private `_activeSessions` array — SD-11 strengthening.
+    public func lastSeenForSession(_ sessionId: String) -> Date? {
+        queue.sync {
+            _activeSessions.first(where: { $0.sessionId == sessionId })?.lastSeen
+        }
+    }
+
     /// Remove sessions not seen in 60s.
     private func pruneStaleSessionsLocked() {
         let cutoff = Date(timeIntervalSinceNow: -60)
