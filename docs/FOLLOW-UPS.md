@@ -19,6 +19,18 @@ Running list of findings surfaced by reviewers (Codex, `upp:test-reviewer`, advi
 
 ## Resolved
 
+### SD-29 — vitest cross-file mock pollution: `vi.mock('node:net')` in daemon.test.ts arrived too late under `isolate: false` (2026-04-25, commit `a173e95`)
+
+`vitest.config.ts` sets `isolate: false` + `pool: 'forks'` + `singleFork: true` because the e2e fixture wants the MCP-server singleton to survive across files. The unintended consequence: when any prior test file imports `SafariPilotServer` (e.g. `pre-call-gate.test.ts`), `DaemonEngine` evaluates its top-level `import { createConnection } from 'node:net'` against the REAL Node API. A subsequent top-level `vi.mock('node:net', ...)` in `daemon.test.ts` lands in vitest's module-mock registry but the already-loaded `DaemonEngine` keeps its captured reference. Result: the mock silently no-ops, the real daemon (port 19474, listening on the dev machine) answers the test commands, and three of four daemon tests fail in suite-wide runs while passing in isolation.
+
+**Discovery path:** surfaced during T28 verification — the full unit suite reported 116/119 passing while `daemon.test.ts` in isolation reported 4/4. `git stash` of the T28 changes reproduced the same 116/119 ratio, ruling out the new code as the cause and pointing at suite-wide ordering.
+
+**Fix:** replaced the top-level `vi.mock` + static imports with a `beforeAll` that runs `vi.resetModules()`, registers the mock with `vi.doMock`, and dynamic-imports both `node:net` and `DaemonEngine`. The dynamic imports re-evaluate `daemon.ts` against the now-mocked module, so the engine binds to `vi.fn()` regardless of which file loaded it earlier.
+
+**Test-infra-only change.** No production code touched. Reviewer skipped per the established pattern for test-fixture fixes (cf. T24 deletion).
+
+**Verification:** 4/4 in isolation, 8/8 combined with `pre-call-gate.test.ts`, 119/119 across the full unit suite over three consecutive runs (was 116/119 on the same suite before).
+
 ### SD-28 — TimeSource injection on ExtensionBridge + ExtensionHTTPServer; deleted `addToExecutedLogForTest` + `runDisconnectCheckForTest` (2026-04-25, commit `f5e99f0`)
 
 Extends the SD-23 TimeSource protocol (originally introduced for HealthStore) to two more production classes, allowing deletion of two test-only public methods that were a test-leak into the production surface. No new tests added — three existing tests refactored.
