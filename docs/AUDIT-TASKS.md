@@ -194,10 +194,12 @@
 
 ## P2: Dead Code / Documentation Lies / Quality Debt
 
-### T29. Wire `killSwitch.recordError()` into error path
+### T29. Wire `killSwitch.recordError()` into error path ✅ RESOLVED 2026-04-25 (commit `a504928`)
 **Findings:** M2 (security audit)
 **Root cause:** Method exists, config pipeline built (`autoActivation`), but `recordError()` never called from `executeToolWithSecurity()` error handler.
 **Origin:** `15aaec2` (2026-04-12). `316feed` wired `checkBeforeAction()` but not `recordError()`.
+
+**Fix:** Added `this.killSwitch.recordError()` inside `executeToolWithSecurity`'s catch block immediately after `recordToolFailure(domain, engine, error)`. Discriminating unit test (`killswitch-auto-activation.test.ts`) configures `autoActivation:true, maxErrors:3` and drives 3 failures through a throwing stub for `safari_list_tabs` (which bypasses ownership). Dual oracle: `server.killSwitch.isActive()` flips to true after 3 failures, and the 4th call throws `KillSwitchActiveError`. Mutation-verified: removing the new `recordError` call returns the test to RED.
 
 ### T30. Set `isError: true` on HumanApproval responses
 **Findings:** M3 (security audit)
