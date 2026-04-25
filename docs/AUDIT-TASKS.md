@@ -2,7 +2,11 @@
 
 *Generated: 2026-04-23 | Method: 8 specialist audit agents + 61 per-finding deep-trace agents | 89 commits analyzed*
 
-**This document is the authoritative list of work to be done before any new feature development.** Every item has been traced through the full git history, cross-referenced against specs/plans/research, and verified with commit citations. Items are grouped by component and ordered by priority within each group.
+> **⚠️ Archive — superseded by `docs/TRACKER.md` (2026-04-25).**
+>
+> This file is no longer the authoritative list. Open items consolidated into the tracker; new findings go there. Resolved entries below preserve fix-context paragraphs (Findings / Root cause / Origin / Fix) that the tracker cross-references by ID.
+
+**This document was the authoritative list of work to be done before any new feature development.** Every item has been traced through the full git history, cross-referenced against specs/plans/research, and verified with commit citations. Items are grouped by component and ordered by priority within each group.
 
 **Rejected findings (2):** M15 (primitive results lose _meta) — false positive, storage bus always wraps as object; M27 (isSessionAlive always false) — false positive, keepalive path is correctly wired through content script -> background.js -> POST /result -> ExtensionBridge.
 

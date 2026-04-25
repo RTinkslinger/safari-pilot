@@ -1,5 +1,9 @@
 # Pending systematic-debugging follow-ups
 
+> **⚠️ Archive — superseded by `docs/TRACKER.md` (2026-04-25).**
+>
+> Open SDs consolidated into the tracker; new follow-ups go there. Resolved entries below preserve discriminator + entry-points + fix-context paragraphs that the tracker cross-references by ID.
+
 Running list of findings surfaced by reviewers (Codex, `upp:test-reviewer`, advisors) that were NOT yet run through `upp:systematic-debugging`. Each entry is a target for a future disciplined root-cause → minimal-fix → discriminating-test cycle. Items land here so they don't disappear between sessions.
 
 **Triage rule:** do not "just fix" entries here. Pick one, run Phase 1 (root-cause investigation) from `upp:systematic-debugging` before writing any code, and produce the entry's discriminating test. Then move the entry to the "Resolved" section with the commit SHA.
