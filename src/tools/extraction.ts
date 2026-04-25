@@ -166,23 +166,17 @@ export class ExtractionTools {
       {
         name: 'safari_take_screenshot',
         description:
-          'Capture a screenshot of the Safari window via screencapture CLI. ' +
-          'Returns the image as base64-encoded PNG. Requires Screen Recording permission.',
+          'Capture a screenshot of the frontmost Safari window via the screencapture CLI ' +
+          '(no per-tab targeting; captures whatever is on top). Returns the image as base64-encoded PNG ' +
+          'unless `path` is provided. Requires Screen Recording permission.',
         inputSchema: {
           type: 'object',
           properties: {
-            tabUrl: { type: 'string', description: 'Current URL of the tab (used to bring it to front)' },
-            fullPage: {
-              type: 'boolean',
-              description: 'Capture the full scrollable page (not just viewport)',
-              default: false,
-            },
             path: {
               type: 'string',
               description: 'Optional file path to save the screenshot. If omitted, returns base64 data.',
             },
             format: { type: 'string', enum: ['png', 'jpeg'], description: 'Image format', default: 'png' },
-            quality: { type: 'number', description: 'JPEG quality 0-100', default: 80 },
           },
           required: [],
         },
