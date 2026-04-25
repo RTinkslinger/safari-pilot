@@ -45,23 +45,29 @@ Running list of findings surfaced by reviewers (Codex, `upp:test-reviewer`, advi
 
 
 
-### SD-27 — `handleInternalCommand` happy-path coverage missing for extension_status / _execute / _health
-- **Severity:** P2 (the production route used by `ExtensionEngine`'s sentinel protocol — a copy-paste regression here goes silently)
-- **Source:** Filed during SD-16 review (2026-04-25). Test reviewer flagged the gap.
-- **Symptom:** `CommandDispatcher.handleInternalCommand` (CommandDispatcher.swift:209-240) routes the `__SAFARI_PILOT_INTERNAL__ <method>` sentinel to one of three happy paths or the `UNKNOWN_INTERNAL_METHOD` default. SD-16's T5 covers the default branch. The three happy paths (`extension_status`, `extension_execute`, `extension_health`) are NOT tested — the existing `testDispatcherExtensionStatusCommand` etc. exercise the OUTER dispatcher cases (`case "extension_status":` at line 156), not the INNER sentinel routes through `__SAFARI_PILOT_INTERNAL__`. A copy-paste regression that broke the inner branch (e.g. wired `extension_status` to the wrong handler) would not fail any test.
-- **Current understanding (from review):** add three dispatcher-level tests, each driving an `execute` NDJSON command with `script: "__SAFARI_PILOT_INTERNAL__ <method> [json]"` and asserting the corresponding SUT side effect:
-  - `extension_status` → `value == "disconnected"` (or "connected" if pre-connected)
-  - `extension_execute` → command lands in bridge.pendingCommands (parallel to SD-14's testDispatcherRoutesExtensionExecuteQueuesCommand but via the INTERNAL route)
-  - `extension_health` → snapshot keys present (mirrors testExtensionHealthReturnsComposite but via the INTERNAL route)
-- **Discriminator:** swap any one of the three case branches in handleInternalCommand to call the wrong handler — the corresponding new test must fail.
-- **Entry points / files:**
-  - `daemon/Sources/SafariPilotdCore/CommandDispatcher.swift:209-240`
-  - `daemon/Tests/SafariPilotdTests/CommandDispatcherTests.swift` — extend with 3 happy-path tests
-
-
 ---
 
 ## Resolved
+
+### SD-27 — `handleInternalCommand` happy-path coverage for extension_status / _execute / _health (2026-04-25, commit `5d37161`)
+
+Pre-SD-27, only the `default → UNKNOWN_INTERNAL_METHOD` branch (SD-16/T5) was tested in CommandDispatcher.handleInternalCommand. The three happy paths used in production by ExtensionEngine's `__SAFARI_PILOT_INTERNAL__ <method>` sentinel were uncovered. A copy-paste regression wiring extension_status to a different handler would not have failed any existing test.
+
+Three new tests added in `daemon/Tests/SafariPilotdTests/CommandDispatcherTests.swift`:
+
+1. **testDispatcherInternalCommandRoutesExtensionStatus** — two-phase test. Phase 1 asserts fresh-bridge → `"disconnected"`; phase 2 calls `bridge.handleConnected` then asserts → `"connected"`. The two phases together rule out a hardcoded-string regression (e.g. case branch deleted, dispatcher fell through to a literal).
+2. **testDispatcherInternalCommandRoutesExtensionExecute** — drives the INNER route in a Task (handleExecute suspends), polls the bridge to verify the command landed in pendingCommands. Asserts id, script, AND tabUrl round-trip from the inner JSON — locks the JSON-parse path at lines 232-235 (split-on-first-space + JSONSerialization.jsonObject) beyond the case-branch dispatch alone.
+3. **testDispatcherInternalCommandRoutesExtensionHealth** — pre-increments roundtripCount and timeoutCount on HealthStore, asserts the snapshot reflects those values plus bridge-state fields. Pre-increment rules out a hardcoded-skeleton regression.
+
+Mutation-test verification (3 independent cycles, build + test per cycle):
+- M1 (status → healthSnapshot): ONLY test 1 failed — `Expected nil == Optional("disconnected")`, dict cast to String returned nil.
+- M2 (execute → handleStatus): ONLY test 2 failed — `Expected 0 == 1`, handleStatus returned synchronously, nothing queued.
+- M3 (health → handleStatus): ONLY test 3 failed — `got Optional("disconnected")`, string vs dict cast.
+- After all reverts: 124 tests pass, 0 failed.
+
+upp:test-reviewer (fast mode, Checks 6/7/8 — 3-test suite): **0 CRITICAL, 0 MAJOR, 2 ADVISORY, verdict PASS**. Both advisories non-gating: `Thread.sleep(0.15)` matches existing SD-14 timing pattern; cleanup uses `defer { removeItem }`. Reviewer specifically validated: production NDJSON entry point IS the test entry point (no UNWIRED concerns), each documented behavior maps to an observable-effect assertion (no UNVERIFIED CLAIM), oracles strong (mutation analysis confirmed each test is uniquely sensitive to its target case branch).
+
+Total Swift tests: 121 → 124 (+3).
 
 ### SD-26 — watch_download timeout: Int-vs-Double cast widened (production bug fix) (2026-04-25, commit `aa312f1`)
 
