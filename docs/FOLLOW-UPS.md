@@ -8,16 +8,6 @@ Running list of findings surfaced by reviewers (Codex, `upp:test-reviewer`, advi
 
 ## Open
 
-### SD-14 — ExtensionBridge tests are UNWIRED: direct method calls bypass CommandDispatcher routing
-- **Severity:** P1 (Check 6 Production Call-Site — tests exist, but not through the production boundary)
-- **Source:** `upp:test-reviewer` retro review #2 (2026-04-24)
-- **Symptom:** Most `ExtensionBridgeTests.swift` tests call `bridge.handleExecute()` / `handleResult()` / `handleReconcile()` / `handleConnected()` / `handleDisconnected()` directly on an in-test `ExtensionBridge()`. In production, each reaches the bridge via `CommandDispatcher.handle(command:)` NDJSON routing or `ExtensionHTTPServer` routing. Four dispatcher-level tests exist (covering `extension_connected`, `extension_status`, `extension_poll`, `extension_reconcile`, `extension_log alarm_fire`, `extension_health`). The production paths for `extension_result` and `extension_execute` via the dispatcher are NOT covered — if someone deleted the `case "extension_result":` branch in `CommandDispatcher.swift:145`, no Swift test would fail.
-- **Current understanding (from review):** add one dispatcher-level test for `extension_result` and one for `extension_execute` that drive `dispatcher.dispatch(line: ...)` and assert the bridge state change.
-- **Discriminator:** delete `case "extension_result":` — new dispatcher-level test must fail; restore → passes.
-- **Entry points / files:**
-  - `daemon/Sources/SafariPilotdCore/CommandDispatcher.swift` (line 145 and nearby cases)
-  - `daemon/Tests/SafariPilotdTests/ExtensionBridgeTests.swift` — add dispatcher-level tests
-
 ### SD-15 — Lifecycle gap (Check 9): canary distribution + bridge full-journey
 - **Severity:** P2 (state-machine coverage, matches SD-05 for TypeScript e2e)
 - **Source:** `upp:test-reviewer` retro review #2 (2026-04-24)
@@ -138,9 +128,38 @@ Running list of findings surfaced by reviewers (Codex, `upp:test-reviewer`, advi
   - `src/server.ts:413-432` (gate body), `1077-1085` (checkExtensionStatus), `1090-1102` (checkWindowExists), `1108-1136` (recoverSession)
   - `test/unit/server/` (new file for option a) OR `test/e2e/initialization.test.ts` (new own-spawn test for option b)
 
+### SD-24 — Swift HTTP test suite leaks file descriptors / sockets between tests
+- **Severity:** P2 (transient flake; only surfaces on rapid back-to-back runs of the full Swift suite, but the failure mode is opaque and cascades across unrelated tests)
+- **Source:** Filed during SD-14 work (2026-04-25). Observed once during a re-run of `swift run SafariPilotdTests`: pre-existing `testHTTPPollReturns204WhenEmpty` and `testHTTPPollReturnsCommandWhenAvailable` failed with `[ERROR] HTTP_BIND_FAILED port=19501 error=socket(...): Too many open files in system (errno: 23)`. A 5s pause and second run cleanly produced 113 passed / 0 failed.
+- **Symptom:** `ExtensionHTTPServer.stop()` (`daemon/Sources/SafariPilotdCore/ExtensionHTTPServer.swift:95-101`) only calls `_serverTask?.cancel()` and `_disconnectTask?.cancel()`. NIO/Hummingbird's underlying listening sockets and connection pools clean up asynchronously after the Task observes cancellation. With 19 sequential `startTestHTTPServer()` invocations now in the suite (post-SD-13's +13 tests), the cumulative open-file count can briefly exceed `kern.maxfiles_perproc`, triggering `EMFILE` on the next bind. The error cascades because every subsequent HTTP test in the run also fails to bind.
+- **Current understanding (not verified):** three options:
+  - **(a)** Make `stop()` async and `await` the underlying NIO event loop's shutdown (Hummingbird `Application` exposes a `runService()` returning Service that supports graceful shutdown). Tests would `await server.stop()` to ensure FDs are released before the next `startTestHTTPServer()`.
+  - **(b)** Add a small `Thread.sleep(0.1)` after `server.stop()` in test helpers — gives the event loop time to release sockets. Cheap, but a bandaid.
+  - **(c)** Pool / reuse a single `ExtensionHTTPServer` across the HTTP test group — share the bridge / health setup but reset state between tests. Bigger refactor.
+- **Discriminator for the fix:** simulate the failure deterministically — lower `kern.maxfiles_perproc` for the test process or run the full Swift suite in a tight loop (10×) with no pause; current state should reproduce the flake; the chosen fix should hold across the loop.
+- **Entry points / files:**
+  - `daemon/Sources/SafariPilotdCore/ExtensionHTTPServer.swift:95-101` (stop)
+  - `daemon/Tests/SafariPilotdTests/ExtensionHTTPServerTests.swift:244-255` (startTestHTTPServer helper)
+
 ---
 
 ## Resolved
+
+### SD-14 — ExtensionBridge tests UNWIRED: dispatcher-level routing for extension_result/_execute/_disconnected (2026-04-25, commit `e6dde0c`)
+
+Resolved by adding 3 dispatcher-level tests at the end of `daemon/Tests/SafariPilotdTests/ExtensionBridgeTests.swift`. Each drives the production NDJSON path via `dispatcher.dispatch(line:)` rather than calling the bridge methods directly:
+
+- `testDispatcherRoutesExtensionResultResolvesPendingCommand` — locks `case "extension_result":` (CommandDispatcher.swift:145-146). Asserts both dispatch ack with id round-trip AND the queued execute resolves with the inner `Int 42`.
+- `testDispatcherRoutesExtensionExecuteQueuesCommand` — locks `case "extension_execute":` (lines 148-149). Polls bridge to verify command landed with id+script+tabUrl all round-tripped (tabUrl assertion added per reviewer ADVISORY to make params-dict round-trip explicit, beyond just `script`).
+- `testDispatcherRoutesExtensionDisconnectedFlipsConnectedState` — locks `case "extension_disconnected":` (lines 142-143). This was a symmetric gap with the existing `testDispatcherRoutesExtensionConnected`, discovered during SD-14 work and folded into the same commit. Connect+disconnect both round-trip via `dispatcher.dispatch(line:)`.
+
+Removing any of the three case branches makes the dispatcher fall through to `UNKNOWN_METHOD` — the test fails immediately on dispatch ack OR on the side-effect oracle.
+
+`upp:test-reviewer` (fast mode, Checks 6/7/8) verdict: **PASS** (CRITICAL: 0, MAJOR: 0, ADVISORY: 2 — one addressed in commit (tabUrl round-trip explicit); the other (Test 3 connect-via-dispatcher pre-state being a double-cover) the reviewer endorsed as the correct stylistic choice; kept as-is).
+
+Discovery during SD-14 work: the Swift HTTP test suite intermittently leaks file descriptors / sockets between tests under rapid back-to-back runs (`EMFILE` from socket exhaustion on the 19th-or-so `startTestHTTPServer()`). Filed as **SD-24** above. Retry-with-pause works; not blocking, but worth a proper fix.
+
+Total tests: 97 unit (TS) + 20 canary + 41 e2e + 113 Swift = 271 (Swift was 110 pre-SD-14; +3).
 
 ### SD-13 — ExtensionHTTPServer: 4 untested routes + disconnect timeout + onBindFailure (2026-04-25, commit `3e46c2d`)
 
