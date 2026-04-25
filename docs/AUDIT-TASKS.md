@@ -160,9 +160,10 @@
 **Root cause:** Daemon marks extension disconnected at 15s, keepalive fires at 20s. 5s false-disconnect window (25% of cycle) triggers unnecessary recovery.
 **Fix:** Daemon-only path — raised `disconnectTimeout` from 15s → 25s in `daemon/Sources/SafariPilotdCore/ExtensionHTTPServer.swift`. Avoided the alternative path (lower extension keepalive to 10s) because it requires extension rebuild + release. 1 NEW Swift test (`testDisconnectTimeoutAccommodatesKeepaliveCycle`) advances mockClock 20s and asserts the bridge stays connected — load-bearing T23 oracle. SD-28's existing `testDisconnectCheckFiresWhenIdleBeyondThreshold` test advance bumped 16 → 26 to clear the new threshold. Doc-comment on `checkDisconnect()` updated. Triangulation locks the threshold to T ∈ [20, 26). upp:test-reviewer fast PASS 0/0/2.
 
-### T24. Fix `domainMatches()` — either wire it or delete it
+### T24. Fix `domainMatches()` — either wire it or delete it ✅ RESOLVED 2026-04-25 (commit `cc20814`, deletion path)
 **Findings:** M1 (security audit)
 **Root cause:** Method exists, ARCHITECTURE.md claims it's used as a DoS guard, but it was removed from server.ts at `75177e8` because it broke cross-domain link clicks. Dead code with stale documentation.
+**Fix:** Deleted `domainMatches()` method (and its orphaned helper `extractRegistrableDomain` + `TWO_PART_TLDS` constant) from `src/security/tab-ownership.ts`. Updated ARCHITECTURE.md ownership-flow steps 7d.2/7d.3 to reflect that the deferred path triggers on "extension engine selected" alone, plus the Domain-guard bullet rewritten to record the deletion + rationale. Re-wiring would re-introduce the original cross-domain-click bug; the post-execution `_meta.tabId` verification at step 8.post2 already provides identity-based ownership without needing a pre-execution domain guard. No new tests (TypeScript compile-time check catches any re-introduction; zero callers existed). Doc + dead-code cleanup, no reviewer dispatched.
 
 ### T25. Fix shutdown detection in CommandDispatcher
 **Findings:** M17 (daemon-core audit)
