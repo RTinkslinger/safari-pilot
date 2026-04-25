@@ -23,7 +23,10 @@ private typealias HBRequest = HummingbirdCore.Request
 @available(macOS 14.0, *)
 public final class ExtensionHTTPServer: @unchecked Sendable {
 
-    private let port: UInt16
+    /// Port the server binds to. Public getter so tests can connect without
+    /// reaching into private state via Mirror reflection (SD-17). Production
+    /// code that needs the port should also read it through this surface.
+    public let port: UInt16
     private let bridge: ExtensionBridge
     private let healthStore: HealthStore
     private let onReady: (@Sendable () async -> Void)?

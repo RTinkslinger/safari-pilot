@@ -677,17 +677,15 @@ private func startTestHTTPServer() -> (ExtensionHTTPServer, ExtensionBridge, Hea
     return (server, bridge, health)
 }
 
+// MARK: - testPort
+// SD-17 cleanup: the prior Mirror-based accessor silently returned 0 if anyone
+// renamed the private `port` field (e.g. to `_port`), causing tests to connect
+// to http://127.0.0.1:0 with confusing failures. The SUT now exposes `port`
+// as a `public let` so tests use the real getter and a rename surfaces as a
+// compile error instead of a runtime flake.
 @available(macOS 14.0, *)
 extension ExtensionHTTPServer {
-    /// Expose the port for test access. Uses the fact that tests increment a counter.
-    var testPort: UInt16 {
-        // Access the stored port property via mirror since it's private.
-        let mirror = Mirror(reflecting: self)
-        for child in mirror.children where child.label == "port" {
-            return child.value as! UInt16
-        }
-        return 0
-    }
+    var testPort: UInt16 { port }
 }
 
 // MARK: - Synchronous HTTP helpers using URLSession

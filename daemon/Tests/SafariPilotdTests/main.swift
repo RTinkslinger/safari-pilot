@@ -47,6 +47,25 @@ struct TestFailure: Error, CustomStringConvertible {
     init(_ msg: String) { description = msg }
 }
 
+/// Poll `predicate` every `pollInterval` seconds until it returns true OR
+/// `timeout` elapses. Returns true on success, false on timeout.
+///
+/// Replaces fixed `Thread.sleep(0.1)` followed by a single observation —
+/// such tests assume a 100ms wall window is enough for whatever async work
+/// is in flight, which flakes under thermal-throttled CI. SD-17 cleanup.
+func waitUntil(
+    timeout: TimeInterval = 2.0,
+    pollInterval: TimeInterval = 0.02,
+    _ predicate: () -> Bool
+) -> Bool {
+    let deadline = Date(timeIntervalSinceNow: timeout)
+    while !predicate() {
+        if Date() >= deadline { return false }
+        Thread.sleep(forTimeInterval: pollInterval)
+    }
+    return true
+}
+
 // MARK: - Tests
 
 print("SafariPilotdTests")
