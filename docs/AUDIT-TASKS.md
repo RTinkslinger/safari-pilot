@@ -183,10 +183,12 @@
 **Root cause:** Falls through to active tab when URL not found. Should return null when `tabUrl` was explicitly provided but unmatched, only fall through when `tabUrl` is absent.
 **Origin:** `9e8ad6f` (2026-04-12) legacy pattern. URL matching added in `14f37f5` but fallback preserved.
 
-### T28. Fix health gate to skip extension recovery for AppleScript-only tools
+### T28. Fix health gate to skip extension recovery for AppleScript-only tools ✅ RESOLVED 2026-04-25 (commit `3533785`)
 **Findings:** M24 (init-session audit)
 **Root cause:** Gate at `server.ts:413` runs before engine selection at line 520. Has zero awareness of which engine the tool needs. `safari_list_tabs` triggers 10s extension recovery it will never use.
 **Origin:** `5fb94fa` (2026-04-23).
+
+**Fix:** Extracted `requiresExtension(req)` from `selectEngine` into `engine-selector.ts` so the gate and the engine selector share one definition. Modified `recoverSession` to accept `{ extensionRecovery: boolean }`; the gate passes `extensionRecovery: extensionMissing` so window-only recovery runs without polling for the extension when the tool can be served by AppleScript/Daemon. Discriminating unit test in `pre-call-gate.test.ts` asserts /status is hit exactly once (not 11×) when the extension is unreachable and the tool declares no extension flags. Mutation-verified: reverting both the gate condition and the extensionRecovery option re-introduces the 10.05s wait + SessionRecoveryError. The two existing SD-20 tests were retargeted to `safari_query_shadow` (which declares `requiresShadowDom: true`) so they keep covering the recovery-times-out branch under the engine-aware gate.
 
 ---
 
