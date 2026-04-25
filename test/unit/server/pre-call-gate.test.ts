@@ -49,6 +49,32 @@ function callExecuteToolWithSecurity(
   return (server as unknown as ServerInternals).executeToolWithSecurity(name, params);
 }
 
+/**
+ * Register a stub tool so the gate can see its declared requirements.
+ * In production the server's `initialize()` registers all 76 tools; these
+ * unit tests bypass `initialize()` (which would do real I/O for daemon
+ * availability) and register only the specific tool the test exercises.
+ *
+ * T28 — the gate consults `requiresExtension(toolDef.requirements)` to
+ * decide whether to fire extension recovery, so the registered
+ * `requirements` block must match the production tool's declaration.
+ */
+function registerStubTool(
+  server: SafariPilotServer,
+  name: string,
+  requirements: { idempotent: boolean; requiresShadowDom?: boolean },
+): void {
+  server.registerTool({
+    name,
+    description: 'test stub for pre-call gate',
+    inputSchema: { type: 'object', properties: {} } as Record<string, unknown>,
+    requirements,
+    handler: async () => {
+      throw new Error(`stub handler for ${name}: should not be reached when the gate fires`);
+    },
+  });
+}
+
 describe('SafariPilotServer pre-call gate (SD-20): SessionRecoveryError on broken system', () => {
   const mockExec = execSync as unknown as ReturnType<typeof vi.fn>;
 
@@ -81,13 +107,25 @@ describe('SafariPilotServer pre-call gate (SD-20): SessionRecoveryError on broke
 
     const server = new SafariPilotServer(DEFAULT_CONFIG);
     setSessionWindowId(server, 99999);
+    registerStubTool(server, 'safari_query_shadow', {
+      idempotent: true,
+      requiresShadowDom: true,
+    });
 
     vi.useFakeTimers();
     // Register the rejection handler BEFORE advancing timers — otherwise the
     // recovery loop's rejection lands in an unhandled-rejection window.
-    const callPromise = callExecuteToolWithSecurity(server, 'safari_navigate', {
-      url: 'https://example.com',
-      tabId: 1,
+    //
+    // Tool choice: `safari_query_shadow` declares
+    // `requirements: { idempotent: true, requiresShadowDom: true }`. T28
+    // made the gate engine-aware — extension recovery only fires when the
+    // tool's requirements include extension capabilities, so this test must
+    // use an extension-requiring tool to keep exercising the
+    // recovery-times-out branch.
+    const callPromise = callExecuteToolWithSecurity(server, 'safari_query_shadow', {
+      tabUrl: 'https://example.com',
+      hostSelector: 'app-root',
+      shadowSelector: 'div',
     });
     const expectation = expect(callPromise).rejects.toBeInstanceOf(SessionRecoveryError);
 
@@ -148,11 +186,18 @@ describe('SafariPilotServer pre-call gate (SD-20): SessionRecoveryError on broke
 
     const server = new SafariPilotServer(DEFAULT_CONFIG);
     setSessionWindowId(server, 99999);
+    registerStubTool(server, 'safari_query_shadow', {
+      idempotent: true,
+      requiresShadowDom: true,
+    });
 
     vi.useFakeTimers();
-    const callPromise = callExecuteToolWithSecurity(server, 'safari_navigate', {
-      url: 'https://example.com',
-      tabId: 1,
+    // T28 — gate is engine-aware, so the test must use an extension-requiring
+    // tool to keep exercising the recovery-times-out branch.
+    const callPromise = callExecuteToolWithSecurity(server, 'safari_query_shadow', {
+      tabUrl: 'https://example.com',
+      hostSelector: 'app-root',
+      shadowSelector: 'div',
     });
     const expectation = expect(callPromise).rejects.toBeInstanceOf(SessionRecoveryError);
     await vi.advanceTimersByTimeAsync(15_000);
@@ -169,6 +214,57 @@ describe('SafariPilotServer pre-call gate (SD-20): SessionRecoveryError on broke
     expect(err.message).toContain('session window closed',
                                  'window-down branch in SessionRecoveryError ctor must surface');
     expect(err.retryable).toBe(true);
+  });
+
+  it('skips extension recovery when extension is down but the tool does not require it (T28)', async () => {
+    // T28 — the pre-call gate previously fired 10s extension-recovery
+    // polling on EVERY tool call when extension was unavailable, even for
+    // tools the engine selector would route to AppleScript. `safari_list_tabs`
+    // declares `requirements: { idempotent: true }` (no extension flags), so
+    // the gate must skip extension polling and let engine selection route
+    // the call to AppleScript.
+    //
+    // Discriminator: a regression where the gate ignores tool requirements
+    // makes /status fire 11× (1 initial probe + 10× recovery polling). With
+    // the engine-aware gate the call hits /status exactly ONCE.
+    mockExec.mockReturnValue('true\n'); // window OK throughout
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        ext: false, // extension UNAVAILABLE
+        mcp: false,
+        sessionTab: false,
+        lastPingAge: null,
+        activeSessions: 0,
+      }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const server = new SafariPilotServer(DEFAULT_CONFIG);
+    setSessionWindowId(server, 99999);
+    registerStubTool(server, 'safari_list_tabs', { idempotent: true });
+
+    let thrown: unknown;
+    try {
+      await callExecuteToolWithSecurity(server, 'safari_list_tabs', {});
+    } catch (e) {
+      thrown = e;
+    }
+
+    // Tool may fail downstream (no real engines wired), but it must NOT
+    // fail with SessionRecoveryError — that would mean recovery fired.
+    expect(
+      thrown,
+      'gate must NOT throw SessionRecoveryError for an extension-unrelated tool '
+        + 'when the extension is unavailable',
+    ).not.toBeInstanceOf(SessionRecoveryError);
+
+    expect(
+      fetchMock.mock.calls.length,
+      'gate must call /status exactly once (initial probe) when the tool does '
+        + 'not need the extension; 11 means extension-recovery polling fired '
+        + 'unnecessarily',
+    ).toBe(1);
   });
 
   it('gate does NOT throw SessionRecoveryError when probes are healthy AND does NOT trigger the recovery loop', async () => {
@@ -193,6 +289,9 @@ describe('SafariPilotServer pre-call gate (SD-20): SessionRecoveryError on broke
 
     const server = new SafariPilotServer(DEFAULT_CONFIG);
     setSessionWindowId(server, 99999);
+    // T28 — production tool requirements; gate is engine-aware so the
+    // tool must be registered with its real declared requirements.
+    registerStubTool(server, 'safari_navigate', { idempotent: false });
 
     let thrown: unknown;
     try {

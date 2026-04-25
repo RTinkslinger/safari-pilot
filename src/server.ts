@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import type { Engine, ToolResponse, ToolRequirements, ClickContext } from './types.js';
 import type { IEngine } from './engines/engine.js';
-import { selectEngine, EngineUnavailableError } from './engine-selector.js';
+import { selectEngine, requiresExtension, EngineUnavailableError } from './engine-selector.js';
 import { AppleScriptEngine } from './engines/applescript.js';
 import { DaemonEngine } from './engines/daemon.js';
 import { ExtensionEngine } from './engines/extension.js';
@@ -420,7 +420,13 @@ export class SafariPilotServer {
     name: string,
     params: Record<string, unknown>,
   ): Promise<ToolResponse> {
-    // 0. Pre-call health gate — live check before every tool call
+    // 0. Pre-call health gate — live check before every tool call.
+    //
+    // T28 — the gate must be engine-aware: extension recovery polls for up
+    // to 10s, so it must only fire for tools whose declared requirements
+    // actually need the extension. Tools without extension flags (e.g.
+    // `safari_list_tabs`) get routed to AppleScript/Daemon downstream and
+    // would waste the recovery window otherwise.
     const preStatus = await this.checkExtensionStatus();
     const windowOk = await this.checkWindowExists();
     this.setEngineAvailability({
@@ -428,9 +434,15 @@ export class SafariPilotServer {
       extension: preStatus.ext,
     });
 
-    if (!preStatus.ext || !windowOk) {
+    const toolDef = this.tools.get(name);
+    const toolNeedsExtension = toolDef ? requiresExtension(toolDef.requirements) : false;
+    const extensionMissing = !preStatus.ext && toolNeedsExtension;
+
+    if (!windowOk || extensionMissing) {
       const recoveryTraceId = `trace_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
-      const recovered = await this.recoverSession(recoveryTraceId);
+      const recovered = await this.recoverSession(recoveryTraceId, {
+        extensionRecovery: extensionMissing,
+      });
       if (!recovered) {
         throw new SessionRecoveryError({
           daemon: this.engineAvailability.daemon,
@@ -528,7 +540,6 @@ export class SafariPilotServer {
     this.circuitBreaker.assertClosed(domain);
 
     // 7. Engine selection — pick the best available engine for this tool
-    const toolDef = this.tools.get(name);
     let selectedEngineName: Engine = 'applescript';
     if (toolDef) {
       try {
@@ -1113,12 +1124,20 @@ end tell`;
 
   /**
    * Attempt transparent session recovery. Called when pre-call gate finds
-   * a component down. Blocks up to 10s. Returns true if recovered.
+   * a component down. Re-opens the session window if needed (fast). When
+   * `extensionRecovery` is true, additionally polls for the extension to
+   * reconnect for up to 10s. Returns true if every requested component
+   * recovered.
    */
-  private async recoverSession(traceId: string): Promise<boolean> {
+  private async recoverSession(
+    traceId: string,
+    options: { extensionRecovery?: boolean } = {},
+  ): Promise<boolean> {
+    const { extensionRecovery = true } = options;
     const start = Date.now();
     trace(traceId, 'server', 'recovery_start', {
       windowId: this._sessionWindowId,
+      extensionRecovery,
     });
 
     // Re-open window if gone
@@ -1126,6 +1145,17 @@ end tell`;
     if (!windowOk) {
       this._sessionWindowId = undefined;
       await this.ensureSessionWindow(traceId);
+    }
+
+    // T28 — for tools that don't need the extension, window-only recovery is
+    // enough; routing falls through to AppleScript/Daemon downstream.
+    if (!extensionRecovery) {
+      const duration = Date.now() - start;
+      trace(traceId, 'server', 'recovery_success', {
+        durationMs: duration,
+        extensionRecovery: false,
+      });
+      return true;
     }
 
     // Poll for extension connection (up to 10s)

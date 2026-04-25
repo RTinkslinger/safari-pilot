@@ -41,6 +41,27 @@ export const ENGINE_CAPS: Record<Engine, EngineCapabilities> = {
   },
 };
 
+/**
+ * True when the tool's declared capabilities can only be served by the
+ * Safari Web Extension — Shadow DOM piercing, CSP bypass, dialog/network
+ * interception, HttpOnly cookies, cross-origin frames, async JS.
+ *
+ * Used by `selectEngine` (routing) and the pre-call health gate in
+ * `SafariPilotServer.executeToolWithSecurity` (T28 — to skip extension
+ * recovery for AppleScript-only tools when the extension is unreachable).
+ */
+export function requiresExtension(tool: ToolRequirements): boolean {
+  return !!(
+    tool.requiresShadowDom ||
+    tool.requiresCspBypass ||
+    tool.requiresDialogIntercept ||
+    tool.requiresNetworkIntercept ||
+    tool.requiresCookieHttpOnly ||
+    tool.requiresFramesCrossOrigin ||
+    tool.requiresAsyncJs
+  );
+}
+
 export function selectEngine(
   tool: ToolRequirements,
   available: { daemon: boolean; extension: boolean },
@@ -51,16 +72,7 @@ export function selectEngine(
   const breakerTripped = breaker?.isEngineTripped('extension') === true;
   const extensionAvailable = available.extension && !extensionKilled && !breakerTripped;
 
-  const needsExtension =
-    tool.requiresShadowDom ||
-    tool.requiresCspBypass ||
-    tool.requiresDialogIntercept ||
-    tool.requiresNetworkIntercept ||
-    tool.requiresCookieHttpOnly ||
-    tool.requiresFramesCrossOrigin ||
-    tool.requiresAsyncJs;
-
-  if (needsExtension) {
+  if (requiresExtension(tool)) {
     if (extensionAvailable) return 'extension';
     throw new EngineUnavailableError(
       'This operation requires the Safari Web Extension which is not available'
