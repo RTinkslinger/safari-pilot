@@ -21,21 +21,6 @@ Running list of findings surfaced by reviewers (Codex, `upp:test-reviewer`, advi
   - `daemon/Sources/SafariPilotdCore/HealthStore.swift` (lines 164-167 prune; constructor + Date sites)
   - `daemon/Tests/SafariPilotdTests/HealthStoreTests.swift` — add prune-transition test
 
-### SD-22 — 4 ERROR_CODES values declared but unused (no concrete class, no throw sites)
-- **Severity:** P3 (dead declaration; cosmetic but asymmetric with the other 17 codes)
-- **Source:** Filed during SD-06 work (2026-04-25). grep-zero verified across `src/`, `daemon/Sources/`, `extension/`.
-- **Symptom:** `src/errors.ts` ERROR_CODES object declares `ELEMENT_NOT_INTERACTABLE`, `CROSS_ORIGIN_FRAME`, `DIALOG_UNEXPECTED`, `FRAME_NOT_FOUND` as members of the const object — but no concrete `SafariPilotError` subclass uses them, and no code anywhere references the strings. They are pure dead declarations that implicitly promise error-class semantics the codebase does not actually offer.
-- **Current understanding (not verified):** two viable paths:
-  - **(a) Delete them.** Simplest; removes the dead declaration.
-  - **(b) Add concrete classes** for each (ElementNotInteractableError, CrossOriginFrameError, DialogUnexpectedError, FrameNotFoundError) and wire up the throw sites that SHOULD be using them — e.g. `safari_click` actionability checks for ELEMENT_NOT_INTERACTABLE, `safari_eval_in_frame` / `safari_list_frames` for FRAME_NOT_FOUND, dialog-unexpected for safari_handle_dialog race conditions.
-- **Discriminator for the fix:**
-  - Path (a): grep shows zero references to any of the 4 codes after deletion; tool handlers that would have thrown a specific code throw a plain Error or a different existing code instead.
-  - Path (b): a new unit test per new class + at least one integration/e2e test that asserts the throw-site uses the new class (e.g. safari_eval_in_frame with a non-matching frameSelector throws FrameNotFoundError).
-- **Entry points / files:**
-  - `src/errors.ts` (ERROR_CODES + no-class codes)
-  - `src/tools/interaction.ts` (safari_click's actionability check — likely home for ElementNotInteractableError)
-  - `src/tools/frames.ts` (FrameNotFoundError throw sites)
-  - `src/tools/interaction.ts` (DialogUnexpectedError — safari_handle_dialog)
 
 
 
@@ -137,6 +122,18 @@ Running list of findings surfaced by reviewers (Codex, `upp:test-reviewer`, advi
 ---
 
 ## Resolved
+
+### SD-22 — Delete 4 dead ERROR_CODES (path a) (2026-04-25, commit `2779832`)
+
+Resolved via path (a) — simplest, removes the dead declaration. The 4 codes (`ELEMENT_NOT_INTERACTABLE`, `CROSS_ORIGIN_FRAME`, `DIALOG_UNEXPECTED`, `FRAME_NOT_FOUND`) had zero references anywhere in src/, daemon/Sources/, extension/, or tests — they implicitly promised error-class semantics the codebase did not offer.
+
+`src/errors.ts` ERROR_CODES now has 21 codes (was 25). All 21 have concrete `SafariPilotError` subclasses + throw sites locked by SD-06's per-class tests.
+
+`test/unit/errors.test.ts` header comment updated to mark SD-22 resolved (the test previously documented these 4 codes as "unused, filed as SD-22").
+
+Path (b) (adding concrete classes + wiring throw sites in `safari_click`, `safari_eval_in_frame`, `safari_handle_dialog`) would be feature-work, not coverage-work, and is out of SD-22's stated scope.
+
+Doc-only / pure-deletion fix; no reviewer dispatched per the user defaults. Result: 103 unit tests still pass, build clean.
 
 ### SD-21 — ensureSessionWindow flake (orphan cleanup + 15s timeout) (2026-04-25, commit `c9e8b82`)
 
