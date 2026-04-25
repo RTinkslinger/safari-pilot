@@ -417,6 +417,55 @@ func registerHealthStoreTests() {
             "session must be pruned at 61s post-touch"
         )
     }
+
+    // T39 (re-scoped): in-memory `httpRequestErrorTimestamps` must not grow
+    // unbounded. `recordHttpRequestError` has 4 production callers
+    // (`main.swift:205`, `ExtensionHTTPServer.swift:342, 529, 540`) — every
+    // HTTP failure on the extension bridge appends a Date. Without pruning,
+    // the array grows in proportion to daemon uptime × failure rate.
+    //
+    // Discriminator: seed 10 stale entries via `recordHttpRequestErrorAt`
+    // (append-only test seam, mirrors `recordRoundtripAt`), then call the
+    // production path `recordHttpRequestError` once. After the fix, only
+    // the fresh entry remains in memory; before the fix, all 11 linger.
+    //
+    // Note: `incrementRoundtrip` / `incrementTimeout` / `incrementUncertain`
+    // / `incrementForceReload` were excluded from T39's scope because they
+    // have ZERO production callers (verified 2026-04-26). Filed as SD-33 —
+    // dead instrumentation: wire or delete.
+    test("testRecordHttpRequestErrorPrunesStaleEntries") {
+        let (dir, healthPath) = makeTempHealthPath()
+        defer { cleanup(dir) }
+
+        let store = HealthStore(persistPath: healthPath)
+
+        // Seed 10 entries past the 1h window via the append-only test seam.
+        let stale = Date(timeIntervalSinceNow: -3700)
+        for _ in 0..<10 {
+            store.recordHttpRequestErrorAt(stale)
+        }
+
+        // Production path: should append + prune-on-append.
+        store.recordHttpRequestError()
+
+        // Inspect in-memory storage via Mirror — the array is private and
+        // there is no public count accessor (only `httpRequestErrorCount1h`,
+        // which filters on read and returns 1 either way). Reflection is the
+        // only oracle that discriminates pruned from un-pruned in memory.
+        let mirror = Mirror(reflecting: store)
+        guard let timestamps = mirror.children
+            .first(where: { $0.label == "httpRequestErrorTimestamps" })?
+            .value as? [Date]
+        else {
+            try assertTrue(false, "httpRequestErrorTimestamps not accessible via Mirror")
+            return
+        }
+
+        try assertEqual(
+            timestamps.count, 1,
+            "recordHttpRequestError must prune entries older than 1h; found \(timestamps.count) in memory"
+        )
+    }
 }
 
 // MARK: - SD-23 test helper: MockClock

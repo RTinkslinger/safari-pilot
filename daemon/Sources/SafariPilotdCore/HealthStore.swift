@@ -144,7 +144,19 @@ public final class HealthStore: @unchecked Sendable {
     }
 
     public func recordHttpRequestError() {
-        queue.sync { httpRequestErrorTimestamps.append(Date()) }
+        queue.sync {
+            httpRequestErrorTimestamps.append(Date())
+            let cutoff = Date(timeIntervalSinceNow: -3600)
+            httpRequestErrorTimestamps.removeAll(where: { $0 < cutoff })
+        }
+    }
+
+    /// Test-only seam: append an httpRequestError entry at an explicit timestamp
+    /// without auto-pruning. Used by tests to seed stale data so the production
+    /// `recordHttpRequestError` path can be observed pruning it. Mirrors the
+    /// existing `recordRoundtripAt(_)` seam.
+    public func recordHttpRequestErrorAt(_ date: Date) {
+        queue.sync { httpRequestErrorTimestamps.append(date) }
     }
 
     // MARK: - Session registry
