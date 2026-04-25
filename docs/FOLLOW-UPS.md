@@ -234,6 +234,22 @@ Running list of findings surfaced by reviewers (Codex, `upp:test-reviewer`, advi
   - `src/engines/daemon.ts` — add `isTcpMode()`
   - `test/unit/server/ensure-session-window.test.ts`, `test/unit/server/record-tool-failure.test.ts`, `test/unit/engines/daemon.test.ts` — swap peeks for getter calls
 
+### SD-21 — `ensureSessionWindow` 5s execSync timeout fragile under Safari load
+- **Severity:** P2 (intermittent flake; not blocking but actively pollutes the e2e feedback loop and forces manual leaked-window cleanup + retry)
+- **Source:** Filed 2026-04-25 during SD-03 sprint. Repeated occurrences: T11/T12 e2e runs (CHECKPOINT.md), this session's SD-03 first phase3 run (10/14 timeouts), this session's first `npm run test:all` (9/36 phase2 timeouts). Previously deferred in CHECKPOINT.md ("file as SD-NN if it keeps flaring") — repeat now confirmed.
+- **Symptom:** `SafariPilotServer.ensureSessionWindow` (`src/server.ts:1166-1196`) runs `osascript -e 'tell application "Safari" to make new document …'` via `execSync` with `timeout: 5000`. When Safari is under load (multiple windows open, leaked "Safari Pilot — Active Session" windows from prior crashes, recent extension activity), `make new document` exceeds 5s. Result: `SessionWindowInitError(reason: 'execFailed')` propagates → tool calls fail → all subsequent tests in the run cascade-fail with response timeouts. Manual recovery: `osascript` close-by-name on leaked session windows, wait, retry. `checkWindowExists` (`src/server.ts:1090-1102`) shares the same 2s timeout pattern and is also affected.
+- **Current understanding (not verified):** The 5s budget is tight for AppleScript's actual cold-path latency on a moderately-loaded Safari instance. Three options:
+  - **(a) Raise the timeout.** Bump to 15-20s. Trivial; legitimate hangs surface 3-4× slower.
+  - **(b) Auto-cleanup at init.** Before calling `make new document`, scan and close any orphaned "Safari Pilot — Active Session" windows that aren't `_sessionWindowId`. T10's SIGTERM handler already does this for clean exits — repeat the logic at startup for crash-recovery.
+  - **(c) Replace `execSync` + AppleScript** with a daemon-side or extension-side new-window primitive. Larger surgery.
+- **Discriminator for the fix:**
+  - For (a): parametrize the timeout, write a unit test injecting a slow `execSync` mock (returns at, e.g., 4900ms) and assert success within the raised budget; revert default to 5s → test fails.
+  - For (b): write an e2e test that pre-creates two "Safari Pilot — Active Session" windows via osascript, then spawns `dist/index.js`, asserts `ensureSessionWindow` succeeds AND that the orphans were closed. Revert auto-cleanup → orphans remain → init either succeeds with 3 windows or times out.
+- **Entry points / files:**
+  - `src/server.ts:1166-1196` (ensureSessionWindow), `src/server.ts:1090-1102` (checkWindowExists), `src/server.ts:1287-1310` (close on shutdown — T10 reference for option (b))
+  - `test/unit/server/ensure-session-window.test.ts` — extend with timeout scenario for option (a)
+  - New e2e test for option (b)
+
 ### SD-20 — Pre-call gate negative-path test (split off from SD-03 Phase 1)
 - **Severity:** P2 (not blocking — the gate's healthy path is implicitly tested by every successful tool call; only the failure-mode + recovery branches lack direct coverage)
 - **Source:** SD-03 Phase 1 systematic-debugging investigation (2026-04-25). Filed when Phase 1 concluded the SD-03-Test-1 oracle could not be made discriminating from happy-path e2e without manufactured SUT changes.
