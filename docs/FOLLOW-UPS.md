@@ -12,57 +12,7 @@ Running list of findings surfaced by reviewers (Codex, `upp:test-reviewer`, advi
 
 ## Open
 
-### SD-30 — Banking-disable-extension is a legitimate security feature, currently unimplemented
-
-Filed during T31 deletion. The original `extensionAllowed` field on `DomainPolicy` was computed per domain (false for `SENSITIVE_PATTERNS` like banks/payment-processors) but never read by `selectEngine`. T31 chose deletion over wiring because wiring requires (a) flipping `BASE_DEFAULT_POLICY.extensionAllowed` to `true` so the default isn't "extension blocked on every unknown domain", (b) deciding the user-facing semantic when a tool needs the extension on a banking domain (throw `EngineUnavailableError`? degrade silently? log + proceed?), and (c) discriminating tests for both the block path and the non-block default path.
-
-If the security feature is wanted: re-add `extensionAllowed` to PolicyRule + EvaluateResult, default it to `true` on BASE_DEFAULT_POLICY (NOT `false`), keep `false` on SENSITIVE_POLICY, extend `selectEngine` with an optional `domainPolicy?: { extensionAllowed: boolean }` parameter, refuse `extension` when extensionAllowed=false (independent of breaker/availability), update both call sites in server.ts (line 547+ and 996+), and write a test that asserts: (a) banking URL + extension-required tool → throws `EngineUnavailableError`; (b) banking URL + extension-optional tool → routes to daemon/applescript; (c) non-banking URL → extension as before. Banking-domain test fixtures in `test/unit/security/screenshot-redaction.test.ts` already exist and could anchor the test data.
-
-**Discriminator:** revert the new selectEngine guard → at least the banking-extension-required test must fail.
-
-**Entry-points:** `src/security/domain-policy.ts:35` (BASE_DEFAULT_POLICY), `src/engine-selector.ts:65` (selectEngine), `src/server.ts:547,996` (call sites).
-
-  - `ARCHITECTURE.md` (§Test Architecture, Daemon Tests section)
-
-### SD-33 — HealthStore unwired increment methods (dead instrumentation)
-
-Filed during T39 re-scope (2026-04-26). The `HealthStore` class defines five timestamp-array writers, but four have ZERO production callers (verified `daemon/Sources/` repo-wide grep, including reading 508 lines of `CommandDispatcher.swift`):
-
-| Method | Production callers | Status |
-|---|---|---|
-| `recordHttpRequestError` | 4 (`main.swift:205`, `ExtensionHTTPServer.swift:342, 529, 540`) | Wired (T39 added prune) |
-| `incrementRoundtrip` | 0 | Unwired |
-| `incrementTimeout` | 0 | Unwired |
-| `incrementUncertain` | 0 | Unwired |
-| `incrementForceReload` | 0 | Unwired |
-| `recordRoundtripAt` (test seam) | 0 | Test-only by design |
-
-The unwired methods feed `roundtripCount1h` / `timeoutCount1h` / `uncertainCount1h` / `forceReloadCount24h` accessors that ARE read by `ExtensionBridge.swift:513-516` into the health snapshot — but always read 0 because nothing writes. So the daemon ships health-snapshot fields that are silently meaningless.
-
-Two valid resolutions, both atomic:
-
-**Option A — Wire the instrumentation.** Find the appropriate production sites and call the increment methods:
-- `incrementRoundtrip()` ← inside `CommandDispatcher.handle` after a Safari command succeeds (or in the bridge response path). Decide: every command, or only the slow ones?
-- `incrementTimeout()` ← inside the timeout-handler branch where commands abort past their deadline.
-- `incrementUncertain()` ← in the path where DaemonEngine returns `engine_uncertain: true` (currently nowhere — needs source decision).
-- `incrementForceReload()` ← already invoked from tests; production trigger is the recovery `forceReloadExtension` flow which should call this on each emergency reload.
-Then ship + test each wiring as a separate atomic item.
-
-**Option B — Delete the dead code.** Remove the five methods + their backing arrays + the `*Count1h` / `forceReloadCount24h` accessors + the health-snapshot fields that consume them. T37/T31 deletion-only precedent applies. Smaller surface area, honest signal: the daemon admits it doesn't track these metrics.
-
-**Discriminator (option A):** the chosen wiring site is exercised by an existing or new test → after the wire, `*Count1h` reads non-zero in the test scenario.
-
-**Discriminator (option B):** post-deletion, `git log -p` shows the methods, accessors, and tests removed; `swift build` clean; the health snapshot drops the now-meaningless fields.
-
-**Entry-points:**
-- `daemon/Sources/SafariPilotdCore/HealthStore.swift:21-29` (private fields), `74-79` (public count accessors), `88-90, 94-99, 146-156` (public writers)
-- `daemon/Sources/SafariPilotdCore/ExtensionBridge.swift:513-516` (health-snapshot consumers)
-- `daemon/Tests/SafariPilotdTests/HealthStoreTests.swift:60-74, 123-135` (existing tests)
-- `daemon/Tests/SafariPilotdTests/CommandDispatcherTests.swift:542-543` and `ExtensionBridgeTests.swift:379-380` (further test-only callers)
-
-Do not "just fix" — pick option A or B first, then run Phase 1 of `upp:systematic-debugging` against the chosen path.
-
-
+*All open SDs resolved or split. See Resolved section below.*
 
 ---
 
@@ -131,6 +81,34 @@ At construction time `Date()` ≈ `mockClock.now()`. The cutoff/elapsed reads th
 upp:test-reviewer (fast mode, Checks 6/7/8): **PASS** (CRITICAL: 0, MAJOR: 0, ADVISORY: 2). Advisories non-gating: (1) suggest `MockClock(start: Date(timeIntervalSince1970: 1_700_000_000))` to make insertion-vs-real-time gap visually apparent; (2) 1s margin in disconnect test is fine for strict `>` inequality.
 
 Total tests: 124 (unchanged — refactor only).
+
+---
+
+### SD-30 — Banking-disable-extension: permanently deferred (2026-04-26, spec `5800d8f`)
+
+**Decision:** Do not implement. Permanently closed.
+
+**Rationale (corrected):** The extension has 4 unique capabilities applescript/daemon lack: httpOnly cookie access (`safari_get_cookies`), network request interception (`safari_intercept_requests`, `safari_mock_request`), CSP bypass for script injection, and closed shadow DOM traversal. On banking domains the agent can still exercise all four if it owns a tab there. The decision to defer is not that the extension adds no marginal risk — it does. The decision is that the complexity cost of per-domain engine restriction (`extensionAllowed` in `DomainPolicy` + `selectEngine` wiring + discriminating tests + operator config) is not justified given the defense-in-depth nature of the pipeline.
+
+**Accepted risks documented in spec:** On banking domains, the agent can read httpOnly session cookies and intercept network requests if it owns a tab.
+
+**Decision record:** `docs/upp/specs/2026-04-26-threat-model-decisions.md` § SD-30. Tracker entry removed from Deferred Features.
+
+---
+
+### SD-33 — HealthStore unwired increment methods: split into 4 sub-items (2026-04-26, spec `5800d8f`)
+
+**Decision:** Wire Option A. Split into 4 atomic tracker items: SD-33a (incrementRoundtrip), SD-33b (incrementTimeout), SD-33c (investigate first), SD-33d (incrementForceReload).
+
+**Rationale:** The methods, backing arrays, and health-snapshot fields exist. Wiring them gives real telemetry that enables named operational decisions (roundtripCount1h confirms extension alive; timeoutCount1h is an alert signal; forceReloadCount24h measures extension instability). SD-33c (incrementUncertain) has no verified production path — investigation required before wiring or deletion; must not wire to an invented call site.
+
+**Sub-items (open in TRACKER.md):**
+- SD-33a — Wire `incrementRoundtrip()` → `CommandDispatcher.handle()` success path
+- SD-33b — Wire `incrementTimeout()` → command deadline expiry branch
+- SD-33c — INVESTIGATE `incrementUncertain()` before deciding; wire or delete after Phase 1
+- SD-33d — Wire `incrementForceReload()` → `forceReloadExtension()` in `ExtensionBridge.swift`
+
+**Decision record:** `docs/upp/specs/2026-04-26-threat-model-decisions.md` § SD-33. TRACKER.md SD-33 parent moved to Resolved; sub-items filed as P3 open.
 
 ### SD-27 — `handleInternalCommand` happy-path coverage for extension_status / _execute / _health (2026-04-25, commit `5d37161`)
 

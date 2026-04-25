@@ -410,19 +410,18 @@
 - DOM-blur cannot protect OS-level `screencapture -x` chrome (autofill UI, password manager popups, system notifications), and a malicious page can remove the blur class before capture. Soft blur was theatre.
 - A domain-allowlist refusal needs no paint timing, no cleanup, no orchestration — just a pre-execution check with a clear `ScreenshotBlockedError`.
 - The agent has multiple alternate read channels for the same DOM content; closing the screenshot channel does not close information-leakage. So the threat model that justifies T59 is not "agent extracts data from screenshot" — it's "agent screenshots accidentally capture human-credentials-in-OS-chrome that aren't in the DOM at all" (autofill suggestions, password manager UI, etc.).
-**Pre-work needed before wiring:**
-1. **Threat-model decision** — same shape as SD-30. Who is the adversary? (Likely: human reviewer of agent transcripts + accidental screenshot of OS chrome.)
-2. **Default-policy decision** — block-list (banking patterns only, default-allow elsewhere) vs allow-list (default-deny everywhere except documented productive sites). SD-30's banking-disable-extension reasoning applies here.
-3. **Configurability** — `safari-pilot.config.json` per-deployment override.
-**Entry-points (when wiring):**
-- `src/tools/extraction.ts` — `safari_take_screenshot` handler; add a pre-execution domain check.
-- `src/security/` — new `screenshot-policy.ts` (or extend `domain-policy.ts`) holding the pattern list. Banking-domain patterns from the deleted `screenshot-redaction.ts` (BANKING_DOMAIN_PATTERNS regex list at commit `74e4847~1`) are the obvious starting point.
-- `src/errors.ts` — new `ScreenshotBlockedError` with code `SCREENSHOT_BLOCKED` and a `domain` field.
-- `safari-pilot.config.json` — new `screenshotPolicy.blocked: string[]` array.
-**Discriminator:**
-- Owned tab on `chase.com` + `safari_take_screenshot` → throws `ScreenshotBlockedError` with `code: 'SCREENSHOT_BLOCKED'`. Tab is preserved (not closed); other tools on the same tab still work.
-- Owned tab on `example.com` + `safari_take_screenshot` → succeeds.
-**Do not wire before threat-model + default-policy decision is recorded.** Same caveat as SD-30.
+**Status (2026-04-26): IN PROGRESS — threat-model decided, plan written, implementation pending.**
+- Spec: `docs/upp/specs/2026-04-26-threat-model-decisions.md` (commit `5800d8f`)
+- Plan: `docs/upp/plans/2026-04-26-t59-screenshot-domain-policy.md` (commit `9165e63`)
+- Branch: `fix/t59-screenshot-domain-policy`
+
+**Decided design:**
+- New `src/security/screenshot-policy.ts` — `ScreenshotPolicy` class with anchored `BANKING_DOMAIN_SEED` (mirrors `SENSITIVE_PATTERNS` + hsbc + barclays)
+- New `ScreenshotBlockedError` in `src/errors.ts` (code `SCREENSHOT_BLOCKED`)
+- Handler-level check in `ExtractionTools.handleTakeScreenshot`: checks caller-provided `tabUrl` if present; else queries Safari via AppleScript for frontmost tab URL; fail-open if query fails
+- `screenshotPolicy?: { blockedPatterns?: string[] }` added to `SafariPilotConfig` + `DEFAULT_CONFIG` + `validate()`
+- `src/server.ts` creates `ScreenshotPolicy(config.screenshotPolicy)` and passes to `ExtractionTools`
+- 9 tests: 4 policy-logic unit, 4 handler-wiring unit, 1 e2e litmus (delete server.ts wiring → e2e fails)
 
 ---
 
