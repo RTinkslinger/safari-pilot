@@ -43,9 +43,15 @@ describe('Phase 2: Page Understanding', () => {
       15000,
     );
     const text = typeof result === 'string' ? result : JSON.stringify(result);
-    // Snapshot should contain ARIA roles and ref attributes
-    // Example.com has at least a heading and a link
+    // SD-07 strengthened oracle: ref= anywhere in the payload could be
+    // satisfied by an error envelope or a stub returning {hint:'ref=eN'}.
+    // A real ARIA snapshot of example.com has a heading, a link, and
+    // multiple refs — at minimum >200 chars of YAML/JSON. Add a length
+    // guard AND the ref-pattern match AND an expected page-specific
+    // landmark (the <h1>Example Domain heading).
     expect(text).toContain('ref=');
+    expect(text.length).toBeGreaterThan(200);
+    expect(text.toLowerCase()).toContain('example');
   }, 20000);
 
   // ── 2.2 Get page text ───────────────────────────────────────────────────

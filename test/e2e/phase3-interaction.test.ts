@@ -113,15 +113,20 @@ describe('Phase 3: Interaction', () => {
     tabUrl = nav.url;
     await new Promise(r => setTimeout(r, 2000));
 
-    // Wait for h1 to exist (should be immediate on example.com)
+    // Wait for h1 to exist (should be immediate on example.com).
+    // SD-07 bug-fix: pre-SD-07 the call used `selector`+`state` param names
+    // that safari_wait_for does NOT read (handler expects `condition`+`value`
+    // per src/tools/wait.ts:88-116). The old `expect(text).toBeDefined()`
+    // oracle admitted the timeout-path envelope `{met: false, timedOut:
+    // true}` as a pass. Fixed: correct param names + assert met=true.
     const result = await callTool(
       client, 'safari_wait_for',
-      { tabUrl, selector: 'h1', state: 'attached', timeout: 5000 },
+      { tabUrl, condition: 'selector', value: 'h1', timeout: 5000 },
       nextId(),
       10000,
     );
-    const text = JSON.stringify(result);
-    expect(text).toBeDefined();
+    expect(result.met).toBe(true);
+    expect(result.timedOut).toBe(false);
   }, 25000);
 
   // ── Engine verification ─────────────────────────────────────────────────

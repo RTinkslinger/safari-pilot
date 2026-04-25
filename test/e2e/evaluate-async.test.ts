@@ -70,8 +70,13 @@ describe('safari_evaluate: Promise-returning scripts resolve end-to-end', () => 
       10000,
     );
     expect(raw.meta?.['engine']).toBe('extension');
-    const payloadStr = JSON.stringify(raw.payload);
-    expect(payloadStr).toContain('3');
+    // SD-07 strict oracle: parse the wrapped value and assert the exact
+    // computed result. The pre-SD-07 `payloadStr.toContain('3')` admitted
+    // any JSON containing the character '3' — timestamp, latency,
+    // tabId — not a proof that 1+2 was computed to 3.
+    const payload = raw.payload as { value?: unknown; type?: string };
+    expect(payload.value).toBe(3);
+    expect(payload.type).toBe('number');
   }, 15000);
 
   it('resolves a Promise that awaits a microtask chain (realistic async work)', async () => {

@@ -119,9 +119,11 @@ describe('Phase 1: Core Navigation', () => {
       nextId(),
       10000,
     );
-    // Should confirm closure
-    const text = JSON.stringify(result);
-    expect(text).toBeDefined();
+    // SD-07 strict oracle: close_tab returns `{closed: true, ...}` when the
+    // tab was actually closed (same oracle as T7 in security-ownership). The
+    // pre-SD-07 `expect(text).toBeDefined()` accepted any JSON.stringify
+    // result, including `{error: 'closed nothing'}` from a stub.
+    expect(result.closed).toBe(true);
     tabUrl = ''; // afterAll will no-op
   }, 15000);
 });
