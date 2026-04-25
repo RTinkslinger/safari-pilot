@@ -276,21 +276,18 @@ export class PdfTools {
       {
         name: 'safari_export_pdf',
         description:
-          'Export the current Safari tab as a PDF file. Captures the page HTML, applies ' +
-          'print-specific settings (paper size, margins, background colors, headers/footers), ' +
-          'and renders to PDF via the native daemon. Supports CSS page sizes, custom dimensions, ' +
-          'page ranges, and scale. Falls back to URL-based rendering if HTML extraction fails ' +
-          'or produces an empty PDF. Returns file path, page count, and file size on success.',
+          'Export the FRONTMOST Safari tab as a PDF file (no per-tab targeting; HTML is extracted ' +
+          'from `current tab of front window` regardless of any URL hint). Applies print-specific ' +
+          'settings (paper size, margins, background colors, headers/footers), and renders to PDF ' +
+          'via the native daemon. Supports CSS page sizes, custom dimensions, page ranges, and scale. ' +
+          'Falls back to URL-based rendering if HTML extraction fails or produces an empty PDF. ' +
+          'Returns file path, page count, and file size on success.',
         inputSchema: {
           type: 'object',
           properties: {
             path: {
               type: 'string',
               description: 'Absolute file path where the PDF will be saved (must end in .pdf)',
-            },
-            tabUrl: {
-              type: 'string',
-              description: 'URL of the tab to export (optional — defaults to current tab)',
             },
             format: {
               type: 'string',
