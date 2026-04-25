@@ -169,6 +169,10 @@ registerHealthStoreTests()
 
 registerExtensionHTTPServerTests()
 
+// MARK: - Trace Tests
+
+registerTraceTests()
+
 // MARK: - Results
 
 print("-----------------")
