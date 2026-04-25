@@ -15,39 +15,39 @@ Running list of findings surfaced by reviewers (Codex, `upp:test-reviewer`, advi
 
 
 
-### SD-28 — Clock-protocol injection on ExtensionBridge + ExtensionHTTPServer (delete `*ForTest` test-only public methods)
-- **Severity:** P3 (cosmetic; the `*ForTest` methods work and the test discipline note is in code comments — but they're a test-leak into the production surface)
-- **Source:** Filed during SD-17 work (2026-04-25). Originally part of SD-17 but deferred because the refactor scope is materially larger than the other two SD-17 patterns.
-- **Symptom:** Two production classes carry test-only public methods that cannot be removed without exposing internal state to tests via another channel:
-  - `ExtensionBridge.addToExecutedLogForTest(commandID:at:)` (ExtensionBridge.swift:60-64): inserts a back-dated executedLog entry so tests can exercise the TTL prune path.
-  - `ExtensionHTTPServer.runDisconnectCheckForTest(elapsedSeconds:)` (ExtensionHTTPServer.swift:484-487, added by SD-13): rewinds `_lastRequestTime` and invokes private `checkDisconnect()` synchronously so disconnect tests don't need to sleep past the production 10s/15s schedule.
-  Both bypass the test/production separation. A production caller could invoke them and corrupt state.
-- **Current understanding (not verified):** introduce a `Clock` protocol with a default `SystemClock` (returns `Date()`), and inject it into `ExtensionBridge` + `ExtensionHTTPServer` constructors:
-  ```swift
-  protocol Clock { func now() -> Date }
-  struct SystemClock: Clock { func now() -> Date { Date() } }
-  // production
-  let bridge = ExtensionBridge(clock: SystemClock())
-  // tests
-  let mockClock = MockClock()  // returns whatever the test sets
-  let bridge = ExtensionBridge(clock: mockClock)
-  mockClock.now = Date(timeIntervalSinceNow: -360)
-  bridge.recordExecutedResult(commandID: "old-cmd")  // back-dated naturally
-  ```
-  Then delete `addToExecutedLogForTest` and `runDisconnectCheckForTest` — tests use the mock clock to control time directly. The custom CLT test harness rules out `@testable import` (per HealthStoreTests comment).
-- **Discriminator:** with the refactor in place, the production `ExtensionBridge` has no `*ForTest` methods. Adding a new test-only API path requires either (a) the Clock injection, or (b) a new public method (which would be reviewed). Test files in `daemon/Tests/` instantiate with `MockClock` to control time. Reverting the Clock injection (back to `Date()` everywhere) fails the existing executedLog-TTL and disconnect-timeout tests because they can no longer control time.
-- **Entry points / files:**
-  - `daemon/Sources/SafariPilotdCore/Clock.swift` (new — protocol + SystemClock)
-  - `daemon/Sources/SafariPilotdCore/ExtensionBridge.swift` (line 60-64 to delete; constructor + Date() sites to inject)
-  - `daemon/Sources/SafariPilotdCore/ExtensionHTTPServer.swift` (line 484-487 to delete; constructor + lastRequestTime to inject)
-  - `daemon/Tests/SafariPilotdTests/ExtensionBridgeTests.swift` (testExecutedLogExpiresAfterTTL)
-  - `daemon/Tests/SafariPilotdTests/ExtensionHTTPServerTests.swift` (testDisconnectCheckFiresWhenIdleBeyondThreshold + testDisconnectCheckPreservesConnectionWhenFresh)
-
-
-
 ---
 
 ## Resolved
+
+### SD-28 — TimeSource injection on ExtensionBridge + ExtensionHTTPServer; deleted `addToExecutedLogForTest` + `runDisconnectCheckForTest` (2026-04-25, commit `f5e99f0`)
+
+Extends the SD-23 TimeSource protocol (originally introduced for HealthStore) to two more production classes, allowing deletion of two test-only public methods that were a test-leak into the production surface. No new tests added — three existing tests refactored.
+
+**Production changes:**
+- `ExtensionBridge.init()` → `init(timeSource: TimeSource = SystemTimeSource())`. Both `pruneExpiredEntries` cutoff and `handleResult`'s `executedLog.append` timestamp now read `timeSource.now()`.
+- `ExtensionHTTPServer.init` adds `timeSource: TimeSource = SystemTimeSource()` parameter (last position with default — call-site compatible). `_lastRequestTime` is initialized in the init body via `timeSource.now()` instead of in the declaration. The `/status` `lastPingAge` calc, `touchLastRequestTime`, and `checkDisconnect`'s elapsed calc all read `timeSource.now()`.
+- `checkDisconnect()` promoted from `private` to `public`. Doc-comment reframes the method as architectural, not a test backdoor: "Invoked from two places: (1) the production `_disconnectTask` background loop (every 10s after `start()`); (2) tests, directly, after advancing the injected `timeSource` past the 15s threshold."
+
+**Tests refactored (3 existing tests, no new):**
+- `testExecutedLogExpiresAfterTTL` — drives the natural `handleExecute → handlePoll → handleResult` cycle with `MockClock` injection, advances 360s past the 5-min TTL, asserts `isInExecutedLog` returns false.
+- `testDisconnectCheckFiresWhenIdleBeyondThreshold` — constructs server directly with `MockClock` injection. **Skips `start()`** to avoid the production `_disconnectTask` background loop racing the mockClock advance + checkDisconnect sequence (advisor-flagged; would have caused intermittent failures otherwise). Advances 16s, calls `checkDisconnect()`, asserts disconnected.
+- `testDisconnectCheckPreservesConnectionWhenFresh` — same construction pattern, advances only 5s, asserts still connected. Locks against always-fires regression.
+
+**Mutation-test verification (3 independent cycles):**
+- M1: `pruneExpiredEntries` cutoff `timeSource.now()` → `Date()`. ONLY testExecutedLogExpiresAfterTTL failed (cutoff didn't move with mockClock; entry stayed in log).
+- M2: `checkDisconnect` elapsed calc `timeSource.now()` → `Date()`. ONLY testDisconnectCheckFiresWhenIdleBeyondThreshold failed (elapsed always ≈ 0 against unchanged real-time).
+- M3: `checkDisconnect` threshold comparison dropped (always-fires regression). ONLY testDisconnectCheckPreservesConnectionWhenFresh failed (locked the negative form).
+- After all reverts: 124 tests pass, 0 failed.
+
+**Disclosed limitation (NOT mock-discriminable, by design):** Two production sites use `timeSource.now()` for symmetry but are NOT discriminable because `MockClock(start: Date())` aliases real time at construction:
+1. `ExtensionBridge.swift` `handleResult` executedLog.append timestamp.
+2. `ExtensionHTTPServer.swift` `_lastRequestTime` initialization in init body.
+
+At construction time `Date()` ≈ `mockClock.now()`. The cutoff/elapsed reads that come AFTER `mockClock.advance(...)` ARE discriminable — those are the load-bearing sites for the TTL/disconnect contracts.
+
+upp:test-reviewer (fast mode, Checks 6/7/8): **PASS** (CRITICAL: 0, MAJOR: 0, ADVISORY: 2). Advisories non-gating: (1) suggest `MockClock(start: Date(timeIntervalSince1970: 1_700_000_000))` to make insertion-vs-real-time gap visually apparent; (2) 1s margin in disconnect test is fine for strict `>` inequality.
+
+Total tests: 124 (unchanged — refactor only).
 
 ### SD-27 — `handleInternalCommand` happy-path coverage for extension_status / _execute / _health (2026-04-25, commit `5d37161`)
 
