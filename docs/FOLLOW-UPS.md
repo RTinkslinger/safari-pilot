@@ -43,10 +43,10 @@ Running list of findings surfaced by reviewers (Codex, `upp:test-reviewer`, advi
   - `daemon/Tests/SafariPilotdTests/ExtensionBridgeTests.swift` (testExecutedLogExpiresAfterTTL)
   - `daemon/Tests/SafariPilotdTests/ExtensionHTTPServerTests.swift` (testDisconnectCheckFiresWhenIdleBeyondThreshold + testDisconnectCheckPreservesConnectionWhenFresh)
 
-### SD-25 — PdfGenerator + syncAwait WebKit lazy-load deadlock blocks generate_pdf testing
-- **Severity:** P3 (test-infra; the production daemon's PdfGenerator usage runs from a long-lived async context with a live runloop, so this affects ONLY the test harness)
+### SD-25 — PdfGenerator + syncAwait deadlock blocks generate_pdf testing
+- **Severity:** P3 (test-infra; production daemon's PdfGenerator usage runs from a long-lived async context with a live runloop, so this affects ONLY the test harness)
 - **Source:** Filed during SD-16 work (2026-04-25). Reproduced deterministically.
-- **Symptom:** Calling `dispatcher.dispatch(line: <generate_pdf-NDJSON>)` from inside `syncAwait { ... }` deadlocks the test process. Diagnosis: PdfGenerator inherits `NSObject + WKNavigationDelegate`. First reference triggers WebKit framework lazy-load. WebKit's `+initialize` requires main-thread runloop coordination. The main thread is blocked in `syncAwait`'s `semaphore.wait()` while a coop-pool task drives the dispatch — classic main-thread deadlock with framework lazy loading. Verified by isolation: a `test("smoke") { try assertTrue(true) }` placed right after a passing `watch_download` test PASSes; the next `dispatcher.dispatch` call into `generate_pdf` hangs the process indefinitely.
+- **Symptom:** Calling `dispatcher.dispatch(line: <generate_pdf-NDJSON>)` from inside `syncAwait { ... }` deadlocks the test process. The main thread is blocked in `syncAwait`'s `semaphore.wait()` while a coop-pool task drives the dispatch. PdfGenerator inherits `NSObject + WKNavigationDelegate` and throws at lines 88/103/110 BEFORE `super.init()` at line 149 (Swift/ObjC interop edge case). Verified by isolation: a `test("smoke") { try assertTrue(true) }` placed right after a passing `watch_download` test PASSes; the next `dispatcher.dispatch` call into `generate_pdf` hangs the process indefinitely.
 - **Reproduction:** any test of the form
   ```swift
   test("anyPdfTest") {
@@ -56,15 +56,17 @@ Running list of findings surfaced by reviewers (Codex, `upp:test-reviewer`, advi
   }
   ```
   hangs after the previous test prints PASS. Killing the process is required.
-- **Current understanding (not verified):** three viable fixes:
-  - **(a)** Pre-load WebKit on the main thread BEFORE `register*Tests()` in `daemon/Tests/SafariPilotdTests/main.swift` — e.g. `_ = WKWebView()` once. Forces +initialize to run while the main thread is unblocked.
+- **Empirical findings (2026-04-25):**
+  - **(a) WebKit pre-load — REJECTED.** Adding `private let _webKitPreload = WKWebView.self` to main.swift before register*Tests does NOT fix the deadlock. Tested with the 3 SD-16 deferred PDF tests restored; same hang pattern. Hypothesis "WebKit framework lazy-load needs main-thread coordination" is now suspect — the deadlock occurs during PdfGenerator's `throw` BEFORE `super.init()`, which doesn't reach the WebKit class initialization.
+- **Remaining viable fixes (untested):**
   - **(b)** Replace `syncAwait`'s blocking `semaphore.wait()` with a runloop-pumping wait (`RunLoop.current.run(until:)` style) so main-thread tasks can run during the test's await.
-  - **(c)** Move PdfGenerator tests to a fully async harness that doesn't block the main thread (a separate XCTest target — but the project deliberately avoids XCTest per HealthStoreTests comment, so this is a bigger refactor).
-- **Discriminator for the fix:** with the workaround in place, restore the three deferred `generate_pdf` tests from SD-16's design — covering `INVALID_OUTPUT_PATH` for missing-html-and-url, missing-outputPath, and non-existent parent dir guards in `PdfGenerator.init` (PdfGenerator.swift:88, 103, 110). Each must complete in <1s.
+  - **(c)** Move PdfGenerator tests to a fully async harness that doesn't block the main thread (separate XCTest target — but the project deliberately avoids XCTest per HealthStoreTests comment, so this is a bigger refactor).
+  - **(d) NEW HYPOTHESIS** — PdfGenerator's designated `init` throws BEFORE `super.init()`, which in NSObject subclasses requires partial-deinit handling that may demand main-thread coordination. Refactor PdfGenerator.init to validate params via a static factory `PdfGenerator.create(params:) throws -> PdfGenerator`, then call a non-throwing private init that calls `super.init()` first. Try this BEFORE option (b)/(c) — it's a more targeted hypothesis given the empirical (a) failure.
+- **Discriminator for the fix:** with any workaround in place, restore the three deferred `generate_pdf` tests from SD-16's design (INVALID_OUTPUT_PATH for missing-html-and-url, missing-outputPath, non-existent parent dir guards in `PdfGenerator.init` at lines 88, 103, 110). Each must complete in <1s.
 - **Entry points / files:**
-  - `daemon/Sources/SafariPilotdCore/PdfGenerator.swift` (NSObject + WKNavigationDelegate)
-  - `daemon/Tests/SafariPilotdTests/main.swift` (potential pre-load of WebKit)
-  - `daemon/Tests/SafariPilotdTests/CommandDispatcherTests.swift` (potential restored T2/T3/T4)
+  - `daemon/Sources/SafariPilotdCore/PdfGenerator.swift:77-150` (init structure for option d)
+  - `daemon/Tests/SafariPilotdTests/main.swift` (option a tested + reverted)
+  - `daemon/Tests/SafariPilotdTests/CommandDispatcherTests.swift` (potential restored T2/T3/T4 once unblocked)
 
 ### SD-26 — `watch_download` timeout param: AnyCodable Int decode bypassed; integer JSON literals fall back to 30s default
 - **Severity:** P2 (production bug — silently changes the user-visible timeout from "the value I passed" to 30 seconds)
