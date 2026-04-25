@@ -16,7 +16,6 @@ interface OwnedTab {
 
 export class TabOwnership {
   private ownedTabs: Map<TabId, OwnedTab> = new Map();
-  private preExistingTabs: Set<TabId> = new Set();
 
   // ── Static helpers ──────────────────────────────────────────────────────────
 
@@ -26,16 +25,6 @@ export class TabOwnership {
    */
   static makeTabId(windowIndex: number, tabIndex: number): TabId {
     return windowIndex * 1000 + tabIndex;
-  }
-
-  // ── Session initialisation ──────────────────────────────────────────────────
-
-  /**
-   * Record a tab that existed before this agent session started.
-   * Pre-existing tabs are NOT agent-owned and cannot be interacted with.
-   */
-  recordPreExisting(tabId: TabId): void {
-    this.preExistingTabs.add(tabId);
   }
 
   // ── Ownership lifecycle ─────────────────────────────────────────────────────
@@ -91,10 +80,6 @@ export class TabOwnership {
 
   isOwned(tabId: TabId): boolean {
     return this.ownedTabs.has(tabId);
-  }
-
-  isPreExisting(tabId: TabId): boolean {
-    return this.preExistingTabs.has(tabId);
   }
 
   getUrl(tabId: TabId): string | undefined {
