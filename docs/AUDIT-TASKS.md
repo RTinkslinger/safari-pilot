@@ -115,10 +115,11 @@
 **Origin:** `78938fb` (2026-04-18) bulk migration. Spec didn't categorize `safari_new_tab`. Migration error (same batch that broke `safari_eval_in_frame` at `368cbe2`).
 **Fix:** One-character schema change at `src/tools/navigation.ts:108` (`idempotent: true` → `idempotent: false`). Value-pinning unit test at `test/unit/tools/navigation-requirements.test.ts` mirrors the SD-01 extraction-requirements pattern. upp:test-reviewer fast PASS 0/0/0.
 
-### T16. Fix `safari_hover` description — CSS `:hover` not triggered
+### T16. Fix `safari_hover` description — CSS `:hover` not triggered ✅ RESOLVED 2026-04-25 (commit `1809b1a`)
 **Findings:** H14 (tool-modules audit)
 **Root cause:** Synthetic `dispatchEvent(new MouseEvent(...))` fires JS handlers but does NOT activate CSS `:hover`. Web platform limitation. Description falsely claims "Triggers CSS :hover states."
 **Origin:** `d65c461` (2026-04-11) — false claim from day one, never verified.
+**Fix:** Description rewritten at `src/tools/interaction.ts:230-244` to disclose the synthetic-event nature: "Dispatches synthetic MouseEvents (mouseover/mouseenter) — JS handlers run but CSS :hover does not engage (web platform limitation; only the real cursor engages CSS pseudo-classes)." 2 unit tests at `test/unit/tools/interaction-descriptions.test.ts` (negative: rejects `/triggers? CSS :hover|activates? CSS :hover|fires? CSS :hover/i`; positive: requires `/synthetic\s+(mouse\s*)?(event|MouseEvent)/i`). Two oracles jointly enforce both removal of the false claim AND positive disclosure of the constraint. upp:test-reviewer fast PASS 0/0/1.
 
 ### T17. Fix `safari_take_screenshot` — remove dead params or implement them
 **Findings:** H15 (tool-modules audit)
