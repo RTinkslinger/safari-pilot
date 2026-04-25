@@ -169,3 +169,39 @@ describe('DaemonEngine (T9): useTcp reset on TCP failures', () => {
     expect(engine.isTcpMode()).toBe(false);
   });
 });
+
+// T32 — DaemonEngine.executeJsInTab now shares wrap/template/parse with
+// AppleScriptEngine via js-helpers. The discriminating signal is CSP
+// detection: the AppleScript path always wraps results in a JSON envelope
+// from `wrapJavaScript`, so a BARE empty `do JavaScript` result means the
+// script never executed — CSP block is the dominant cause. Pre-T32
+// DaemonEngine silently passed the empty string through as a successful
+// result, hiding the failure mode.
+describe('DaemonEngine.executeJsInTab (T32): shared parseJsResult propagates CSP signal', () => {
+  beforeEach(() => {
+    (createConnection as unknown as ReturnType<typeof vi.fn>).mockReset();
+  });
+
+  it('returns CSP_BLOCKED when daemon execute returns an empty value', async () => {
+    // Command socket: connect, then return an `execute` response whose
+    // `value` is empty — exactly the bytes osascript emits when CSP
+    // blocks `do JavaScript` server-side.
+    mockNetTwoPhase((cmd) => {
+      cmd.emit('connect');
+      queueMicrotask(() => {
+        cmd.emit('data', Buffer.from(JSON.stringify({ id: 'cmd-1', ok: true, value: '' }) + '\n'));
+      });
+    });
+
+    const engine = new DaemonEngine({ daemonPath: '/nonexistent', tcpPort: 19474 });
+    const result = await engine.executeJsInTab('https://csp-blocked.example/', 'return 1;', 1000);
+
+    // PRIMARY ORACLE — surfaces the CSP failure. Pre-T32 this path
+    // returned `{ ok: true, value: '', ... }` because the inlined parser
+    // gated on `result.value` truthiness, dropping the empty case
+    // entirely.
+    expect(result.ok, 'CSP-blocked result must NOT report success').toBe(false);
+    expect(result.error?.code).toBe('CSP_BLOCKED');
+    expect(result.error?.retryable).toBe(false);
+  }, 10000);
+});

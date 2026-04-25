@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { createConnection, type Socket } from 'node:net';
 import type { ChildProcess } from 'node:child_process';
 import { BaseEngine } from './engine.js';
+import { wrapJavaScript, buildTabScript, parseJsResult } from './js-helpers.js';
 import type { Engine, EngineResult } from '../types.js';
 
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -235,23 +236,16 @@ export class DaemonEngine extends BaseEngine {
   }
 
   async executeJsInTab(tabUrl: string, jsCode: string, timeout?: number): Promise<EngineResult> {
-    const wrapped = `(function(){try{var __r=(function(){${jsCode}})();return JSON.stringify({ok:true,value:__r});}catch(e){return JSON.stringify({ok:false,error:{message:e.message,name:e.name}});}})()`;
-    const safeUrl = (tabUrl ?? '').replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-    const escapedJs = wrapped.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-    const script = `tell application "Safari"\n  set _result to ""\n  repeat with _window in every window\n    repeat with _tab in every tab of _window\n      set _tabUrl to URL of _tab\n      if _tabUrl is "${safeUrl}" or _tabUrl is ("${safeUrl}" & "/") or ("${safeUrl}" is (_tabUrl & "/")) then\n        set _result to do JavaScript "${escapedJs}" in _tab\n        return _result\n      end if\n    end repeat\n  end repeat\n  return _result\nend tell`;
+    // T32 — share wrap/template/parse with AppleScriptEngine via js-helpers
+    // so DaemonEngine picks up CSP detection, ShadowDOM-closed signals,
+    // and structured JS-error code mapping. Pre-T32 the inlined block
+    // missed all three.
+    const wrapped = wrapJavaScript(jsCode);
+    const script = buildTabScript(tabUrl, wrapped);
     const result = await this.execute(script, timeout);
-    if (result.ok && result.value) {
-      try {
-        const parsed = JSON.parse(result.value);
-        return {
-          ok: parsed.ok,
-          value: parsed.ok ? (typeof parsed.value === 'string' ? parsed.value : JSON.stringify(parsed.value)) : undefined,
-          error: parsed.ok ? undefined : { code: parsed.error?.name || 'JS_ERROR', message: parsed.error?.message || 'Unknown error', retryable: false },
-          elapsed_ms: result.elapsed_ms,
-        };
-      } catch {
-        return { ok: true, value: result.value, elapsed_ms: result.elapsed_ms };
-      }
+    if (result.ok && typeof result.value === 'string') {
+      const parsed = parseJsResult(result.value);
+      return { ...parsed, elapsed_ms: result.elapsed_ms };
     }
     return result;
   }
