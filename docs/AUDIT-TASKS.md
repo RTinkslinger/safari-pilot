@@ -259,10 +259,11 @@
 **Root cause:** Heuristic runs before JSON parsing. Any page text containing "shadow" AND "closed" triggers false `SHADOW_DOM_CLOSED` error. Should only run on parse-failure or error envelopes.
 **Origin:** `96064f6` (2026-04-11) — never modified.
 
-### T34. Remove "cross-origin frames" from Extension Engine capabilities
+### T34. Remove "cross-origin frames" from Extension Engine capabilities ✅ RESOLVED 2026-04-26 (commit `b7d57b7`)
 **Findings:** H10 (extension-ipc audit)
 **Root cause:** Manifest lacks `all_frames: true`. Content scripts only inject into top-level frame. `framesCrossOrigin` in ENGINE_CAPS is dead code. ARCHITECTURE.md, CLAUDE.md, SKILL.md all claim the capability.
 **Origin:** `1d875f4` (2026-04-11) — Day 1 forward declaration, never implemented.
+**Fix:** Flipped `framesCrossOrigin: true → false` in ENGINE_CAPS for Extension; cap now matches manifest reality. Verified ENGINE_CAPS is decorative — `selectEngine()` reads tool requirement flags + runtime availability only, never the cap values — so this is a pure documentation fix with no behavioural effect today. Discriminating test (`test/unit/engine-selector/cap-manifest-parity.test.ts`) reads both sources at test time and asserts the biconditional `cap === everyEntryAllFrames`. The two artifacts are now self-coordinating: when T55 adds `all_frames: true` to all manifest content_scripts entries, this test will go RED and force the cap flip-back in the same commit. Reviewer (fast mode): PASS first try. Mutation cycle confirmed (revert flip → 126/1 fail; restore → 127 pass). Stale doc claims are part of T40's scope. Doc-side note: `ARCHITECTURE.md`, `CLAUDE.md`, and `SKILL.md` still claim cross-origin-frames as a capability — they will be corrected as part of T40 ("ARCHITECTURE.md — 8 documented claims that contradict current code") rather than churning each file individually.
 
 ### T35. Fix IDPI scanner — decide block vs annotate
 **Findings:** H1 (security audit)

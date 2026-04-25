@@ -48,7 +48,6 @@ Build pipeline: edit → `bash scripts/build-extension.sh` → verify entitlemen
 
 | ID | Surface | One-liner | Linked |
 |---|---|---|---|
-| **T34** | `src/engine-selector.ts` ENGINE_CAPS + `extension/manifest.json` | "cross-origin frames" capability claimed in extension caps but manifest lacks `all_frames: true` | Pair with T55 — choose one (deliver via manifest = T55, or remove from caps = T34). |
 | **T35** | `src/security/idpi-scanner.ts` + `src/server.ts:575` | IDPI scanner annotates result metadata but never blocks injected content; documentation honestly says "no block" | Decide: block (rename + add throw path) or rename to "annotator" + drop the "scanner" framing. |
 | **T36** | `src/security/screenshot-redaction.ts` + `src/server.ts:591` | redaction script returned but never injected before capture — currently a no-op annotation | |
 | **T38** | `src/server.ts` `recoverSession` | recovery re-opens window + polls extension but never calls `registerWithDaemon()` — multi-session count desyncs after recovery | |
@@ -120,7 +119,8 @@ Lookup-only index; full fix-context paragraphs are in `docs/AUDIT-TASKS.md` / `d
 | T7 | `71218d9` | `317527a` | Regression guard for existing safari_close_tab tab-ownership cleanup (server.ts:833-852); audit-flagged leak prevented from silently re-emerging |
 | SD-32 | `6b55ff9` | `170592e` | orphan-cleanup skips when other live sessions exist; multi-session contract restored |
 | T37 | `d82c534` | `b4687de` | Deleted unused `recordPreExisting` + `isPreExisting` from `TabOwnership` (zero callers; positive-ownership model makes them redundant) |
-| T39 | `cae41d8` | (this commit) | `recordHttpRequestError` now prunes entries older than 1h on append (re-scoped from 4 arrays to 1; the other three were unwired and filed as SD-33) |
+| T39 | `cae41d8` | `1c7e310` | `recordHttpRequestError` now prunes entries older than 1h on append (re-scoped from 4 arrays to 1; the other three were unwired and filed as SD-33) |
+| T34 | `b7d57b7` | (this commit) | `ENGINE_CAPS.extension.framesCrossOrigin` flipped `true → false` to match manifest reality (no `all_frames` in content_scripts); cap-vs-manifest parity test guards future drift, will require flip-back when T55 lands |
 
 Pre-2026-04-25 sprint resolved entries (SD-01..SD-28, T13..T25 originals): see archives.
 
@@ -128,10 +128,10 @@ Pre-2026-04-25 sprint resolved entries (SD-01..SD-28, T13..T25 originals): see a
 
 ## Tally
 
-- **26** audit items (T-numbered) open — 0 P0, 4 in extension batch, 5 P2 quality debt, 17 P3 missing-feature/cosmetic.
+- **25** audit items (T-numbered) open — 0 P0, 4 in extension batch, 4 P2 quality debt, 17 P3 missing-feature/cosmetic.
 - **2** SD open — SD-30 (banking-disable-extension, deferred feature); SD-33 (HealthStore unwired increment methods, surfaced by T39 re-scope).
 - **2** ROADMAP backlog items — navigate_back/forward stale URL, NDJSON line-split flake.
 
-Total open: **30**. **All real bugs are now resolved this sprint** (T7, SD-31, SD-32). The remainder is quality debt, missing features, deferred design decisions, or cosmetic.
+Total open: **29**. **All real bugs are now resolved this sprint** (T7, SD-31, SD-32). The remainder is quality debt, missing features, deferred design decisions, or cosmetic.
 
 Open follow-up flagged by SD-32 reviewer: an e2e companion test that spawns two concurrent MCP sessions and asserts Session A's keepalive survives Session B's startup would close the unit-test wiring gap (server.ts:1422 stores the otherSessions count into a private field; the unit tests poke the field directly; only an e2e exercises the full registerWithDaemon → field-write → cleanup-skip flow). Worth filing as SD-33 if anyone reports concurrent-session breakage.
