@@ -8,14 +8,6 @@ Running list of findings surfaced by reviewers (Codex, `upp:test-reviewer`, advi
 
 ## Open
 
-### SD-08 — BRITTLE spy tests in `record-tool-failure.test.ts`
-- **Severity:** P3 (test 3 already carries the file via observable-state assertion; spy tests are cosmetic)
-- **Source:** `upp:test-reviewer` retro review #1
-- **Symptom:** Tests 1 and 2 use `vi.spyOn(cb, 'recordFailure')` / `vi.spyOn(cb, 'recordEngineFailure')` to assert the server calls these methods with specific args. This is a spy-not-mock (no `mockImplementation` — real CB still runs), so MOCK-IN-E2E / self-fulfilling doesn't fire. But it asserts on HOW the server wires things, not WHAT the system does. Test 3 (5-failure trip → `isEngineTripped === true`) is the real oracle.
-- **Current understanding (from review):** merge tests 1+2 into a single observable-state assertion (e.g., fire one failure → assert `cb.getDomainState('example.com') !== 'closed'` on the real CB). Keep test 3 unchanged.
-- **Discriminator:** the merged test still fails if `recordToolFailure` is reverted to only call the per-domain side (i.e., SD-08's fix preserves the T12 discrimination guarantee).
-- **Entry points / files:** `test/unit/server/record-tool-failure.test.ts:37-48`
-
 ### SD-10 — Canary T3/T4 are UNVERIFIED CLAIM: shape-only, not behavior
 - **Severity:** P1 (distribution-gate tests admit trivial stubs that wouldn't uninstall anything or ship any binary)
 - **Source:** `upp:test-reviewer` retro review #2 (2026-04-24)
@@ -202,6 +194,12 @@ Running list of findings surfaced by reviewers (Codex, `upp:test-reviewer`, advi
 ---
 
 ## Resolved
+
+### SD-08 — BRITTLE spy tests in `record-tool-failure.test.ts` (2026-04-25, commit `5060b8f`)
+
+Resolved by replacing the 2 spy-on-method tests with 3 observable-state tests. Test 1 covers both breaker paths (per-domain opens + engine trips) via a single 5-failure stream on one domain. Test 2 preserves the original scope-independence proof (5 failures across 5 domains trip engine but not per-domain). Test 3 replaces the "UNKNOWN default" spy with a negative-invariance observable (non-triggering codes don't trip the engine). All T12 discrimination guarantees preserved — reverting either branch or dropping the code filter fails at least one assertion.
+
+`upp:test-reviewer` (fast mode, Checks 6/7/8) verdict: **PASS** (0 CRITICAL, 0 MAJOR, 1 ADVISORY non-gating). Reviewer confirmed complementarity of all 3 tests (different mutants kill different tests) and deferred SD-09's private-state cast cleanup to its own scope.
 
 ### SD-07 — Quick-win batch: 4 tautological/shape-only oracles (2026-04-25, commit `60118eb`)
 
