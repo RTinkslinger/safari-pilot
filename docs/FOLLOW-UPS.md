@@ -38,24 +38,6 @@ Running list of findings surfaced by reviewers (Codex, `upp:test-reviewer`, advi
   - `test/e2e/setup-production.ts` — the probes being inherited
   - `package.json` — scripts to update
 
-### SD-03 — Three CRITICAL weak oracles on core happy-path tools
-- **Severity:** P0 (trivial stub impls pass these tests)
-- **Source:** `upp:test-reviewer` retro review #1 (2026-04-24)
-- **Symptom:** Three e2e tests on the most-used tools each accept an implementation that never does the work:
-  1. `test/e2e/initialization.test.ts:82-87` — "pre-call gate detects and reports system status" asserts only `typeof result === 'object'`. `null` passes. An impl with the health gate deleted and returning `{}` passes.
-  2. `test/e2e/phase1-core-navigation.test.ts:72-76` — `safari_take_screenshot` accepts `hasImage || hasText`. A stub returning `{content: [{type:'text', text:'error'}]}` passes.
-  3. `test/e2e/phase3-interaction.test.ts:62-72` — `safari_click` asserts `text.toContain('clicked')`. Any JSON containing the word "clicked" passes (including a stub that never touches the DOM). `httpbin.org/forms/post` submits on click — the natural discriminator (URL → `/post`) is right there and unused.
-- **Current understanding (from review, not verified):** same class of bug in three places — asserting on shape/stringified-result instead of observables. Each has a one-line fix.
-- **Discriminator for each fix:**
-  1. Pre-call gate: assert on the `health_check` payload field or a `pre_call_gate` trace event in `~/.safari-pilot/trace.ndjson`, OR deliberately break daemon/extension and assert `SessionRecoveryError`.
-  2. Screenshot: `expect(hasImage).toBe(true)` + `expect(content[0].data.length).toBeGreaterThan(1000)` (PNG byte-floor).
-  3. Click: after click, call `safari_evaluate` to read `document.location.pathname` and assert `/post`.
-- **Entry points / files:**
-  - `test/e2e/initialization.test.ts:82-87`
-  - `test/e2e/phase1-core-navigation.test.ts:72-76`
-  - `test/e2e/phase3-interaction.test.ts:62-72`
-  - The upstream tools: `src/tools/navigation.ts` (screenshot routing), `src/tools/interaction.ts` (click handler)
-
 ### SD-04 — 7 of 9 security layers have zero e2e coverage
 - **Severity:** P1 (the product's core value is the 9-layer pipeline; 7 layers can be deleted without any test failing)
 - **Source:** `upp:test-reviewer` retro review #1 (2026-04-24)
@@ -252,11 +234,39 @@ Running list of findings surfaced by reviewers (Codex, `upp:test-reviewer`, advi
   - `src/engines/daemon.ts` — add `isTcpMode()`
   - `test/unit/server/ensure-session-window.test.ts`, `test/unit/server/record-tool-failure.test.ts`, `test/unit/engines/daemon.test.ts` — swap peeks for getter calls
 
+### SD-20 — Pre-call gate negative-path test (split off from SD-03 Phase 1)
+- **Severity:** P2 (not blocking — the gate's healthy path is implicitly tested by every successful tool call; only the failure-mode + recovery branches lack direct coverage)
+- **Source:** SD-03 Phase 1 systematic-debugging investigation (2026-04-25). Filed when Phase 1 concluded the SD-03-Test-1 oracle could not be made discriminating from happy-path e2e without manufactured SUT changes.
+- **Symptom:** The pre-call gate at `server.ts:413-432` runs `checkExtensionStatus()` + `checkWindowExists()` before every tool call and either invokes `recoverSession` (10s budget, emits `recovery_start/success/failed` trace events) or throws `SessionRecoveryError`. Its healthy path emits no observable signal, and its failure modes cannot be triggered cleanly from an e2e harness:
+  - `checkWindowExists` uses `exists window id N`, which Safari leaves permanently `true` after `close window id N` (ghost-window quirk per CHECKPOINT.md / TRACES Iter 22). Closing a session window from the test does not flip the gate.
+  - Killing the daemon process would tear down `getSharedClient()`'s MCP server, breaking every other test in the run.
+  - Disabling extension connectivity from Safari requires user-visible interaction and violates the "never switch user tabs" rule.
+- **Consequence:** the previously-named "pre-call gate detects and reports system status" test at `initialization.test.ts:82-87` was deleted in SD-03 (its oracle was tautological and unrepairable from this side of the boundary). Coverage for the gate's recovery and `SessionRecoveryError` branches is currently zero.
+- **Current understanding (from review, not verified):** two viable paths, pick one:
+  - (a) **Unit-level**: spec out a unit test against `SafariPilotServer.executeToolWithSecurity` with `checkExtensionStatus` / `checkWindowExists` substituted via the boundary-mock pattern (see `test/unit/server/ensure-session-window.test.ts` for `vi.mock('node:child_process', importOriginal)` precedent). Assert that a returning-false probe triggers `recoverSession`, and that exhausted recovery throws `SessionRecoveryError` with the right code.
+  - (b) **Own-spawn e2e**: a test in `initialization.test.ts` that owns its own `initClient('dist/index.js')` (precedent at lines 15-28), then *changes the gate's window-check to use `visible of window id`* (one-line SUT change, useful regardless), closes its own session window, calls a tool, and asserts the recovery trace events fire OR `SessionRecoveryError` propagates.
+- **Discriminator for the fix:** revert `recoverSession` to a no-op or comment out the gate's `if (!preStatus.ext || !windowOk)` branch — the new test must fail because either no recovery runs or no `SessionRecoveryError` is thrown when the system is broken. Restoring the gate must pass.
+- **Entry points / files:**
+  - `src/server.ts:413-432` (gate body), `1077-1085` (checkExtensionStatus), `1090-1102` (checkWindowExists), `1108-1136` (recoverSession)
+  - `test/unit/server/` (new file for option a) OR `test/e2e/initialization.test.ts` (new own-spawn test for option b)
+
 ---
 
 ## Resolved
 
-_(none yet)_
+### SD-03 — Three CRITICAL weak oracles on core happy-path tools (2026-04-25, branch `fix/sd-03-weak-oracles`)
+
+Resolved on `fix/sd-03-weak-oracles` (commit subject: `fix(test): SD-03 strengthen screenshot + click oracles, delete unfixable pre-call-gate test`). Three changes:
+
+1. **Pre-call gate test → DELETED** (was `test/e2e/initialization.test.ts:82-87`). Phase 1 of `upp:systematic-debugging` concluded the test was structurally unfixable from happy-path e2e: gate emits no trace event when healthy (only `recovery_*` events on broken paths) and its negative path is unreachable from the harness — `checkWindowExists` uses `exists window id` which Safari leaves permanently true after close (ghost-window quirk), and breaking the daemon would tear down the shared client used by every other test. Adding a `pre_call_gate` trace emit purely for testability would have been a manufactured discriminator. The substantive systems-status oracle is the rich `safari_health_check` test at `initialization.test.ts:30-41` which already covers all 3 systems being green. The proper negative-path test is tracked separately as **SD-20** (above) — needs either a unit-level boundary mock or a one-line SUT change so `checkWindowExists` can be triggered cleanly.
+
+2. **Screenshot oracle → STRENGTHENED** (`test/e2e/phase1-core-navigation.test.ts:64-83`). Old: `hasImage || hasText` (text-only stub passes). New: image content block exists, `mimeType === 'image/png'`, base64 data length > 1000. Discrimination empirically verified — text-only stub of `handleTakeScreenshot` fails with "Expected an image content block, got: [{type:'text',...}]: expected undefined to be defined".
+
+3. **Click oracle → STRENGTHENED** (`test/e2e/phase3-interaction.test.ts:62-99`). Old: `JSON.stringify(result).toContain('clicked')` (any JSON containing "clicked" passes). New: parsed `clicked === true`, `element.tagName` matches `/^(BUTTON|INPUT)$/`, post-click `document.location.pathname === '/post'` (httpbin form submits via WebKit native default action on synthetic click; empirically confirmed). Plus trailing `tabUrl = 'https://httpbin.org/post'` to handle the registry refresh from the verify `safari_evaluate` (`server.ts:802-805`). Discrimination empirically verified — commenting out the three `el.dispatchEvent(...)` calls in `handleClick` actionJs fails with "expected '/forms/post' to be '/post'".
+
+`upp:test-reviewer` (fast mode, Checks 6/7/8) verdict: **PASS** (CRITICAL: 0, MAJOR: 0, ADVISORY: 2). ADVISORY items: (a) Test 3's `clicked`/`tagName` asserts are decorative (URL discriminator is the load-bearing one); (b) Test 3's `tabUrl` reassignment is a workaround for `server.ts:802-805` and silently rots if that contract changes — track if observed. Both filed as awareness, not fix-now.
+
+`npm run test:all` final state: 56/56 passing (20 unit + 36 e2e).
 
 ---
 

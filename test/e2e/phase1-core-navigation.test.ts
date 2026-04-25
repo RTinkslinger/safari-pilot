@@ -61,19 +61,26 @@ describe('Phase 1: Core Navigation', () => {
   }, 10000);
 
   // ── 1.6 Take screenshot ─────────────────────────────────────────────────
-  it('1.6 safari_take_screenshot returns image data', async () => {
+  it('1.6 safari_take_screenshot returns a real PNG image, not a text envelope', async () => {
     const raw = await rawCallTool(
       client, 'safari_take_screenshot',
       { tabUrl },
       nextId(),
       15000,
     );
-    // Screenshot tool returns image content type
+    // SD-03 strict oracle. The previous `hasImage || hasText` admitted any
+    // stub returning {content: [{type:'text', text:'error'}]}. We require:
+    //   - an image content block (not text)
+    //   - mimeType === 'image/png'
+    //   - base64 data string with a non-trivial byte floor
+    // A real Safari window screenshot is ~50KB+ base64; 1000-char floor
+    // excludes any plausible stub (error strings, empty buffers, etc.).
     const content = raw.result.content as Array<Record<string, unknown>>;
-    const hasImage = content.some(c => c.type === 'image' && typeof c.data === 'string');
-    const hasText = content.some(c => c.type === 'text');
-    // Should have either image data or text describing the screenshot
-    expect(hasImage || hasText).toBe(true);
+    const imageBlock = content.find(c => c.type === 'image');
+    expect(imageBlock, `Expected an image content block, got: ${JSON.stringify(content)}`).toBeDefined();
+    expect(imageBlock!['mimeType']).toBe('image/png');
+    expect(typeof imageBlock!['data']).toBe('string');
+    expect((imageBlock!['data'] as string).length).toBeGreaterThan(1000);
   }, 20000);
 
   // ── 1.7 Navigate back/forward ────────────────────────────────────────────

@@ -59,17 +59,47 @@ describe('Phase 3: Interaction', () => {
   }, 30000);
 
   // ── 3.1 Click element ──────────────────────────────────────────────────
-  it('3.1 safari_click clicks a button element', async () => {
-    // httpbin.org/forms/post has a submit button
-    const result = await callTool(
+  it('3.1 safari_click triggers form submission, navigating /forms/post → /post', async () => {
+    // SD-03 strict oracle. Original asserted JSON.stringify(result).toContain('clicked')
+    // — any envelope containing the substring 'clicked' satisfied it. The
+    // production click handler dispatches MouseEvent('click'); on httpbin's
+    // submit button this triggers WebKit's native form-submission default
+    // action, navigating /forms/post → /post. We discriminate on that URL
+    // change: a stub that fabricates {clicked:true} without dispatching the
+    // event cannot navigate the tab.
+    const clickResult = await callTool(
       client, 'safari_click',
       { tabUrl, selector: '[type="submit"], button' },
       nextId(),
       15000,
     );
-    const text = JSON.stringify(result);
-    expect(text).toContain('clicked');
-  }, 20000);
+    expect(clickResult['clicked']).toBe(true);
+    const element = clickResult['element'] as { tagName: string } | undefined;
+    expect(element).toBeDefined();
+    expect(element!.tagName).toMatch(/^(BUTTON|INPUT)$/);
+
+    // Allow form submission + page load to settle.
+    await new Promise(r => setTimeout(r, 2000));
+
+    // Discriminator: pathname must be /post after the form submits. The
+    // post-execution path of this safari_evaluate also refreshes the ownership
+    // registry from `?sp_p3=...` to the new URL (server.ts:802-805 — extension
+    // engine reports `_meta.tabUrl`, server calls tabOwnership.updateUrl).
+    const verify = await callTool(
+      client, 'safari_evaluate',
+      { tabUrl, script: 'return document.location.pathname' },
+      nextId(),
+      15000,
+    );
+    const pathname = (verify as { value: string }).value;
+    expect(pathname).toBe('/post');
+
+    // Update test-scope tabUrl: the registry now tracks the post-submission
+    // URL (httpbin.org/post is deterministic), so subsequent tests in this
+    // file must use it. Without this line, 3.9 below would pass `?sp_p3=...`
+    // to safari_navigate and hit TabUrlNotRecognizedError.
+    tabUrl = 'https://httpbin.org/post';
+  }, 30000);
 
   // ── 3.9 Wait for condition ──────────────────────────────────────────────
   it('3.9 safari_wait_for waits for an element', async () => {

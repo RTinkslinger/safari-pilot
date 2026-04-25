@@ -79,10 +79,12 @@ describe('Initialization system', () => {
     }
   }, 40000);
 
-  it('pre-call gate detects and reports system status', async () => {
-    // Just calling a tool proves the gate runs (it checks /status before executing).
-    // If we get a result, the gate passed.
-    const result = await callTool(client, 'safari_list_tabs', {}, nextId());
-    expect(Array.isArray(result) || typeof result === 'object').toBe(true);
-  }, 10000);
+  // SD-03: the prior "pre-call gate detects and reports system status" test
+  // was deleted. The pre-call gate emits no observable signal on the healthy
+  // path (only `recovery_*` events fire on the broken path), and its negative
+  // path is unreachable from e2e: `checkWindowExists` uses `exists window id`
+  // which Safari leaves permanently true after a close (ghost-window quirk),
+  // and breaking the daemon would tear down the shared client. The rich
+  // `safari_health_check` test above is the substantive systems-status oracle.
+  // SD-20 in docs/FOLLOW-UPS.md tracks the proper negative-path test design.
 });
