@@ -260,23 +260,21 @@ end tell`;
   public parseJsResult(raw: string): EngineResult {
     const start = Date.now();
 
-    // Detect CSP-blocked execution (Safari returns empty or specific error text)
+    // Detect CSP-blocked execution. Production AppleScript path always wraps
+    // results in a JSON envelope (`{ok, value}` from wrapJavaScript), so a
+    // BARE empty raw means the script never executed — CSP block is the
+    // dominant cause. Pre-T13 a triple-nested conditional dropped the
+    // `raw === ''` case at the innermost level (audit-tasks T13).
     if (
       raw === '' ||
       raw.toLowerCase().includes('content security policy') ||
       raw.toLowerCase().includes('blocked by csp')
     ) {
-      if (raw === '' || raw.toLowerCase().includes('content security policy') || raw.toLowerCase().includes('blocked by csp')) {
-        // Only classify empty as CSP_BLOCKED if it looks like a blocked signal,
-        // but for the harness we rely on the structured envelope. Bare empty = CSP.
-        if (raw.toLowerCase().includes('content security policy') || raw.toLowerCase().includes('blocked by csp')) {
-          return {
-            ok: false,
-            error: { code: 'CSP_BLOCKED', message: 'JavaScript execution blocked by Content Security Policy', retryable: false },
-            elapsed_ms: Date.now() - start,
-          };
-        }
-      }
+      return {
+        ok: false,
+        error: { code: 'CSP_BLOCKED', message: 'JavaScript execution blocked by Content Security Policy', retryable: false },
+        elapsed_ms: Date.now() - start,
+      };
     }
 
     // Detect shadow DOM closed signal
