@@ -1177,15 +1177,30 @@ end tell`;
     if (this._sessionWindowId) return; // already have a window
 
     trace(traceId, 'server', 'session_window_start', {});
+
+    // SD-21 (b): close any orphaned "Safari Pilot — Active Session" windows
+    // from prior crashes BEFORE we create a new one. T10's SIGTERM handler
+    // closes the session window on clean exit, but a SIGKILL or daemon
+    // crash leaves it orphaned. Without cleanup, these accumulate and
+    // contribute to the 5s execSync timeout flake on subsequent starts.
+    // Best-effort — failures here don't block the new-window creation
+    // because if the cleanup AppleScript itself fails, the worst case is
+    // a few orphans persist (same as before).
+    await this.closeOrphanedSessionWindows(traceId);
+
     let result: string;
     try {
       const { execSync } = await import('node:child_process');
+      // SD-21 (a): bump timeout from 5s → 15s. Empirically `make new
+      // document` exceeds 5s on a moderately-loaded Safari (other windows
+      // open, recent extension activity); 15s gives 3× headroom while
+      // still surfacing genuine hangs on a reasonable timeline.
       result = execSync(
         `osascript -e 'tell application "Safari"
   make new document with properties {URL:"${this.sessionTabUrl}"}
   return id of window 1
 end tell'`,
-        { timeout: 5000, encoding: 'utf-8' },
+        { timeout: 15_000, encoding: 'utf-8' },
       ).trim();
     } catch (err) {
       // T11: propagate instead of silently continuing with no _sessionWindowId.
@@ -1204,6 +1219,38 @@ end tell'`,
     this._sessionWindowId = windowId;
     this._sessionTabOpened = true;
     trace(traceId, 'server', 'session_window_created', { windowId });
+  }
+
+  /**
+   * SD-21 (b): close any orphaned "Safari Pilot — Active Session" windows
+   * that survived a prior crash (clean exit closes via the SIGTERM handler;
+   * SIGKILL / process crash / OS reboot leaves them open). Best-effort —
+   * if the AppleScript itself fails, log and continue.
+   */
+  private async closeOrphanedSessionWindows(traceId: string): Promise<void> {
+    try {
+      const { execSync } = await import('node:child_process');
+      // The dashboard HTML title is "Safari Pilot — Active Session" — see
+      // ExtensionHTTPServer.swift:327. Match by exact name. Two-pass
+      // pattern: collect names first, then iterate. AppleScript's
+      // `every window whose name is X` returns a list ref but iterating
+      // and closing in one shot is the simplest reliable form.
+      execSync(
+        `osascript -e 'tell application "Safari"
+  set targetWindows to (every window whose name is "Safari Pilot — Active Session")
+  repeat with w in targetWindows
+    close w
+  end repeat
+end tell'`,
+        { timeout: 5_000, encoding: 'utf-8' },
+      );
+      trace(traceId, 'server', 'session_window_orphan_cleanup', {});
+    } catch (err) {
+      // Don't propagate — the next ensureSessionWindow call will try to
+      // create the window anyway, with the bumped 15s timeout.
+      const cause = err instanceof Error ? err.message : String(err);
+      trace(traceId, 'server', 'session_window_orphan_cleanup_failed', { cause }, 'error');
+    }
   }
 
   /**

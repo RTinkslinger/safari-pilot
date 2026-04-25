@@ -99,4 +99,77 @@ describe('SafariPilotServer.ensureSessionWindow (T11): failure propagation', () 
     expect(mockExec).not.toHaveBeenCalled();
     expect(server.getSessionWindowId()).toBe(999);
   });
+
+  // SD-21 — flake-resistance against leaked session windows + tight 5s timeout.
+
+  it('SD-21 (b): closes orphaned "Safari Pilot — Active Session" windows BEFORE creating a new one', async () => {
+    // First execSync call must be the orphan-cleanup AppleScript (recognizable
+    // by `every window whose name is "Safari Pilot — Active Session"`).
+    // Second call must be the `make new document` invocation.
+    // Both are required, in order. A regression that drops the cleanup call
+    // would let pre-crash leaked windows accumulate, contributing to the
+    // timeout flake on subsequent starts.
+    mockExec.mockReturnValueOnce('').mockReturnValueOnce('12345\n');
+
+    const server = new SafariPilotServer(DEFAULT_CONFIG);
+    await callEnsureSessionWindow(server);
+
+    expect(
+      mockExec.mock.calls.length,
+      'must call execSync exactly twice: orphan cleanup then window creation',
+    ).toBe(2);
+    const firstCmd = String(mockExec.mock.calls[0]![0]);
+    const secondCmd = String(mockExec.mock.calls[1]![0]);
+    expect(
+      firstCmd,
+      'first execSync must be the orphan-cleanup AppleScript matching by window name',
+    ).toContain('every window whose name is "Safari Pilot — Active Session"');
+    expect(
+      firstCmd,
+      'cleanup must explicitly close matched windows',
+    ).toContain('close w');
+    expect(
+      secondCmd,
+      'second execSync must be the make-new-document call (post-cleanup)',
+    ).toContain('make new document');
+    expect(server.getSessionWindowId()).toBe(12345);
+  });
+
+  it('SD-21 (a): make-new-document timeout is bumped from 5s to 15s for moderate Safari load', async () => {
+    // The 5s budget was tight under load (multiple windows, recent extension
+    // activity). Bumped to 15s gives 3× headroom. Locks the fix: a regression
+    // dropping it back to 5000ms would fail this test.
+    mockExec.mockReturnValueOnce('').mockReturnValueOnce('77777\n');
+
+    const server = new SafariPilotServer(DEFAULT_CONFIG);
+    await callEnsureSessionWindow(server);
+
+    // Second call (make new document) — inspect the options object.
+    const secondCallOpts = mockExec.mock.calls[1]![1] as { timeout?: number };
+    expect(
+      secondCallOpts?.timeout,
+      'make new document timeout must be 15s (SD-21); ' +
+        `got ${secondCallOpts?.timeout}ms`,
+    ).toBe(15_000);
+  });
+
+  it('SD-21 (b): cleanup failure does NOT block new-window creation (best-effort)', async () => {
+    // First call (cleanup) throws → the SUT swallows it and proceeds.
+    // Second call (make new document) succeeds with a valid id.
+    mockExec
+      .mockImplementationOnce(() => {
+        throw new Error('osascript: cleanup failed');
+      })
+      .mockReturnValueOnce('88888\n');
+
+    const server = new SafariPilotServer(DEFAULT_CONFIG);
+    await callEnsureSessionWindow(server);
+
+    expect(
+      server.getSessionWindowId(),
+      'cleanup failure must NOT block new-window creation; ' +
+        'the next start would then fail with no window id',
+    ).toBe(88888);
+    expect(mockExec.mock.calls.length).toBe(2);
+  });
 });
