@@ -6,8 +6,9 @@
  *     evaluated trust level on every tool call.
  *   - HumanApproval (layer 4b) — sensitive URL pattern → degraded response
  *     with `error: HUMAN_APPROVAL_REQUIRED` BEFORE Safari ever opens the URL.
- *   - IdpiScanner (layer 8a) — extraction tool result on prompt-injection
- *     content → metadata.idpiThreats annotation.
+ *   - IdpiAnnotator (layer 8a, renamed from IdpiScanner per T35) — extraction
+ *     tool result on prompt-injection content → metadata.idpiThreats annotation.
+ *     The layer never blocks; the assertion is metadata-only.
  *   - ScreenshotRedaction (layer 8b) — safari_take_screenshot response
  *     metadata carries `redactionScript` + `redactionApplied: true`.
  *
@@ -123,8 +124,8 @@ describe('Security layers e2e (SD-04)', () => {
     // accountsTabExists check above flips true → test fails.
   }, 25_000);
 
-  // ── Layer 8a: IdpiScanner ─────────────────────────────────────────────────
-  it('IdpiScanner: extraction tools annotate metadata when content matches injection patterns', async () => {
+  // ── Layer 8a: IdpiAnnotator ───────────────────────────────────────────────
+  it('IdpiAnnotator: extraction tools annotate metadata when content matches injection patterns', async () => {
     // Open a tab, inject a known prompt-injection payload via DOM
     // manipulation, then call safari_get_text — the post-execution scan at
     // server.ts:849-863 runs over the result text and adds idpiThreats.

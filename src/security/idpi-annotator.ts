@@ -1,10 +1,23 @@
-// ─── IdpiScanner ─────────────────────────────────────────────────────────────
+// ─── IdpiAnnotator ───────────────────────────────────────────────────────────
 //
-// Indirect Prompt Injection (IDPI) defence layer. Scans arbitrary text content
-// retrieved from web pages for patterns that attempt to hijack agent behaviour.
+// Indirect Prompt Injection (IDPI) annotation layer. Scans arbitrary text
+// content retrieved from web pages for patterns that attempt to hijack agent
+// behaviour and surfaces matches via response metadata. **This layer never
+// blocks** — it annotates results so a downstream consumer (the agent host,
+// audit log, or human reviewer) can decide what to do with the matched
+// content.
 //
-// Each detector is a named rule with a confidence weight (0.0–1.0). A result
-// is marked unsafe when any matched threat has confidence > 0.5.
+// Each pattern rule is named with a confidence weight (0.0–1.0). A result is
+// flagged unsafe in metadata when any matched pattern has confidence > 0.5.
+// Tool execution is NOT halted when unsafe=true; the tool's output reaches
+// the caller with `_meta.idpiUnsafe = true` and the threat list. T35
+// (2026-04-26) renamed this from "IdpiScanner" to drop the framing that
+// implied blocking semantics.
+//
+// To convert this to a true blocking scanner, the path is well-defined: add
+// a configurable confidence threshold + throw an `IdpiBlockedError` when a
+// pattern exceeds it. That decision is deferred — false-positive risk needs
+// a threat-model review first.
 
 export interface IdpiThreat {
   pattern: string;
@@ -12,7 +25,7 @@ export interface IdpiThreat {
   match: string;
 }
 
-export interface ScanResult {
+export interface AnnotationResult {
   safe: boolean;
   threats: IdpiThreat[];
 }
@@ -90,18 +103,21 @@ const PATTERN_RULES: PatternRule[] = [
   },
 ];
 
-// ─── IdpiScanner ─────────────────────────────────────────────────────────────
+// ─── IdpiAnnotator ───────────────────────────────────────────────────────────
 
-export class IdpiScanner {
+export class IdpiAnnotator {
   /**
-   * Scan a text string for indirect prompt injection patterns.
+   * Annotate a text string with any indirect-prompt-injection patterns it
+   * matches. Returns a result with:
+   * - `safe` — false when any matched threat's confidence exceeds 0.5
+   * - `threats` — all matched threats with their pattern name, confidence,
+   *               and the excerpt that triggered the match
    *
-   * Returns a result with:
-   * - `safe` — false when any threat confidence exceeds 0.5
-   * - `threats` — all matched threats with their pattern name, confidence, and
-   *               the excerpt that triggered the match
+   * The caller (server.ts post-execution) attaches the result to the tool
+   * response's `_meta` and continues — it does NOT throw or block on
+   * `safe: false`. See class header for the rationale.
    */
-  scan(text: string): ScanResult {
+  annotate(text: string): AnnotationResult {
     const threats: IdpiThreat[] = [];
 
     for (const rule of PATTERN_RULES) {
@@ -135,12 +151,12 @@ export class IdpiScanner {
   }
 
   /**
-   * Invalidate any memoized scan state for this tool.
+   * Invalidate any memoized annotation state for this tool.
    *
-   * At commit 1a this is a no-op: IdpiScanner is stateless. Reserved for future
-   * engine-aware scan caching.
+   * IdpiAnnotator is stateless — this is a no-op kept for API symmetry with
+   * future engine-aware caching.
    */
   invalidateForDegradation(_toolName: string): void {
-    // Stateless at 1a; reserved for future caching semantics.
+    // Stateless; reserved for future caching semantics.
   }
 }

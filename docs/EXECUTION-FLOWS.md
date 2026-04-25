@@ -212,7 +212,7 @@ SafariPilotServer.executeToolWithSecurity()
     │       └── (deferred check) → verify ownership via _meta.tabId
     ├── 📍8  post_verify            [server] deferredVerified, metaPresent
     │
-    ├── (extraction tools) → IdpiScanner.scan()
+    ├── (extraction tools) → IdpiAnnotator.annotate()
     │
     ├── (safari_take_screenshot) → ScreenshotRedaction.getRedactionScript()
     │
@@ -397,7 +397,7 @@ Step    Component                   Trace point   Blocks on
  8.post2 Post-exec _meta ownership    📍8          TabUrlNotRecognizedError
          (backfill, URL refresh,                   (deferred path)
           deferred verify)
- 8a     IdpiScanner.scan()            —            (annotates metadata, no block)
+ 8a     IdpiAnnotator.annotate()      —            (annotates metadata, no block; T35)
          (extraction tools only)
  8b     ScreenshotRedaction           —            (annotates metadata, no block)
          (safari_take_screenshot only)

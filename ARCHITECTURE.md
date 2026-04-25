@@ -198,7 +198,7 @@ Logic:
 | 7 | **TabOwnership** | Identity-based: defers to post-execution if extension engine + domain match | server.ts:512 |
 | — | **Tool Execution** | Calls the tool handler with selected engine | server.ts:576 |
 | 8 | **Post-exec Ownership** | Backfill extensionTabId, refresh URL, verify deferred ownership | server.ts:602 |
-| 9 | **IdpiScanner** | Post-execution: scans extraction results for prompt injection | server.ts:638 |
+| 9 | **IdpiAnnotator** | Post-execution: scans extraction results for prompt-injection patterns and annotates `_meta` (never blocks; T35) | server.ts:920 |
 | 10 | **ScreenshotRedaction** | Post-execution: attaches redaction script for banking/cross-origin | server.ts:654 |
 | 11 | **AuditLog** | Post-execution: records tool, URL, engine, params, result, timing | server.ts:659 |
 
@@ -208,7 +208,7 @@ Logic:
 
 **Extension kill-switch (Task 13, safari-pilot.config.json):** The config now has an `extension` section with `enabled: boolean` + `killSwitchVersion: string`. When `extension.enabled=false`, `selectEngine` skips the Extension engine (tools requiring it throw `EngineUnavailableError`; others fall back to daemon/applescript). This is the 30-second config-only rollback path for the Extension engine — no rebuild/sign/notarize required.
 
-**Engine-degradation security re-run (Task 10, src/server.ts step 7.5):** When the Extension engine is available and its breaker is closed but `selectEngine` returns a non-extension engine, the pipeline calls `HumanApproval.invalidateForDegradation(tool)` + `IdpiScanner.invalidateForDegradation(tool)` and re-asserts `HumanApproval.assertApproved` against the fallback engine's action surface. `metadata.degradedReason` is set to `extension_unavailable_fallback_to_<engine>` (or `extension_degraded_approval_required: <msg>` if approval now fails). The `invalidate*` methods are no-ops at 1a — HumanApproval and IdpiScanner are stateless — and exist for API symmetry with future engine-aware caching (commit 1c).
+**Engine-degradation security re-run (Task 10, src/server.ts step 7.5):** When the Extension engine is available and its breaker is closed but `selectEngine` returns a non-extension engine, the pipeline calls `HumanApproval.invalidateForDegradation(tool)` + `IdpiAnnotator.invalidateForDegradation(tool)` and re-asserts `HumanApproval.assertApproved` against the fallback engine's action surface. `metadata.degradedReason` is set to `extension_unavailable_fallback_to_<engine>` (or `extension_degraded_approval_required: <msg>` if approval now fails). The `invalidate*` methods are no-ops — HumanApproval and IdpiAnnotator are stateless — and exist for API symmetry with future engine-aware caching.
 
 **EXTENSION_UNCERTAIN (src/errors.ts):** Typed error for the non-idempotent + Extension-engine ambiguous disconnect case. Carries `StructuredUncertainty { disconnectPhase, likelyExecuted, recommendation }` surfaced on `ToolError.uncertainResult`. `retryable=false` — the caller decides whether to probe page state or retry; the pipeline never auto-retries.
 

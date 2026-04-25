@@ -1,3 +1,6 @@
+---
+brain_federation: enabled
+---
 # CLAUDE.md
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
@@ -132,7 +135,7 @@ Seven pre-execution layers + three post-execution checks run on every tool call 
 7. **Engine Selection** — picks best available engine for tool's requirements
 
 **Post-execution (annotate/audit after tool runs):**
-8. **IdpiScanner** — indirect prompt injection detection on extraction tool results only (server.ts:575)
+8. **IdpiAnnotator** — indirect prompt injection detection on extraction tool results only; annotates metadata, never blocks (T35; server.ts:920)
 9. **ScreenshotRedaction** — attaches CSS blur script for cross-origin iframes and banking domains on screenshot tool only (server.ts:591)
 10. **AuditLog** — records every tool call with params, engine, result, timing (server.ts:596)
 

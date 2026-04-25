@@ -30,7 +30,7 @@ import { AuditLog } from './security/audit-log.js';
 import { DomainPolicy } from './security/domain-policy.js';
 import { RateLimiter } from './security/rate-limiter.js';
 import { CircuitBreaker } from './security/circuit-breaker.js';
-import { IdpiScanner } from './security/idpi-scanner.js';
+import { IdpiAnnotator } from './security/idpi-annotator.js';
 import { HumanApproval } from './security/human-approval.js';
 import { ScreenshotRedaction } from './security/screenshot-redaction.js';
 import {
@@ -193,7 +193,7 @@ export class SafariPilotServer {
   readonly domainPolicy: DomainPolicy;
   readonly rateLimiter: RateLimiter;
   readonly circuitBreaker: CircuitBreaker;
-  readonly idpiScanner: IdpiScanner;
+  readonly idpiAnnotator: IdpiAnnotator;
   readonly humanApproval: HumanApproval;
   readonly screenshotRedaction: ScreenshotRedaction;
 
@@ -263,7 +263,7 @@ export class SafariPilotServer {
       windowMs: this.config.circuitBreaker.windowMs,
       cooldownMs: this.config.circuitBreaker.cooldownMs,
     });
-    this.idpiScanner = new IdpiScanner();
+    this.idpiAnnotator = new IdpiAnnotator();
     this.humanApproval = new HumanApproval();
     this.screenshotRedaction = new ScreenshotRedaction();
   }
@@ -690,7 +690,7 @@ export class SafariPilotServer {
     // 7.5 Engine-degradation re-run
     // When the tool would have preferred the Extension engine (based on availability
     // and breaker state) but engine-selector returned a different engine, re-invoke
-    // HumanApproval and IdpiScanner against the new engine's action surface. The
+    // HumanApproval and IdpiAnnotator against the new engine's action surface. The
     // invalidate* methods are no-ops at 1a but establish the contract for future
     // engine-aware caching (commit 1c).
     const extensionPreferred = this.engineAvailability.extension === true
@@ -700,7 +700,7 @@ export class SafariPilotServer {
     let degradationReason: string | undefined;
     if (degradedFromExtension) {
       this.humanApproval.invalidateForDegradation(name);
-      this.idpiScanner.invalidateForDegradation(name);
+      this.idpiAnnotator.invalidateForDegradation(name);
       // Re-assert approval — stateless today, but establishes the pattern
       try {
         this.humanApproval.assertApproved(name, url, params);
@@ -917,7 +917,7 @@ export class SafariPilotServer {
         metaPresent: !!this.engineProxy?.getLastMeta()?.tabId,
       });
 
-      // 8a. IDPI scan — check extraction tool results for prompt injection attempts
+      // 8a. IDPI annotation — annotate extraction tool results that match prompt-injection attempts
       const EXTRACTION_TOOLS = new Set([
         'safari_get_text', 'safari_get_html', 'safari_snapshot',
         'safari_evaluate', 'safari_get_console_messages',
@@ -931,12 +931,12 @@ export class SafariPilotServer {
           .map((c) => c.text)
           .join('\n');
         if (textContent.length > 0) {
-          const scanResult = this.idpiScanner.scan(textContent);
-          if (!scanResult.safe) {
+          const annotation = this.idpiAnnotator.annotate(textContent);
+          if (!annotation.safe) {
             if (!result.metadata) {
               result.metadata = { engine: selectedEngineName, degraded: false, latencyMs: 0 };
             }
-            (result.metadata as Record<string, unknown>).idpiThreats = scanResult.threats;
+            (result.metadata as Record<string, unknown>).idpiThreats = annotation.threats;
             (result.metadata as Record<string, unknown>).idpiSafe = false;
           }
         }
