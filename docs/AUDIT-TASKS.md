@@ -133,10 +133,11 @@
 **Origin:** `016ff8c` → `e6c7682` (2026-04-14) — review chose "always front tab" over fixing the targeting.
 **Fix (lean path, matches T17):** Removed `tabUrl` from `safari_export_pdf` inputSchema (`src/tools/pdf.ts`); top-level description now discloses front-tab-only behavior: "Export the FRONTMOST Safari tab as a PDF file (no per-tab targeting; HTML is extracted from `current tab of front window` regardless of any URL hint)." 1 absence test at `test/unit/tools/pdf-schema.test.ts`. upp:test-reviewer fast PASS 0/0/1. Proper per-tab implementation (option 1: route HTML extraction through the engine's tab-aware path) is left as future work — the schema is now honest, and a future task can add tabUrl back with a real implementation.
 
-### T19. Fix `safari_paginate_scrape` stale URL after click
+### T19. Fix `safari_paginate_scrape` stale URL after click ✅ RESOLVED 2026-04-25 (commit `816d970`, lean fix — option 5)
 **Findings:** H17 (tool-modules audit)
 **Root cause:** After clicking "next", queries new page using OLD `currentUrl`. URL lookup fails. `currentUrl` becomes `""` (empty string from `??`). All subsequent pages silently fail.
 **Origin:** `35e3c58` (2026-04-12). CompoundTools receives raw `engine` not `proxy` — no positional identity.
+**Fix (lean path, option 5 per advisor):** Made the failure LOUD instead of silent. On post-navigation URL-query failure (ok=false OR empty/whitespace value), the loop now breaks, pushes a warning to `PaginateResult.warnings`, and sets `metadata.degraded=true`. PaginateResult gained an optional `warnings?: string[]` field. 3 unit tests at `test/unit/tools/compound-paginate-scrape.test.ts` (empty-value, ok=false, happy path). upp:test-reviewer fast PASS 0/0/2. Proper positional-identity threading through CompoundTools (option 1) is future work — the schema is now honest about partial failure, callers see warnings + degraded flag, and the silent-scrape-old-page failure mode is gone.
 
 ### T20. Fix `safari_eval_in_frame` — replace `eval()` with `new Function()`
 **Findings:** H16 (tool-modules audit)
