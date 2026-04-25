@@ -203,6 +203,15 @@ export class SafariPilotServer {
   private _nextTabIndex = 1;
   private _sessionTabOpened = false;
   private _sessionWindowId: number | undefined;
+  /**
+   * SD-32 — count of OTHER live MCP sessions detected by
+   * `registerWithDaemon()` at startup. When > 0, `closeOrphanedSessionWindows`
+   * must skip the cleanup AppleScript — the orphan-cleanup filter
+   * matches by constant title and would close the live other sessions'
+   * dashboard windows otherwise. Recorded in `start()` only; never
+   * mutated after.
+   */
+  private _otherSessionsAtStart = 0;
   private _extensionBootstrapAttempted = false;
   private _initMeta: {
     sessionId: string;
@@ -1319,6 +1328,18 @@ end tell'`,
    * if the AppleScript itself fails, log and continue.
    */
   private async closeOrphanedSessionWindows(traceId: string): Promise<void> {
+    // SD-32 — when other MCP sessions are live, their dashboard windows
+    // share this session's constant title ("Safari Pilot — Active Session")
+    // and would be closed by the orphan-filter AppleScript below. Skip
+    // the cleanup entirely; orphans from past crashes can be cleared on
+    // a future startup when no concurrent sessions exist.
+    if (this._otherSessionsAtStart > 0) {
+      trace(traceId, 'server', 'session_window_orphan_cleanup_skipped', {
+        reason: 'other_live_sessions',
+        otherSessions: this._otherSessionsAtStart,
+      });
+      return;
+    }
     try {
       const { execSync } = await import('node:child_process');
       // The dashboard HTML title is "Safari Pilot — Active Session" — see
@@ -1418,6 +1439,10 @@ end tell'`,
     // ── Full startup sequence ─────────────────────────────────────────
     // 1. Register session with daemon
     const otherSessions = await this.registerWithDaemon();
+    // SD-32 — record so closeOrphanedSessionWindows can skip cleanup
+    // when other live sessions exist (their dashboard windows share the
+    // same constant title and would be closed by the cleanup filter).
+    this._otherSessionsAtStart = otherSessions;
     if (otherSessions > 0) {
       console.error(`Safari Pilot: found ${otherSessions} existing session(s), starting session ${otherSessions + 1} in new window`);
     }
