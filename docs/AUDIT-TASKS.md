@@ -98,10 +98,11 @@
 
 ## P1: Reliability / Correctness — Silent Wrong Behavior
 
-### T13. Fix `parseJsResult` empty-string CSP detection
+### T13. Fix `parseJsResult` empty-string CSP detection ✅ RESOLVED 2026-04-25 (commit `0636182`)
 **Findings:** M8 (engine audit)
 **Root cause:** Triple-nested conditional drops `raw === ''` case. Comment says "Bare empty = CSP" but code treats empty as success `{ ok: true, value: '' }`. CSP-protected pages silently return empty data instead of `CSP_BLOCKED` error.
 **Origin:** `96064f6` (2026-04-11) — never modified since creation.
+**Fix:** Collapsed the triple-nested conditional in `parseJsResult` (src/engines/applescript.ts) into a single branch that includes `raw === ''`. Doc-comment updated: production AppleScript path always wraps successful results in a `{ok, value}` JSON envelope (via `wrapJavaScript`), so a BARE empty raw means the script never executed — CSP block is the dominant cause. 3 unit tests added in `test/unit/engines/applescript-parsejsresult.test.ts` (empty→CSP_BLOCKED bug fix; CSP-text→CSP_BLOCKED existing-path lock; non-CSP non-JSON string→ok=true regression check). upp:test-reviewer fast PASS 0/0/1. Unit test count 103 → 106 (+3).
 
 ### T14. Fix tab position staleness after reorder/close
 **Findings:** H6 (tab-ownership audit)
