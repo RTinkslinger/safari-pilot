@@ -8,16 +8,6 @@ Running list of findings surfaced by reviewers (Codex, `upp:test-reviewer`, advi
 
 ## Open
 
-### SD-11 — HealthStore recent-iteration API (session/MCP/keepalive) has zero tests
-- **Severity:** P1 (exactly the "critical recent-iteration code" the reviewer was asked to scrutinize)
-- **Source:** `upp:test-reviewer` retro review #2 (2026-04-24)
-- **Symptom:** `HealthStoreTests.swift` covers older alarm-fire / HTTP bind-failure / roundtrip counters. Untested: `registerSession`, `touchSession`, `activeSessionCount`, 60s session prune, `recordKeepalivePing`, `lastKeepalivePing`, `isSessionAlive`, `recordTcpCommand`, `checkMcpConnection`, `mcpConnected`, `markExecutedResult`, `lastExecutedResultTimestamp`, `recordSessionServed`, `sessionTabActive`. These are the T-series initialization-system additions.
-- **Current understanding (from review, not verified):** one test per public getter/setter pair plus behavior tests for: (a) 60s session prune transition (register, advance time, prune, assert removed), (b) `checkMcpConnection` 30s-stale transition (record, advance time, assert `mcpConnected` clears), (c) `isSessionAlive` under stale vs fresh pings.
-- **Discriminator:** break `pruneStaleSessionsLocked` (raise cutoff to 600s) — session-prune test must fail; restore → passes.
-- **Entry points / files:**
-  - `daemon/Sources/SafariPilotdCore/HealthStore.swift` — SUT
-  - `daemon/Tests/SafariPilotdTests/HealthStoreTests.swift` — extend
-
 ### SD-12 — ExtensionBridge `__keepalive__`, `__trace__`, `_meta` sentinels untested
 - **Severity:** P1 (three production-critical sentinels, each a documented contract; deletion of any is invisible to the test suite)
 - **Source:** `upp:test-reviewer` retro review #2 (2026-04-24)
@@ -117,6 +107,16 @@ Running list of findings surfaced by reviewers (Codex, `upp:test-reviewer`, advi
   - `daemon/Tests/SafariPilotdTests/CommandDispatcherTests.swift`
   - `daemon/Tests/SafariPilotdTests/ExtensionHTTPServerTests.swift`
 
+### SD-23 — HealthStore needs an injectable clock for prune-cutoff testing
+- **Severity:** P3 (test infra brittleness; doesn't affect production behaviour)
+- **Source:** Filed during SD-11 work (2026-04-25). `upp:test-reviewer` confirmed the gap.
+- **Symptom:** `HealthStore.pruneStaleSessionsLocked()` uses a hardcoded `Date(timeIntervalSinceNow: -60)` cutoff with no parameter. To test the cutoff transition cleanly (e.g. SD-11's discriminator: "raise cutoff to -600s → session-prune test must fail") requires either sleeping >60s in the test (too slow) or injecting a clock. The current SD-11 suite covers structural deduplication and `lastSeen` advancement but does NOT directly catch a regression that CHANGES the prune-cutoff value.
+- **Current understanding (not verified):** introduce an injectable `now: () -> Date` closure (or a `Clock` protocol with `SystemClock` default) into `HealthStore`. Production passes `Date.init`; tests pass a controllable mock that returns whatever the test wants. Then a test can register a session, advance the mock clock by 90s, call `activeSessionCount`, and assert the session was pruned.
+- **Discriminator for the fix:** with the clock injection in place, write a test that registers, advances the mock clock by 90s, and asserts `activeSessionCount === 0`. Mutating the cutoff to `-600` makes the test fail (session not yet stale at 90s of mock time when cutoff is -600); reverting to `-60` passes. SD-11's `pruneStaleSessionsLocked` test gap is closed.
+- **Entry points / files:**
+  - `daemon/Sources/SafariPilotdCore/HealthStore.swift` (lines 164-167 prune; constructor + Date sites)
+  - `daemon/Tests/SafariPilotdTests/HealthStoreTests.swift` — add prune-transition test
+
 ### SD-22 — 4 ERROR_CODES values declared but unused (no concrete class, no throw sites)
 - **Severity:** P3 (dead declaration; cosmetic but asymmetric with the other 17 codes)
 - **Source:** Filed during SD-06 work (2026-04-25). grep-zero verified across `src/`, `daemon/Sources/`, `extension/`.
@@ -168,6 +168,18 @@ Running list of findings surfaced by reviewers (Codex, `upp:test-reviewer`, advi
 ---
 
 ## Resolved
+
+### SD-11 — HealthStore recent-iteration API (session/MCP/keepalive) has zero tests (2026-04-25, commit `aff0705`)
+
+Resolved by adding 14 tests in `daemon/Tests/SafariPilotdTests/HealthStoreTests.swift` covering all 14 untested methods/properties (registerSession, touchSession, activeSessionCount, recordKeepalivePing, lastKeepalivePing, isSessionAlive, recordTcpCommand, checkMcpConnection, mcpConnected, setMcpConnected, markExecutedResult, lastExecutedResultTimestamp, recordSessionServed, sessionTabActive). Used the negative-timeout trick for `isSessionAlive(timeout:)` and `checkMcpConnection(timeout:)` to test stale-vs-fresh transitions without time injection.
+
+Added `HealthStore.lastSeenForSession(_:)` read-only accessor (per `upp:test-reviewer`'s exact recommendation) so tests can verify the deduplication-AND-update contract on duplicate `registerSession` and the existing-session lastSeen update via `touchSession`.
+
+`upp:test-reviewer` (full mode, 9 checks) initial verdict was **REVISE** flagging the deduplication test as non-discriminating (count-only). Addressed in this commit per reviewer's exact fix recipe (add accessor + assert lastSeen advances). Plus 2 ADVISORY-level strengthenings: explicit `setMcpConnected(true)` precondition in the fresh-mcp test; timestamp slack bumped 0.01 → 0.5 for CI thermal robustness.
+
+Documented limitation: `pruneStaleSessionsLocked` uses a hardcoded -60s cutoff — testing the prune-transition cleanly requires clock injection (out of scope here). Filed as **SD-23** above.
+
+Total tests: 97 unit (TS) + 20 canary + 41 e2e + 88 Swift = 246 (Swift was 74 pre-SD-11; +14).
 
 ### SD-10 — Canary T3/T4 are UNVERIFIED CLAIM: shape-only, not behavior (2026-04-25, commit `33a348f`)
 
