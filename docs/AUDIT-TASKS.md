@@ -127,10 +127,11 @@
 **Origin:** `115c762` (2026-04-11) — schema-first, implementation-never pattern. Competitive analysis marks fullPage as "RD" (roadmap).
 **Fix:** Removed `tabUrl`, `fullPage`, `quality` from `safari_take_screenshot` inputSchema (`src/tools/extraction.ts:166-189`); top-level description now discloses the actual behavior ("Capture a screenshot of the frontmost Safari window ... no per-tab targeting"). 3 absence tests at `test/unit/tools/extraction-screenshot-schema.test.ts`. upp:test-reviewer fast PASS 0/0/1. tabUrl-removal also resolves an implicit conflict with the core tab-isolation principle (CLAUDE.md "Never switch user tabs") — the property's old description implied tab activation.
 
-### T18. Fix `safari_export_pdf` tab targeting
+### T18. Fix `safari_export_pdf` tab targeting ✅ RESOLVED 2026-04-25 (commit `113515a`, lean fix)
 **Findings:** H18 (tool-modules audit)
 **Root cause:** `extractHtml()` hardcodes `current tab of front window` regardless of `tabUrl`. Code review at `e6c7682` deliberately removed tab-aware branches and renamed param to `_tabUrl`.
 **Origin:** `016ff8c` → `e6c7682` (2026-04-14) — review chose "always front tab" over fixing the targeting.
+**Fix (lean path, matches T17):** Removed `tabUrl` from `safari_export_pdf` inputSchema (`src/tools/pdf.ts`); top-level description now discloses front-tab-only behavior: "Export the FRONTMOST Safari tab as a PDF file (no per-tab targeting; HTML is extracted from `current tab of front window` regardless of any URL hint)." 1 absence test at `test/unit/tools/pdf-schema.test.ts`. upp:test-reviewer fast PASS 0/0/1. Proper per-tab implementation (option 1: route HTML extraction through the engine's tab-aware path) is left as future work — the schema is now honest, and a future task can add tabUrl back with a real implementation.
 
 ### T19. Fix `safari_paginate_scrape` stale URL after click
 **Findings:** H17 (tool-modules audit)
