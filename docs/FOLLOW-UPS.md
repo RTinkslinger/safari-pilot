@@ -8,21 +8,6 @@ Running list of findings surfaced by reviewers (Codex, `upp:test-reviewer`, advi
 
 ## Open
 
-### SD-10 — Canary T3/T4 are UNVERIFIED CLAIM: shape-only, not behavior
-- **Severity:** P1 (distribution-gate tests admit trivial stubs that wouldn't uninstall anything or ship any binary)
-- **Source:** `upp:test-reviewer` retro review #2 (2026-04-24)
-- **Symptom:**
-  - `test/canary/preuninstall.test.ts` (T3) header claims "verifies the shipped npm package cleans up after itself." Actual assertions: `package.json` has a `preuninstall` key; `scripts/preuninstall.sh` exists, is owner-executable, contains substrings `launchctl bootout|unload` and `com.safari-pilot.daemon`. A preuninstall.sh containing `echo "launchctl bootout com.safari-pilot.daemon"` (echoed as comment, no-op) passes all four tests. The LaunchAgent is never actually unloaded.
-  - `test/canary/release-universal-binary.test.ts` (T4) header claims "verifies release.yml wires the universal binary into the npm tarball." Actual assertions: literal text of `release.yml` contains substrings with correct character-index ordering. A release.yml with the `cp` command wrapped in `|| true` (silently fails), or `if: false` gating, or copying the wrong file passes every test because the YAML is never executed or semantically parsed.
-- **Current understanding (from review #2, not verified):**
-  - Weak fix: `bash -n scripts/preuninstall.sh` to verify it parses; for release.yml, parse via `yaml` devDep and walk `steps[]` asserting a step whose `run` contains `cp dist-bin/SafariPilotd bin/SafariPilotd` appears BEFORE any step whose `run` matches `/npm publish(\s|$)/`. AST ordering, not character ordering.
-  - Strong fix: sandboxed `npm pack` → extract → dry-run preuninstall in a tmp `$HOME` with `launchctl` stubbed via `$PATH` override; in CI, consume the `file bin/SafariPilotd` output as an artifact and assert on it.
-  - Also: file-header comments on both tests oversell what's covered. Reword to "static-config canary — guards file shape / YAML text from accidental regression; does not verify runtime behavior."
-- **Discriminator for the fix:** inject a lobotomized `preuninstall.sh` that prints `launchctl bootout com.safari-pilot.daemon` as a comment (prefixed with `#`) and does nothing else — current tests pass, behavioral tests must fail. Same for release.yml: wrap the cp in `|| true` — current tests pass, AST-walking test must fail.
-- **Entry points / files:**
-  - `test/canary/preuninstall.test.ts`, `test/canary/release-universal-binary.test.ts`
-  - `scripts/preuninstall.sh`, `.github/workflows/release.yml`
-
 ### SD-11 — HealthStore recent-iteration API (session/MCP/keepalive) has zero tests
 - **Severity:** P1 (exactly the "critical recent-iteration code" the reviewer was asked to scrutinize)
 - **Source:** `upp:test-reviewer` retro review #2 (2026-04-24)
@@ -183,6 +168,16 @@ Running list of findings surfaced by reviewers (Codex, `upp:test-reviewer`, advi
 ---
 
 ## Resolved
+
+### SD-10 — Canary T3/T4 are UNVERIFIED CLAIM: shape-only, not behavior (2026-04-25, commit `33a348f`)
+
+Resolved by strengthening both canaries with structural negative-form regexes catching specific lobotomization patterns. `preuninstall.test.ts` now has 7 tests (was 4) including bash -n parse, all-non-comment-launchctl assertion (filter-not-find for partial-lobotomy resilience), rm -f LaunchAgents assertion, and `set -e` preservation. `release-universal-binary.test.ts` now has 5 tests (was 3) including stub-pattern rejection (`|| true`, `if: false`, `if: ${{ false }}`, `echo "..."`) and same-job assertion for cp + npm publish steps.
+
+Headers reworded per reviewer to honestly declare scope ("static-config canary — does NOT verify runtime behavior") with explicit pointer to SD-15 as the strong-form behavioral test.
+
+`upp:test-reviewer` (full mode, 9 checks) verdict: **PASS** (CRITICAL: 0, MAJOR: 1 same-line regex coupling — accepted with deferral comment to SD-15; ADVISORY: 4 — 3 of 4 addressed: filter-not-find, rm-f assertion, ${{ false }} form caught; 4th (naming) is cosmetic).
+
+Total tests: 97 unit + 20 canary + 41 e2e = 158.
 
 ### SD-09 — Private-state peek pattern in unit tests (2026-04-25, commit `fdba5f0`)
 
