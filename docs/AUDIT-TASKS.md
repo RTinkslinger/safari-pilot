@@ -280,10 +280,11 @@
 **Root cause:** Created in `630526e`, never called. The positive-ownership model (fail-closed on unknown tabs) makes pre-existing tracking redundant.
 **Fix:** Deleted both methods + `preExistingTabs: Set<TabId>` backing field from `src/security/tab-ownership.ts` (15 LOC removed). Confirmed zero callers via repo-wide grep. Reviewer-skip per T24/T31 deletion-only precedent. Type-check clean and 126 unit tests pass.
 
-### T38. Fix `recoverSession()` to re-register with daemon
+### T38. Fix `recoverSession()` to re-register with daemon ✅ RESOLVED 2026-04-26 (commit `1479e63`)
 **Findings:** M25 (init-session audit)
 **Root cause:** Recovery re-opens window and polls extension but doesn't call `registerWithDaemon()`. After daemon restart, session is unregistered.
 **Origin:** `5fb94fa` (2026-04-23).
+**Fix:** Added `await this.registerWithDaemon()` immediately before each `return true` in `recoverSession`, covering both branches (window-only and extension-recovery). `registerWithDaemon` is idempotent (daemon dedupes by `sessionId`, refreshing `lastSeen`) and non-failing (returns 0 on error). Three discriminating tests with strict URL/body assertions pin three independent placement concerns: missing in window-only branch (test 2), missing in extension-recovery branch (test 1), wrong placement before the success branches (test 3 — failed recovery must not advertise this session as healthy). Reviewer (fast mode): REVISE → PASS after expanding from 1 test to 3 with strict URL equality + body shape + a negative-form failed-recovery test. Mutation cycle confirmed all three classes. Closes the recovery side of the SD-32 multi-session contract.
 
 ### T39. Prune HealthStore timestamp arrays ✅ RESOLVED 2026-04-26 (commit `cae41d8`, re-scoped — see Fix)
 **Findings:** M18 (daemon-core audit)

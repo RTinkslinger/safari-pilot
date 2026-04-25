@@ -50,7 +50,6 @@ Build pipeline: edit → `bash scripts/build-extension.sh` → verify entitlemen
 |---|---|---|---|
 | **T35** | `src/security/idpi-scanner.ts` + `src/server.ts:575` | IDPI scanner annotates result metadata but never blocks injected content; documentation honestly says "no block" | Decide: block (rename + add throw path) or rename to "annotator" + drop the "scanner" framing. |
 | **T36** | `src/security/screenshot-redaction.ts` + `src/server.ts:591` | redaction script returned but never injected before capture — currently a no-op annotation | |
-| **T38** | `src/server.ts` `recoverSession` | recovery re-opens window + polls extension but never calls `registerWithDaemon()` — multi-session count desyncs after recovery | |
 | **T40** | `ARCHITECTURE.md` | 8 documented claims contradict current code (cross-origin frames, ownership-domainMatches deletion, etc.) | doc-only fix. |
 
 ### Missing features / cosmetic — P3
@@ -120,7 +119,8 @@ Lookup-only index; full fix-context paragraphs are in `docs/AUDIT-TASKS.md` / `d
 | SD-32 | `6b55ff9` | `170592e` | orphan-cleanup skips when other live sessions exist; multi-session contract restored |
 | T37 | `d82c534` | `b4687de` | Deleted unused `recordPreExisting` + `isPreExisting` from `TabOwnership` (zero callers; positive-ownership model makes them redundant) |
 | T39 | `cae41d8` | `1c7e310` | `recordHttpRequestError` now prunes entries older than 1h on append (re-scoped from 4 arrays to 1; the other three were unwired and filed as SD-33) |
-| T34 | `b7d57b7` | (this commit) | `ENGINE_CAPS.extension.framesCrossOrigin` flipped `true → false` to match manifest reality (no `all_frames` in content_scripts); cap-vs-manifest parity test guards future drift, will require flip-back when T55 lands |
+| T34 | `b7d57b7` | `65c2297` | `ENGINE_CAPS.extension.framesCrossOrigin` flipped `true → false` to match manifest reality (no `all_frames` in content_scripts); cap-vs-manifest parity test guards future drift, will require flip-back when T55 lands |
+| T38 | `1479e63` | (this commit) | `recoverSession` now re-calls `registerWithDaemon()` after both success branches (window-only + extension-recovery), keeping the daemon session registry consistent across daemon restarts and preserving the SD-32 multi-session contract |
 
 Pre-2026-04-25 sprint resolved entries (SD-01..SD-28, T13..T25 originals): see archives.
 
@@ -128,10 +128,10 @@ Pre-2026-04-25 sprint resolved entries (SD-01..SD-28, T13..T25 originals): see a
 
 ## Tally
 
-- **25** audit items (T-numbered) open — 0 P0, 4 in extension batch, 4 P2 quality debt, 17 P3 missing-feature/cosmetic.
+- **24** audit items (T-numbered) open — 0 P0, 4 in extension batch, 3 P2 quality debt, 17 P3 missing-feature/cosmetic.
 - **2** SD open — SD-30 (banking-disable-extension, deferred feature); SD-33 (HealthStore unwired increment methods, surfaced by T39 re-scope).
 - **2** ROADMAP backlog items — navigate_back/forward stale URL, NDJSON line-split flake.
 
-Total open: **29**. **All real bugs are now resolved this sprint** (T7, SD-31, SD-32). The remainder is quality debt, missing features, deferred design decisions, or cosmetic.
+Total open: **28**. **All real bugs are now resolved this sprint** (T7, SD-31, SD-32, T38). T38 closed a related multi-session-recovery bug surfaced by SD-32. The remainder is quality debt, missing features, deferred design decisions, or cosmetic.
 
 Open follow-up flagged by SD-32 reviewer: an e2e companion test that spawns two concurrent MCP sessions and asserts Session A's keepalive survives Session B's startup would close the unit-test wiring gap (server.ts:1422 stores the otherSessions count into a private field; the unit tests poke the field directly; only an e2e exercises the full registerWithDaemon → field-write → cleanup-skip flow). Worth filing as SD-33 if anyone reports concurrent-session breakage.
