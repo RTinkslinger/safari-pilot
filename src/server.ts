@@ -964,6 +964,12 @@ export class SafariPilotServer {
       }, 'error', Date.now() - start);
       this.recordToolFailure(domain, selectedEngineName, error);
 
+      // T29 — feed the kill-switch's auto-activation rolling window so a
+      // configured `autoActivation` threshold actually trips after N
+      // failures. Without this call, `recordError`'s threshold logic
+      // (kill-switch.ts:132-150) was unreachable from production.
+      this.killSwitch.recordError();
+
       // 9. Audit log — error path
       this.auditLog.record({
         tool: name,
