@@ -443,9 +443,10 @@ Carve-outs (files that intentionally do NOT use the shared client):
 | `security-ownership.test.ts` | 9 | T1/T2/T5/T7/T8 — ownership registry, schema-required tabUrl, fail-closed on unknown URL, no fake switch_frame envelope |
 | `signal-shutdown.test.ts` | 2 | T10 — SIGTERM/SIGINT close the session window (asserts on `visible of window id`, not `exists`) |
 
-### Daemon Tests (daemon/Tests/) — 51 tests
-- ExtensionSocketServer, ExtensionBridge, CommandDispatcher, HealthStore, SleepWakeMemoryRecovery
-- These are real Swift tests, not mocked — kept from before the purge
+### Daemon Tests (daemon/Tests/) — 116 tests
+- ExtensionSocketServer, ExtensionBridge, CommandDispatcher, HealthStore, SleepWakeMemoryRecovery, ExtensionHTTPServer
+- Real Swift tests against real types, with I/O-isolation mocks at the NSAppleScript boundary
+- The MockExecutor / StubExecutor / SequencedMockExecutor types substitute the external NSAppleScript → Safari boundary so tests run without a live Safari, but the SUT (CommandDispatcher, ExtensionBridge, HealthStore, ExtensionHTTPServer) is the real production code. Per the test rubric this is acceptable: mocks at the I/O boundary, real types at the SUT boundary.
 
 ### Trace Capture (mandatory)
 All test runs capture structured JSONL traces for the recipe system's learning pipeline. See CLAUDE.md "Trace capture" section for format and rules.
