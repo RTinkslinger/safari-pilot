@@ -201,10 +201,12 @@
 
 **Fix:** Added `this.killSwitch.recordError()` inside `executeToolWithSecurity`'s catch block immediately after `recordToolFailure(domain, engine, error)`. Discriminating unit test (`killswitch-auto-activation.test.ts`) configures `autoActivation:true, maxErrors:3` and drives 3 failures through a throwing stub for `safari_list_tabs` (which bypasses ownership). Dual oracle: `server.killSwitch.isActive()` flips to true after 3 failures, and the 4th call throws `KillSwitchActiveError`. Mutation-verified: removing the new `recordError` call returns the test to RED.
 
-### T30. Set `isError: true` on HumanApproval responses
+### T30. Set `isError: true` on HumanApproval responses ✅ RESOLVED 2026-04-25 (commit `4ecaef1`)
 **Findings:** M3 (security audit)
 **Root cause:** `HumanApprovalRequiredError` caught and returned as content with `approvalRequired: true` — MCP client sees it as a successful tool call. Other security layers (KillSwitch, RateLimiter, CircuitBreaker) all throw hard errors. MCP protocol has `isError` field for tool-level errors — never set.
 **Origin:** `c1d3b92` (2026-04-15) copied the `EngineUnavailableError` soft-return pattern.
+
+**Fix:** Added `ToolResponse.isError?: boolean` to `src/types.ts`. Both HumanApproval soft-return sites in `executeToolWithSecurity` now set `isError: true` (Site 1 = initial check at line 497; Site 2 = post-engine-degradation re-check at line 650, kept symmetrical against future stateful HumanApproval). The MCP `CallTool` handler in `src/index.ts` spreads the flag into the response envelope so it reaches the wire. Triple-oracle unit test (`human-approval-iserror.test.ts`) uses an OAuth URL to drive Site 1, asserting `response.isError === true`, structured `approvalRequired` payload preserved, and `metadata.degraded` contract intact. Mutation-verified by re-removing the new `isError` field. Site 2 is currently dead code (stateless HumanApproval cannot differ on re-assert) so its fix is enforced by code-review diff symmetry, documented in the test's doc comment. Note: `EngineUnavailableError` soft-return at server.ts:553-571 has the same shape but is out of T30 scope per the original audit.
 
 ### T31. Remove `extensionAllowed` from DomainPolicy or wire into engine selector
 **Findings:** M4 (security audit)
