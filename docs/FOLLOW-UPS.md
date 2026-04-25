@@ -37,21 +37,6 @@ Running list of findings surfaced by reviewers (Codex, `upp:test-reviewer`, advi
   - `src/tools/frames.ts` (FrameNotFoundError throw sites)
   - `src/tools/interaction.ts` (DialogUnexpectedError — safari_handle_dialog)
 
-### SD-21 — `ensureSessionWindow` 5s execSync timeout fragile under Safari load
-- **Severity:** P2 (intermittent flake; not blocking but actively pollutes the e2e feedback loop and forces manual leaked-window cleanup + retry)
-- **Source:** Filed 2026-04-25 during SD-03 sprint. Repeated occurrences: T11/T12 e2e runs (CHECKPOINT.md), this session's SD-03 first phase3 run (10/14 timeouts), this session's first `npm run test:all` (9/36 phase2 timeouts). Previously deferred in CHECKPOINT.md ("file as SD-NN if it keeps flaring") — repeat now confirmed.
-- **Symptom:** `SafariPilotServer.ensureSessionWindow` (`src/server.ts:1166-1196`) runs `osascript -e 'tell application "Safari" to make new document …'` via `execSync` with `timeout: 5000`. When Safari is under load (multiple windows open, leaked "Safari Pilot — Active Session" windows from prior crashes, recent extension activity), `make new document` exceeds 5s. Result: `SessionWindowInitError(reason: 'execFailed')` propagates → tool calls fail → all subsequent tests in the run cascade-fail with response timeouts. Manual recovery: `osascript` close-by-name on leaked session windows, wait, retry. `checkWindowExists` (`src/server.ts:1090-1102`) shares the same 2s timeout pattern and is also affected.
-- **Current understanding (not verified):** The 5s budget is tight for AppleScript's actual cold-path latency on a moderately-loaded Safari instance. Three options:
-  - **(a) Raise the timeout.** Bump to 15-20s. Trivial; legitimate hangs surface 3-4× slower.
-  - **(b) Auto-cleanup at init.** Before calling `make new document`, scan and close any orphaned "Safari Pilot — Active Session" windows that aren't `_sessionWindowId`. T10's SIGTERM handler already does this for clean exits — repeat the logic at startup for crash-recovery.
-  - **(c) Replace `execSync` + AppleScript** with a daemon-side or extension-side new-window primitive. Larger surgery.
-- **Discriminator for the fix:**
-  - For (a): parametrize the timeout, write a unit test injecting a slow `execSync` mock (returns at, e.g., 4900ms) and assert success within the raised budget; revert default to 5s → test fails.
-  - For (b): write an e2e test that pre-creates two "Safari Pilot — Active Session" windows via osascript, then spawns `dist/index.js`, asserts `ensureSessionWindow` succeeds AND that the orphans were closed. Revert auto-cleanup → orphans remain → init either succeeds with 3 windows or times out.
-- **Entry points / files:**
-  - `src/server.ts:1166-1196` (ensureSessionWindow), `src/server.ts:1090-1102` (checkWindowExists), `src/server.ts:1287-1310` (close on shutdown — T10 reference for option (b))
-  - `test/unit/server/ensure-session-window.test.ts` — extend with timeout scenario for option (a)
-  - New e2e test for option (b)
 
 
 ### SD-28 — Clock-protocol injection on ExtensionBridge + ExtensionHTTPServer (delete `*ForTest` test-only public methods)
@@ -152,6 +137,34 @@ Running list of findings surfaced by reviewers (Codex, `upp:test-reviewer`, advi
 ---
 
 ## Resolved
+
+### SD-21 — ensureSessionWindow flake (orphan cleanup + 15s timeout) (2026-04-25, commit `c9e8b82`)
+
+Resolved with options (a) AND (b) per the FOLLOW-UPS spec. Option (c) (replace execSync + AppleScript with daemon-side primitive) is the larger surgery and remains deferred.
+
+**(a) Timeout bump**: `make new document` execSync timeout raised 5_000ms → 15_000ms. Empirically `make new document` exceeds 5s on a moderately-loaded Safari (multiple windows open, recent extension activity); 15s gives 3× headroom while still surfacing genuine hangs on a reasonable timeline.
+
+**(b) Orphan cleanup**: new private `closeOrphanedSessionWindows(traceId)` invoked at the start of `ensureSessionWindow` BEFORE creating a new window. Runs an AppleScript:
+
+```
+tell application "Safari"
+  set targetWindows to (every window whose name is "Safari Pilot — Active Session")
+  repeat with w in targetWindows
+    close w
+  end repeat
+end tell
+```
+
+Best-effort: cleanup failure (timeout, AppleScript error, etc.) does NOT block new-window creation — emits `session_window_orphan_cleanup_failed` trace and proceeds. T10's SIGTERM handler closes the session window on clean exit; SIGKILL/process crash leaves it orphaned. Without this cleanup, orphans accumulate across crashes and contribute to the timeout flake on subsequent starts.
+
+3 unit tests in `test/unit/server/ensure-session-window.test.ts`:
+- locks cleanup script content + ordering vs make-new-document
+- locks the exact 15_000 timeout value
+- locks the cleanup-failure best-effort path (mockImplementationOnce throw → second mock returns valid id → getSessionWindowId set, 2 calls made)
+
+`upp:test-reviewer` (fast mode, Checks 6/7/8) verdict: **PASS** (0 CRITICAL, 0 MAJOR, 2 ADVISORY non-gating). Both ADVISORY about SUT design choices (Swift/TS title-string coupling at `ExtensionHTTPServer.swift:327` ↔ `server.ts:1240`; timeout single-field oracle by SD-21(a) scope).
+
+Total tests: 103 unit (TS) + 28 canary + 41 e2e + 116 Swift = 288 (TS unit was 100; +3).
 
 ### SD-20 — Pre-call gate negative-path test (path A: unit-level, mocked boundaries) (2026-04-25, commit `eea79bb`)
 
