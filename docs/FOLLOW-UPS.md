@@ -8,31 +8,6 @@ Running list of findings surfaced by reviewers (Codex, `upp:test-reviewer`, advi
 
 ## Open
 
-### SD-17 — Swift test infrastructure brittleness
-- **Severity:** P3 (cosmetic / foot-guns, low-impact until they aren't)
-- **Source:** `upp:test-reviewer` retro review #2 (2026-04-24)
-- **Symptom:** Three patterns:
-  - `ExtensionHTTPServerTests.swift:258-268` uses `Mirror(reflecting:)` to read private `port`. Rename to `_port` or `serverPort` → Mirror silently returns 0 → test connects to `http://127.0.0.1:0` → confusing network failures.
-  - `ExtensionBridge.swift:60-64` exposes `addToExecutedLogForTest(commandID:at:)` as a production-surface method for back-dated timestamp insertion. Test knowledge bleeds into prod; production code could call this.
-  - `ExtensionBridgeTests.swift` + `ExtensionHTTPServerTests.swift` have ~20 `Thread.sleep(0.1) + poll` patterns. Under slow CI these will flake.
-- **Current understanding (from review):**
-  - Expose `ExtensionHTTPServer.port` publicly (or a `boundPort` getter); drop the Mirror hack.
-  - Introduce a `Clock` protocol (default `SystemClock`), inject into `ExtensionBridge`; delete `addToExecutedLogForTest`. Alternative: `@testable import SafariPilotdCore` + `internal` visibility on `executedLog`.
-  - Replace sleep-polls with a `waitUntil(predicate:timeout:)` helper.
-- **Discriminator:** rename the private `port` field to `_port` — current Mirror-based tests silently pass with port 0 (flaky network failures); getter-based tests fail compilation cleanly.
-- **Entry points / files:**
-  - `daemon/Sources/SafariPilotdCore/ExtensionHTTPServer.swift`
-  - `daemon/Sources/SafariPilotdCore/ExtensionBridge.swift`
-  - `daemon/Tests/SafariPilotdTests/*.swift` — sleep-poll replacement
-
-### SD-18 — Doc correction: "Swift tests are real, not mocked" is literally false
-- **Severity:** P3 (doc/reality mismatch; tests are fine — docs overclaim)
-- **Source:** `upp:test-reviewer` retro review #2 (2026-04-24)
-- **Symptom:** `CLAUDE.md` and `ARCHITECTURE.md` claim "Daemon Tests (daemon/Tests/) — 51 tests, real Swift tests, not mocked — kept from before the purge." Reality: `MockExecutor`, `StubExecutor`, `SequencedMockExecutor` all exist in the test files. These are LEGITIMATE I/O-isolation mocks at the NSAppleScript → Safari boundary (they substitute external dependencies, not the SUT), so per the skill rubric they're acceptable. But the wording is wrong and gives a false sense of "pure behavioral coverage."
-- **Current understanding (from review):** amend docs to "real Swift tests against real types, with I/O-isolation mocks at the NSAppleScript boundary."
-- **Discriminator:** N/A (documentation change).
-- **Entry points / files:**
-  - `CLAUDE.md` (§E2E means E2E and related)
   - `ARCHITECTURE.md` (§Test Architecture, Daemon Tests section)
 
 ### SD-19 — Shape-only / self-fulfilling assertions in Swift tests (batch)
@@ -106,6 +81,34 @@ Running list of findings surfaced by reviewers (Codex, `upp:test-reviewer`, advi
   - `src/server.ts:413-432` (gate body), `1077-1085` (checkExtensionStatus), `1090-1102` (checkWindowExists), `1108-1136` (recoverSession)
   - `test/unit/server/` (new file for option a) OR `test/e2e/initialization.test.ts` (new own-spawn test for option b)
 
+### SD-28 — Clock-protocol injection on ExtensionBridge + ExtensionHTTPServer (delete `*ForTest` test-only public methods)
+- **Severity:** P3 (cosmetic; the `*ForTest` methods work and the test discipline note is in code comments — but they're a test-leak into the production surface)
+- **Source:** Filed during SD-17 work (2026-04-25). Originally part of SD-17 but deferred because the refactor scope is materially larger than the other two SD-17 patterns.
+- **Symptom:** Two production classes carry test-only public methods that cannot be removed without exposing internal state to tests via another channel:
+  - `ExtensionBridge.addToExecutedLogForTest(commandID:at:)` (ExtensionBridge.swift:60-64): inserts a back-dated executedLog entry so tests can exercise the TTL prune path.
+  - `ExtensionHTTPServer.runDisconnectCheckForTest(elapsedSeconds:)` (ExtensionHTTPServer.swift:484-487, added by SD-13): rewinds `_lastRequestTime` and invokes private `checkDisconnect()` synchronously so disconnect tests don't need to sleep past the production 10s/15s schedule.
+  Both bypass the test/production separation. A production caller could invoke them and corrupt state.
+- **Current understanding (not verified):** introduce a `Clock` protocol with a default `SystemClock` (returns `Date()`), and inject it into `ExtensionBridge` + `ExtensionHTTPServer` constructors:
+  ```swift
+  protocol Clock { func now() -> Date }
+  struct SystemClock: Clock { func now() -> Date { Date() } }
+  // production
+  let bridge = ExtensionBridge(clock: SystemClock())
+  // tests
+  let mockClock = MockClock()  // returns whatever the test sets
+  let bridge = ExtensionBridge(clock: mockClock)
+  mockClock.now = Date(timeIntervalSinceNow: -360)
+  bridge.recordExecutedResult(commandID: "old-cmd")  // back-dated naturally
+  ```
+  Then delete `addToExecutedLogForTest` and `runDisconnectCheckForTest` — tests use the mock clock to control time directly. The custom CLT test harness rules out `@testable import` (per HealthStoreTests comment).
+- **Discriminator:** with the refactor in place, the production `ExtensionBridge` has no `*ForTest` methods. Adding a new test-only API path requires either (a) the Clock injection, or (b) a new public method (which would be reviewed). Test files in `daemon/Tests/` instantiate with `MockClock` to control time. Reverting the Clock injection (back to `Date()` everywhere) fails the existing executedLog-TTL and disconnect-timeout tests because they can no longer control time.
+- **Entry points / files:**
+  - `daemon/Sources/SafariPilotdCore/Clock.swift` (new — protocol + SystemClock)
+  - `daemon/Sources/SafariPilotdCore/ExtensionBridge.swift` (line 60-64 to delete; constructor + Date() sites to inject)
+  - `daemon/Sources/SafariPilotdCore/ExtensionHTTPServer.swift` (line 484-487 to delete; constructor + lastRequestTime to inject)
+  - `daemon/Tests/SafariPilotdTests/ExtensionBridgeTests.swift` (testExecutedLogExpiresAfterTTL)
+  - `daemon/Tests/SafariPilotdTests/ExtensionHTTPServerTests.swift` (testDisconnectCheckFiresWhenIdleBeyondThreshold + testDisconnectCheckPreservesConnectionWhenFresh)
+
 ### SD-25 — PdfGenerator + syncAwait WebKit lazy-load deadlock blocks generate_pdf testing
 - **Severity:** P3 (test-infra; the production daemon's PdfGenerator usage runs from a long-lived async context with a live runloop, so this affects ONLY the test harness)
 - **Source:** Filed during SD-16 work (2026-04-25). Reproduced deterministically.
@@ -176,6 +179,22 @@ Running list of findings surfaced by reviewers (Codex, `upp:test-reviewer`, advi
 ---
 
 ## Resolved
+
+### SD-18 — Doc correction: "Swift tests are real, not mocked" (2026-04-25, commit `55b3500`)
+
+Resolved by amending `ARCHITECTURE.md:446-449` to "Real Swift tests against real types, with I/O-isolation mocks at the NSAppleScript boundary." Bumped daemon test count 51 → 116 to reflect SD-11 / SD-12 / SD-13 / SD-14 / SD-15 / SD-16 additions. The MockExecutor / StubExecutor / SequencedMockExecutor types substitute the external NSAppleScript → Safari boundary so tests run without a live Safari, but the SUT (CommandDispatcher, ExtensionBridge, HealthStore, ExtensionHTTPServer) is the real production code — per the test rubric this is acceptable. Doc-only fix; no reviewer.
+
+### SD-17 — Swift test infrastructure brittleness (port public + waitUntil helper; Clock injection deferred to SD-28) (2026-04-25, commit `6b1b043`)
+
+Resolved with two of three patterns addressed in-place; the third (Clock injection) deferred to SD-28 due to the refactor scope being materially larger than the SD-17 P3 estimate.
+
+**Pattern 1 (Mirror reflection on private `port`)** — `ExtensionHTTPServer.port` is now a `public let` instead of `private let`. The Mirror-based `testPort` accessor (which silently returned 0 on rename, causing tests to connect to `http://127.0.0.1:0`) is now a 1-line `var testPort: UInt16 { port }` that uses the real getter. A rename now surfaces as a compile error (the SD-17 stated discriminator).
+
+**Pattern 3 (sleep-poll patterns)** — new `waitUntil(timeout:pollInterval:_:)` helper added to `daemon/Tests/SafariPilotdTests/main.swift`. Replaces fixed `Thread.sleep(0.1) + single observation` with a predicate-based wait. Helper is in place; opportunistic adoption of the ~20 existing sleep-poll sites left as a follow-up since converting each site requires adding a non-mutating public observation point on `ExtensionBridge` (e.g. `pendingCommandsCount`) — best done alongside the SD-28 Clock-injection refactor.
+
+**Pattern 2 (`*ForTest` test-only methods on production classes)** — deferred to SD-28. The Clock-protocol injection refactor on `ExtensionBridge` + `ExtensionHTTPServer` is the right fix but touches the constructor surfaces of both classes plus several test sites. Filed with concrete protocol design + before/after sketch.
+
+No new tests added (this is a SUT signature refactor + unused helper). All 116 Swift tests still pass. Reviewer skipped per the doc-only / pure-refactor convention.
 
 ### SD-16 — CommandDispatcher: watch_download + UNKNOWN_INTERNAL_METHOD coverage (partial; PDF deferred to SD-25) (2026-04-25, commit `c98bcac`)
 
