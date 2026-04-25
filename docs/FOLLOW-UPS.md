@@ -8,17 +8,6 @@ Running list of findings surfaced by reviewers (Codex, `upp:test-reviewer`, advi
 
 ## Open
 
-### SD-07 — Quick-win batch: 4 tautological/shape-only oracles
-- **Severity:** P2 (each is a one-line fix; ~1-2 hours total)
-- **Source:** `upp:test-reviewer` retro review #1 (MAJOR oracle findings)
-- **Symptom:** Four tests currently assert in ways that admit trivial-stub passes:
-  1. `test/e2e/phase1-core-navigation.test.ts:115-118` close_tab — `expect(text).toBeDefined()` where `text = JSON.stringify(result)`. Should be `expect(result.closed).toBe(true)` (T7 already uses this oracle on the same tool).
-  2. `test/e2e/phase3-interaction.test.ts:92-94` wait_for — same tautology. Handler returns `{found: true}` or similar; assert on the specific field.
-  3. `test/e2e/evaluate-async.test.ts:74` sync-regression test — `expect(payloadStr).toContain('3')` matches any JSON containing the character `3` (timestamps, latency, etc). Parse the value and assert `expect(parsed.value).toBe(3)`.
-  4. `test/e2e/phase2-page-understanding.test.ts:46-48` snapshot — `text.toContain('ref=')` has a narrow false-positive window (error envelope containing `ref=`); add `expect(text.length).toBeGreaterThan(200)` as a second guard.
-- **Current understanding (from review):** same class of bug in four places. Batch fix as one commit.
-- **Discriminator:** for each test, pre-fix a stub of the SUT handler that returns a tautology-satisfying envelope → tests must fail against it. Post-fix with correct oracles → tests pass against real impl.
-
 ### SD-08 — BRITTLE spy tests in `record-tool-failure.test.ts`
 - **Severity:** P3 (test 3 already carries the file via observable-state assertion; spy tests are cosmetic)
 - **Source:** `upp:test-reviewer` retro review #1
@@ -213,6 +202,12 @@ Running list of findings surfaced by reviewers (Codex, `upp:test-reviewer`, advi
 ---
 
 ## Resolved
+
+### SD-07 — Quick-win batch: 4 tautological/shape-only oracles (2026-04-25, commit `60118eb`)
+
+Resolved by strengthening 4 oracles across 4 e2e files: close_tab (`result.closed === true`), wait_for (fixed latent param-name bug where test used `selector`+`state` instead of the handler's `condition`+`value` — test had been silently hitting the timeout path; now asserts `met: true, timedOut: false`), evaluate-async sync-regression (parse `payload.value === 3` + `type === 'number'`), snapshot (triangulation: `ref=` + `length > 200` + `toLowerCase().toContain('example')` — three independent guards per reviewer).
+
+`upp:test-reviewer` (full mode, 9 checks) verdict: **PASS** (0 CRITICAL, 0 MAJOR, 1 ADVISORY non-gating). Wait_for bug-fix was the highest-value change — test had been proving nothing about the happy path since inception.
 
 ### SD-06 — 18 of 21 error classes untested (2026-04-25, commit `e4a8ef3`)
 
