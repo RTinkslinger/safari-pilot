@@ -11,15 +11,6 @@ Running list of findings surfaced by reviewers (Codex, `upp:test-reviewer`, advi
   - `ARCHITECTURE.md` (§Test Architecture, Daemon Tests section)
 
 
-### SD-23 — HealthStore needs an injectable clock for prune-cutoff testing
-- **Severity:** P3 (test infra brittleness; doesn't affect production behaviour)
-- **Source:** Filed during SD-11 work (2026-04-25). `upp:test-reviewer` confirmed the gap.
-- **Symptom:** `HealthStore.pruneStaleSessionsLocked()` uses a hardcoded `Date(timeIntervalSinceNow: -60)` cutoff with no parameter. To test the cutoff transition cleanly (e.g. SD-11's discriminator: "raise cutoff to -600s → session-prune test must fail") requires either sleeping >60s in the test (too slow) or injecting a clock. The current SD-11 suite covers structural deduplication and `lastSeen` advancement but does NOT directly catch a regression that CHANGES the prune-cutoff value.
-- **Current understanding (not verified):** introduce an injectable `now: () -> Date` closure (or a `Clock` protocol with `SystemClock` default) into `HealthStore`. Production passes `Date.init`; tests pass a controllable mock that returns whatever the test wants. Then a test can register a session, advance the mock clock by 90s, call `activeSessionCount`, and assert the session was pruned.
-- **Discriminator for the fix:** with the clock injection in place, write a test that registers, advances the mock clock by 90s, and asserts `activeSessionCount === 0`. Mutating the cutoff to `-600` makes the test fail (session not yet stale at 90s of mock time when cutoff is -600); reverting to `-60` passes. SD-11's `pruneStaleSessionsLocked` test gap is closed.
-- **Entry points / files:**
-  - `daemon/Sources/SafariPilotdCore/HealthStore.swift` (lines 164-167 prune; constructor + Date sites)
-  - `daemon/Tests/SafariPilotdTests/HealthStoreTests.swift` — add prune-transition test
 
 
 
@@ -122,6 +113,20 @@ Running list of findings surfaced by reviewers (Codex, `upp:test-reviewer`, advi
 ---
 
 ## Resolved
+
+### SD-23 — HealthStore Clock injection for prune-cutoff testing (2026-04-25, commit `32aebfb`)
+
+Resolved by introducing a `TimeSource` protocol (named to avoid collision with Swift's built-in `Clock` from macOS 13+) and injecting it into HealthStore. The production default `SystemTimeSource` returns `Date()`, so behavior is unchanged — only the test surface gains controllability.
+
+`HealthStore.pruneStaleSessionsLocked()` now uses `clock.now().addingTimeInterval(-60)` for the cutoff, and `registerSession`/`touchSession` use `clock.now()` for the lastSeen stamp. A `MockClock` in HealthStoreTests.swift exposes `advance(by: TimeInterval)` so tests can move time forward without sleeping.
+
+2 new tests:
+- `testPruneStaleSessionsLockedAt60sCutoff` — register at mock-T0, advance 30s (count=1), advance another 60s (total 90s, count=0). Discriminator: bumping the -60 cutoff to -600 fails the 90s assertion.
+- `testPruneStaleSessionsLockedTouchSessionResetsLastSeen` — register, advance 50s, touch (resets lastSeen to mock-T0+50), advance 50s (count=1, only 50s post-touch), advance another 11s (count=0, 61s post-touch). Discriminator: removing the touchSession lastSeen update fails.
+
+SD-28 will reuse the same TimeSource protocol for ExtensionBridge's executedLog TTL and ExtensionHTTPServer's disconnect-detection threshold, allowing deletion of `addToExecutedLogForTest` and `runDisconnectCheckForTest`.
+
+No reviewer dispatched (SUT refactor + 2 unit tests following established patterns; discrimination claims are mechanically verifiable from per-test setup → output mapping). Total tests: 103 unit (TS) + 28 canary + 41 e2e + 118 Swift = 290 (Swift was 116 pre-SD-23; +2).
 
 ### SD-22 — Delete 4 dead ERROR_CODES (path a) (2026-04-25, commit `2779832`)
 
