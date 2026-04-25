@@ -474,6 +474,18 @@ public final class ExtensionHTTPServer: @unchecked Sendable {
         healthStore.checkMcpConnection()
     }
 
+    /// Test-only entry point: rewinds `_lastRequestTime` by `elapsedSeconds`
+    /// and invokes the private `checkDisconnect()` synchronously. Lets tests
+    /// exercise the disconnect-timeout branch without sleeping past the
+    /// 10s/15s production schedule. Production code paths never call this —
+    /// `_disconnectTask` is the only producer in normal operation. SD-17
+    /// tracks the broader cleanup of test-only surfaces on production
+    /// classes (alongside `ExtensionBridge.addToExecutedLogForTest`).
+    public func runDisconnectCheckForTest(elapsedSeconds: TimeInterval) {
+        lock.sync { _lastRequestTime = Date(timeIntervalSinceNow: -elapsedSeconds) }
+        checkDisconnect()
+    }
+
     /// Serialize a dictionary to a JSON HTTP response with application/json content type.
     private func jsonResponse(
         _ dict: [String: Any],
