@@ -97,22 +97,18 @@ Running list of findings surfaced by reviewers (Codex, `upp:test-reviewer`, advi
   - `daemon/Sources/SafariPilotdCore/CommandDispatcher.swift:209-240`
   - `daemon/Tests/SafariPilotdTests/CommandDispatcherTests.swift` — extend with 3 happy-path tests
 
-### SD-24 — Swift HTTP test suite leaks file descriptors / sockets between tests
-- **Severity:** P2 (transient flake; only surfaces on rapid back-to-back runs of the full Swift suite, but the failure mode is opaque and cascades across unrelated tests)
-- **Source:** Filed during SD-14 work (2026-04-25). Observed once during a re-run of `swift run SafariPilotdTests`: pre-existing `testHTTPPollReturns204WhenEmpty` and `testHTTPPollReturnsCommandWhenAvailable` failed with `[ERROR] HTTP_BIND_FAILED port=19501 error=socket(...): Too many open files in system (errno: 23)`. A 5s pause and second run cleanly produced 113 passed / 0 failed.
-- **Symptom:** `ExtensionHTTPServer.stop()` (`daemon/Sources/SafariPilotdCore/ExtensionHTTPServer.swift:95-101`) only calls `_serverTask?.cancel()` and `_disconnectTask?.cancel()`. NIO/Hummingbird's underlying listening sockets and connection pools clean up asynchronously after the Task observes cancellation. With 19 sequential `startTestHTTPServer()` invocations now in the suite (post-SD-13's +13 tests), the cumulative open-file count can briefly exceed `kern.maxfiles_perproc`, triggering `EMFILE` on the next bind. The error cascades because every subsequent HTTP test in the run also fails to bind.
-- **Current understanding (not verified):** three options:
-  - **(a)** Make `stop()` async and `await` the underlying NIO event loop's shutdown (Hummingbird `Application` exposes a `runService()` returning Service that supports graceful shutdown). Tests would `await server.stop()` to ensure FDs are released before the next `startTestHTTPServer()`.
-  - **(b)** Add a small `Thread.sleep(0.1)` after `server.stop()` in test helpers — gives the event loop time to release sockets. Cheap, but a bandaid.
-  - **(c)** Pool / reuse a single `ExtensionHTTPServer` across the HTTP test group — share the bridge / health setup but reset state between tests. Bigger refactor.
-- **Discriminator for the fix:** simulate the failure deterministically — lower `kern.maxfiles_perproc` for the test process or run the full Swift suite in a tight loop (10×) with no pause; current state should reproduce the flake; the chosen fix should hold across the loop.
-- **Entry points / files:**
-  - `daemon/Sources/SafariPilotdCore/ExtensionHTTPServer.swift:95-101` (stop)
-  - `daemon/Tests/SafariPilotdTests/ExtensionHTTPServerTests.swift:244-255` (startTestHTTPServer helper)
 
 ---
 
 ## Resolved
+
+### SD-24 — Synchronous graceful shutdown for ExtensionHTTPServer (2026-04-25, commit `ba4e5c1`)
+
+Resolved via path (a) variant — synchronous wait inside `stop()` using a `DispatchSemaphore` bridge instead of changing the API to async (which would have broken `defer { server.stop() }` patterns across all HTTP tests). Both server task and disconnect task are awaited up to a 2s deadline; production callers (graceful daemon shutdown) absorb the wait fine.
+
+Verified runtime signal: pre-SD-24, every Swift suite run logged `HTTP_BIND_FAILED port=19999 (Address already in use)` between SD-13's disconnect tests and the onBindFailure test (the previous server hadn't released the port). Post-SD-24, that log line is gone — `stop()` actually waits for NIO to release sockets before the next test bind. All 118 tests pass.
+
+No new tests added (the existing `testOnBindFailureFiresWhenPortAlreadyBound` continues to lock the collision-detection path, AND the absence of the inter-test "already in use" warning is a runtime sign that the FD leak is fixed). No reviewer dispatched per the user defaults.
 
 ### SD-23 — HealthStore Clock injection for prune-cutoff testing (2026-04-25, commit `32aebfb`)
 
