@@ -137,24 +137,6 @@ export class TabOwnership {
     return undefined;
   }
 
-  /**
-   * Check if the given URL's registrable domain matches any owned tab's domain.
-   * Used as a DoS guard before deferring ownership to post-execution.
-   * Compares the registrable domain (eTLD+1 approximation).
-   */
-  domainMatches(url: string): boolean {
-    try {
-      const targetHost = new URL(url).hostname;
-      const targetDomain = extractRegistrableDomain(targetHost);
-      for (const [, data] of this.ownedTabs) {
-        const ownedHost = new URL(data.currentUrl).hostname;
-        const ownedDomain = extractRegistrableDomain(ownedHost);
-        if (ownedDomain === targetDomain) return true;
-      }
-    } catch { /* malformed URL */ }
-    return false;
-  }
-
   getOwnedCount(): number {
     return this.ownedTabs.size;
   }
@@ -181,28 +163,3 @@ export class TabOwnership {
 
 // ── Module-level helpers ───────────────────────────────────────────────────────
 
-/**
- * Known second-level domains under country-code TLDs.
- * When the second-to-last segment matches one of these, eTLD is 2 segments
- * (e.g., "co.uk"), so the registrable domain needs 3 hostname segments.
- */
-const TWO_PART_TLDS = new Set([
-  'co', 'com', 'net', 'org', 'ac', 'edu', 'gov', 'mil', 'ne', 'or', 'go',
-  'gob', 'nic', 'gen', 'web', 'nom', 'info',
-]);
-
-/**
- * Extract an approximate registrable domain (eTLD+1) from a hostname.
- * Handles common two-part ccTLDs: "bank.co.uk" → "bank.co.uk" (not "co.uk").
- * Falls back to last 2 segments for standard TLDs: "sub.example.com" → "example.com".
- */
-function extractRegistrableDomain(hostname: string): string {
-  const parts = hostname.split('.');
-  if (parts.length <= 2) return hostname;
-
-  const sld = parts[parts.length - 2]; // second-level: "co" in "bank.co.uk"
-  if (TWO_PART_TLDS.has(sld) && parts.length >= 3) {
-    return parts.slice(-3).join('.');
-  }
-  return parts.slice(-2).join('.');
-}

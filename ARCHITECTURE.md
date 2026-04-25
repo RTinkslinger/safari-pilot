@@ -219,15 +219,15 @@ Dual-key registry: tabs are tracked by both positional `TabId` (windowIndex * 10
 - **Registration:** `safari_new_tab` registers with URL + null extensionTabId. The extensionTabId is backfilled on the first extension-engine tool call (via `_meta.tabId` in the result).
 - **Ownership check flow (server.ts step 7d, after engine selection):**
   1. `findByUrl(tabUrl)` → if found, `assertOwnership(tabId)` (fast path)
-  2. If URL not found AND extension engine selected AND `domainMatches(tabUrl)` → set `deferredOwnershipCheck = true` (deferred path)
-  3. If URL not found AND (not extension engine OR domain doesn't match) → throw `TabUrlNotRecognizedError` (fail closed)
+  2. If URL not found AND extension engine selected → set `deferredOwnershipCheck = true` (deferred path; verified post-execution via `_meta.tabId`)
+  3. If URL not found AND not extension engine → throw `TabUrlNotRecognizedError` (fail closed)
 - **Post-execution verify (server.ts step 8.post2):**
   1. Read `engineProxy.getLastMeta()` — contains `_meta.tabId` + `_meta.tabUrl` from extension result
   2. Backfill `extensionTabId` on first call via `setExtensionTabId()`
   3. Refresh URL in registry via `findByExtensionTabId()` + `updateUrl()` (keeps `findByUrl` working for next call)
   4. If `deferredOwnershipCheck`: verify `findByExtensionTabId(extTabId)` returns an owned tab. If undefined → throw (tab not ours). If no `_meta` returned → throw (fail closed).
 - **SKIP_OWNERSHIP_TOOLS:** `safari_list_tabs`, `safari_new_tab`, `safari_health_check` (navigate_back/forward now go through the deferred path)
-- **Domain guard (`domainMatches`):** Declared on `TabOwnership` with ccTLD-aware registrable-domain matching (via `extractRegistrableDomain()`, handles `.co.uk`, `.com.au`, etc.). **NOT currently wired into the deferred-ownership path** — was removed from `server.ts` at `75177e8` because it broke legitimate cross-domain link clicks. Tracked for resolution as T24 in `docs/AUDIT-TASKS.md` (wire it correctly or delete the method). The ccTLD-aware implementation is kept so that, if wired, it does not treat `evil.co.uk` as the same registrable domain as `bank.co.uk`.
+- **Domain guard (T24, 2026-04-25):** Removed. The previous `domainMatches` method on `TabOwnership` (with ccTLD-aware `extractRegistrableDomain`) was unwired in `server.ts` at `75177e8` because it broke legitimate cross-domain link clicks. Per T24 we deleted the method (and the helper) rather than re-wire — the post-execution `_meta.tabId` verification at step 8.post2 already provides identity-based ownership without needing a pre-execution domain guard.
 - **Known limitations:**
   - SPA `history.pushState` does not fire `tabs.onUpdated` — extensionTabId cache and server URL both go stale. First call after pushState will fail.
   - Multiple tabs at same URL: `findByUrl` returns first found. `findByExtensionTabId` is unambiguous after backfill.
