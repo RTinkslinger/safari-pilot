@@ -33,7 +33,17 @@ import { CircuitBreaker } from './security/circuit-breaker.js';
 import { IdpiScanner } from './security/idpi-scanner.js';
 import { HumanApproval } from './security/human-approval.js';
 import { ScreenshotRedaction } from './security/screenshot-redaction.js';
-import { RateLimitedError, HumanApprovalRequiredError, TabUrlNotRecognizedError, SessionRecoveryError, SessionWindowInitError } from './errors.js';
+import {
+  RateLimitedError,
+  HumanApprovalRequiredError,
+  TabUrlNotRecognizedError,
+  TabNotOwnedError,
+  DomainNotAllowedError,
+  KillSwitchActiveError,
+  CircuitBreakerOpenError,
+  SessionRecoveryError,
+  SessionWindowInitError,
+} from './errors.js';
 import { loadConfig, DEFAULT_CONFIG, type SafariPilotConfig } from './config.js';
 import { trace } from './trace.js';
 
@@ -116,6 +126,38 @@ const SKIP_OWNERSHIP_TOOLS = new Set([
   'safari_new_tab',
   'safari_health_check',
 ]);
+
+// ── Security-pipeline error classification ──────────────────────────────────
+// SD-31 — distinguishes "guardrails firing" from "tool execution failed".
+// The kill-switch's auto-activation rolling window must only count
+// genuine tool-execution failures, not security-pipeline rejections.
+// Mirrors `circuit-breaker.ts:175-181`'s extension-only filter on
+// `recordEngineFailure` — both auto-activation paths only react to
+// failures the agent could plausibly stop hitting by changing strategy.
+//
+// Includes the soft-return classes (`HumanApprovalRequiredError`,
+// `EngineUnavailableError`) defensively so a future change that flips
+// either to a throw doesn't silently regress kill-switch behavior.
+function isSecurityPipelineError(err: unknown): boolean {
+  if (
+    err instanceof KillSwitchActiveError
+    || err instanceof RateLimitedError
+    || err instanceof CircuitBreakerOpenError
+    || err instanceof TabUrlNotRecognizedError
+    || err instanceof TabNotOwnedError
+    || err instanceof DomainNotAllowedError
+    || err instanceof HumanApprovalRequiredError
+    || err instanceof EngineUnavailableError
+  ) {
+    return true;
+  }
+  // The blocked-domain throw at server.ts:492 is a generic Error rather
+  // than a SafariPilotError subclass. Match its specific message shape.
+  if (err instanceof Error && /^Domain '.+' is blocked by configuration/.test(err.message)) {
+    return true;
+  }
+  return false;
+}
 
 /**
  * Infrastructure message types that bypass the 9-layer security pipeline.
@@ -971,11 +1013,17 @@ export class SafariPilotServer {
       }, 'error', Date.now() - start);
       this.recordToolFailure(domain, selectedEngineName, error);
 
-      // T29 — feed the kill-switch's auto-activation rolling window so a
-      // configured `autoActivation` threshold actually trips after N
-      // failures. Without this call, `recordError`'s threshold logic
-      // (kill-switch.ts:132-150) was unreachable from production.
-      this.killSwitch.recordError();
+      // T29 / SD-31 — feed the kill-switch's auto-activation rolling window
+      // so a configured `autoActivation` threshold actually trips after N
+      // tool-execution failures (T29). Filter out security-pipeline
+      // rejections so legitimate guardrails (rate-limit, ownership,
+      // circuit-breaker, blocked-domain, kill-switch-already-active) don't
+      // self-DoS the agent by counting toward the threshold (SD-31). Mirrors
+      // the analogous filter in `circuit-breaker.ts:175-181` for
+      // `recordEngineFailure`.
+      if (!isSecurityPipelineError(error)) {
+        this.killSwitch.recordError();
+      }
 
       // 9. Audit log — error path
       this.auditLog.record({

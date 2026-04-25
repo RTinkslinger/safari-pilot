@@ -32,7 +32,8 @@ vi.mock('node:child_process', async (importOriginal) => {
 import { execSync } from 'node:child_process';
 import { SafariPilotServer } from '../../../src/server.js';
 import { DEFAULT_CONFIG } from '../../../src/config.js';
-import { KillSwitchActiveError } from '../../../src/errors.js';
+import { KillSwitchActiveError, TabUrlNotRecognizedError } from '../../../src/errors.js';
+import type { Engine } from '../../../src/types.js';
 
 interface ServerInternals {
   _sessionWindowId?: number;
@@ -141,5 +142,92 @@ describe('SafariPilotServer kill-switch auto-activation (T29)', () => {
       blocked,
       'subsequent call must be blocked by the auto-activated kill switch',
     ).toBeInstanceOf(KillSwitchActiveError);
+  });
+
+  // SD-31 — T29 added `this.killSwitch.recordError()` to the catch block but
+  // did not filter by error class. Every thrown error counts toward the
+  // auto-activation rolling window, including security-pipeline rejections
+  // that aren't tool-execution failures (rate-limit, ownership, circuit-
+  // breaker, kill-switch-already-active, blocked-domain). With
+  // `autoActivation: { maxErrors: 3, windowSeconds: 60 }` configured, three
+  // legitimate rejections — e.g. an agent looping over unowned URLs — trip
+  // the switch and self-DoS the rest of the session.
+  //
+  // The companion call `recordEngineFailure` is filtered to extension-
+  // lifecycle codes (`circuit-breaker.ts:175-181`); `recordError` should be
+  // similarly filtered.
+  it('does NOT count security-pipeline rejections (TabUrlNotRecognizedError) toward kill-switch auto-activation (SD-31)', async () => {
+    const config = {
+      ...DEFAULT_CONFIG,
+      killSwitch: { autoActivation: true, maxErrors: 3, windowSeconds: 60 },
+    };
+    const server = new SafariPilotServer(config);
+    setSessionWindowId(server, 99999);
+
+    // safari_navigate is NOT in SKIP_OWNERSHIP_TOOLS, so the ownership
+    // check fires (server.ts:600+). With `tabUrl` set to an unowned URL,
+    // tabOwnership.assertOwnedByUrl throws TabUrlNotRecognizedError BEFORE
+    // the handler runs — exercising the security-pipeline rejection path.
+    server.registerTool({
+      name: 'safari_navigate',
+      description: 'test stub',
+      inputSchema: { type: 'object', properties: {} } as Record<string, unknown>,
+      requirements: { idempotent: false },
+      handler: async () => ({
+        content: [],
+        metadata: { engine: 'applescript' as Engine, degraded: false, latencyMs: 0 },
+      }),
+    });
+
+    expect(server.killSwitch.isActive()).toBe(false);
+
+    for (let i = 0; i < 3; i++) {
+      let thrown: unknown;
+      try {
+        await callExecuteToolWithSecurity(server, 'safari_navigate', {
+          url: 'https://target.example/',
+          tabUrl: `https://untrusted-${i}.example/`,
+        });
+      } catch (e) {
+        thrown = e;
+      }
+      expect(
+        thrown,
+        `call ${i + 1} must throw TabUrlNotRecognizedError from ownership check`,
+      ).toBeInstanceOf(TabUrlNotRecognizedError);
+    }
+
+    // PRIMARY ORACLE — switch must NOT have tripped.
+    // Pre-SD-31: recordError() runs unconditionally → 3 rejections trip the
+    // threshold → switch active → all subsequent calls fail.
+    // Post-fix: recordError() filters security-pipeline errors → only
+    // genuine tool-execution failures count → switch stays closed.
+    expect(
+      server.killSwitch.isActive(),
+      'security-pipeline rejections must NOT count toward kill-switch auto-activation; '
+        + 'counting them lets a legitimate burst of unowned-URL attempts self-DoS the agent.',
+    ).toBe(false);
+
+    // SECONDARY ORACLE — a subsequent legitimate call must NOT be blocked
+    // by a phantom-active switch. Locks against the regression where the
+    // primary oracle is "satisfied" by a switch that's almost-tripped but
+    // hasn't quite crossed the threshold.
+    let nextCallThrown: unknown;
+    try {
+      await callExecuteToolWithSecurity(server, 'safari_navigate', {
+        url: 'https://target.example/',
+        tabUrl: 'https://untrusted-final.example/',
+      });
+    } catch (e) {
+      nextCallThrown = e;
+    }
+    expect(
+      nextCallThrown,
+      'next call must reject for OWNERSHIP reasons, not because the switch tripped',
+    ).toBeInstanceOf(TabUrlNotRecognizedError);
+    expect(
+      nextCallThrown,
+      'next call must NOT throw KillSwitchActiveError — threshold should not have engaged',
+    ).not.toBeInstanceOf(KillSwitchActiveError);
   });
 });
