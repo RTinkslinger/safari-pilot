@@ -729,4 +729,378 @@ func registerExtensionBridgeTests() {
         try assertEqual(snapshot["httpBindFailureCount"] as? Int, 0)
         try assertEqual(snapshot["httpRequestErrorCount1h"] as? Int, 0)
     }
+
+    // MARK: - SD-12: handleResult sentinel coverage (__keepalive__, __trace__, _meta)
+
+    // Helper: per-test tmp HealthStore wired into bridge keepalive store.
+    func makeBridgeWithHealth() -> (ExtensionBridge, HealthStore, URL) {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("safari-pilot-sd12-\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let path = dir.appendingPathComponent("health.json")
+        let health = HealthStore(persistPath: path)
+        let bridge = ExtensionBridge()
+        bridge.setHealthStore(health)
+        return (bridge, health, dir)
+    }
+
+    test("testKeepaliveSentinelRecordsPingAndConnects") {
+        // Discrimination targets (ExtensionBridge.swift:266-274):
+        //   1. `_keepaliveStore?.recordKeepalivePing()` — removing this leaves
+        //      lastKeepalivePing nil.
+        //   2. `_ = handleConnected(commandID: commandID)` — removing this leaves
+        //      isExtensionConnected false (the comment in source explicitly notes
+        //      this is required so isConnected doesn't go stale between pings).
+        let (bridge, health, dir) = makeBridgeWithHealth()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        try assertFalse(bridge.isExtensionConnected,
+                        "bridge must start disconnected")
+        try assertTrue(health.lastKeepalivePing == nil,
+                       "lastKeepalivePing must start nil")
+
+        let before = Date()
+        let response = bridge.handleResult(
+            commandID: "kr-1",
+            params: ["requestId": AnyCodable("__keepalive__")]
+        )
+
+        try assertTrue(response.ok, "keepalive sentinel must return success")
+        try assertEqual(response.id, "kr-1")
+        try assertEqual(response.value?.value as? String, "ok",
+                        "keepalive sentinel must return value \"ok\"")
+        try assertTrue(bridge.isExtensionConnected,
+                       "keepalive sentinel must flip isExtensionConnected → true")
+
+        let stamp = health.lastKeepalivePing
+        try assertTrue(stamp != nil,
+                       "keepalive sentinel must record ping in HealthStore")
+        try assertTrue(
+            stamp!.timeIntervalSince1970 >= before.timeIntervalSince1970 - 0.5,
+            "lastKeepalivePing must be ~now"
+        )
+    }
+
+    test("testKeepaliveSentinelShortCircuitsBeforePendingLookup") {
+        // Discrimination target: the early `return Response.success(...)` at the end
+        // of the keepalive branch (ExtensionBridge.swift:273). If that return is
+        // removed, control falls through to the requestId validation + pendingCommands
+        // lookup, which would (a) remove a pending command with the same id and
+        // resume its continuation, (b) append "__keepalive__" to executedLog at the
+        // bottom of handleResult.
+        //
+        // We exercise the contrived collision: a command literally named
+        // "__keepalive__" sits in pendingCommands. The keepalive sentinel must NOT
+        // pollute executedLog with that id.
+        let (bridge, _, dir) = makeBridgeWithHealth()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        // Queue a pendingCommand with the literal sentinel id. The Task is not
+        // awaited here: handleExecute auto-completes via its 90s internal
+        // timeoutTask (ExtensionBridge.swift:132-152) which fires
+        // EXTENSION_TIMEOUT and resumes the continuation. The bridge is a
+        // local instance held alive by the Task closure and released once
+        // the timeout resolves — no cross-test state leakage.
+        let leaked = Task {
+            await bridge.handleExecute(
+                commandID: "__keepalive__",
+                params: ["script": AnyCodable("collision")]
+            )
+        }
+        Thread.sleep(forTimeInterval: 0.1)
+
+        _ = bridge.handleResult(
+            commandID: "kr-collision",
+            params: ["requestId": AnyCodable("__keepalive__")]
+        )
+
+        try assertFalse(
+            bridge.isInExecutedLog("__keepalive__"),
+            "keepalive sentinel must short-circuit BEFORE the pendingCommands lookup; "
+                + "if the early return is missing, executedLog gets polluted with "
+                + "\"__keepalive__\""
+        )
+        _ = leaked  // suppress unused warning; Task is intentionally not awaited
+    }
+
+    test("testTraceSentinelAlarmFireAdvancesHealthStoreTimestamp") {
+        // Discrimination target: ExtensionBridge.swift:287-289
+        //   if event == "alarm_fire" {
+        //       _keepaliveStore?.recordAlarmFire()
+        //   }
+        // Removing the recordAlarmFire call (or removing the alarm_fire guard so
+        // every event fires it — covered by the negative-form test below) breaks
+        // the alarm-fire path that mirrors the extension_log/alarm_fire route.
+        let (bridge, health, dir) = makeBridgeWithHealth()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let before = health.lastAlarmFireTimestamp
+        Thread.sleep(forTimeInterval: 0.05)  // ensure Date() in recordAlarmFire is later
+
+        let traceResult: [String: Any] = [
+            "type": "trace",
+            "id": "tr-alarm-1",
+            "layer": "extension-bg",
+            "event": "alarm_fire",
+            "data": [:],
+        ]
+        let response = bridge.handleResult(
+            commandID: "tr-1",
+            params: [
+                "requestId": AnyCodable("__trace__"),
+                "result": AnyCodable(traceResult),
+            ]
+        )
+
+        try assertTrue(response.ok, "trace sentinel must return success")
+        try assertEqual(response.value?.value as? String, "ok")
+        try assertTrue(
+            health.lastAlarmFireTimestamp > before,
+            "alarm_fire trace event must advance lastAlarmFireTimestamp"
+        )
+    }
+
+    test("testTraceSentinelNonAlarmEventDoesNotAdvanceAlarmTimestamp") {
+        // Discrimination target: the `event == "alarm_fire"` guard at line 287.
+        // If the guard is removed (every trace event fires recordAlarmFire), this
+        // test fails — a normal `bridge_result` trace would advance the alarm
+        // timestamp. This is the negative form of the previous test.
+        let (bridge, health, dir) = makeBridgeWithHealth()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let before = health.lastAlarmFireTimestamp
+        Thread.sleep(forTimeInterval: 0.05)  // separate Date() readings
+
+        let traceResult: [String: Any] = [
+            "type": "trace",
+            "id": "tr-non-alarm-1",
+            "layer": "extension-bg",
+            "event": "bridge_result",  // not alarm_fire
+            "data": ["foo": "bar"],
+        ]
+        _ = bridge.handleResult(
+            commandID: "tr-2",
+            params: [
+                "requestId": AnyCodable("__trace__"),
+                "result": AnyCodable(traceResult),
+            ]
+        )
+
+        // Equality check tolerates the no-op explicitly: lastAlarmFireTimestamp
+        // is the *only* path that calls recordAlarmFire on this bridge, and
+        // we've made no other calls.
+        try assertEqual(
+            health.lastAlarmFireTimestamp.timeIntervalSince1970,
+            before.timeIntervalSince1970,
+            "non-alarm trace event must NOT advance lastAlarmFireTimestamp"
+        )
+    }
+
+    test("testMetaWrappingPreservesValueAndMeta") {
+        // Discrimination target: ExtensionBridge.swift:358-364
+        //   if let meta = resultDict["_meta"] as? [String: Any] {
+        //       callerResponse = Response.success(
+        //           id: cmd.id,
+        //           value: AnyCodable(["value": innerValue, "_meta": meta])
+        //       )
+        //   } else { ... unwrap to innerValue directly ... }
+        //
+        // ExtensionEngine relies on this {value, _meta} wrapper to extract tab
+        // identity from Safari (positional tab adoption, frame info, etc.). If the
+        // _meta branch is removed and only the else branch remains, callers see
+        // the inner value directly and lose all tab-identity metadata.
+        let bridge = ExtensionBridge()
+
+        let executeTask = Task {
+            await bridge.handleExecute(
+                commandID: "exec-meta-1",
+                params: ["script": AnyCodable("return ok")]
+            )
+        }
+        Thread.sleep(forTimeInterval: 0.1)
+
+        let result: [String: Any] = [
+            "ok": true,
+            "value": 42,
+            "_meta": [
+                "tabId": 99,
+                "frameId": "main",
+            ],
+        ]
+        _ = bridge.handleResult(
+            commandID: "res-meta-1",
+            params: [
+                "requestId": AnyCodable("exec-meta-1"),
+                "result": AnyCodable(result),
+            ]
+        )
+
+        let execResponse = syncAwait { await executeTask.value }
+        try assertTrue(execResponse.ok, "execute must succeed when result.ok=true")
+
+        let wrapper = execResponse.value?.value as? [String: Any]
+        try assertTrue(
+            wrapper != nil,
+            "with _meta present, response value must be a dict; got \(type(of: execResponse.value?.value))"
+        )
+        try assertEqual(wrapper?["value"] as? Int, 42,
+                        "wrapper.value must be the inner value (42)")
+
+        let meta = wrapper?["_meta"] as? [String: Any]
+        try assertTrue(meta != nil, "wrapper._meta must be the meta dict, not nil")
+        try assertEqual(meta?["tabId"] as? Int, 99,
+                        "wrapper._meta.tabId must round-trip from result._meta.tabId")
+        try assertEqual(meta?["frameId"] as? String, "main",
+                        "wrapper._meta.frameId must round-trip from result._meta.frameId")
+    }
+
+    test("testMetaAbsentReturnsInnerValueDirectlyForBackwardCompat") {
+        // Discrimination target: the else branch at ExtensionBridge.swift:365-367
+        //   } else {
+        //       callerResponse = Response.success(id: cmd.id, value: AnyCodable(innerValue))
+        //   }
+        //
+        // This is the backward-compat path for old extensions that don't send _meta.
+        // If the bridge always wrapped (the else branch is removed), every caller
+        // would suddenly receive `{value: ..., _meta: nil}` instead of the bare
+        // inner value, breaking ExtensionEngine's plain-result handling.
+        let bridge = ExtensionBridge()
+
+        let executeTask = Task {
+            await bridge.handleExecute(
+                commandID: "exec-no-meta-1",
+                params: ["script": AnyCodable("return ok")]
+            )
+        }
+        Thread.sleep(forTimeInterval: 0.1)
+
+        let result: [String: Any] = [
+            "ok": true,
+            "value": 42,
+            // no _meta key
+        ]
+        _ = bridge.handleResult(
+            commandID: "res-no-meta-1",
+            params: [
+                "requestId": AnyCodable("exec-no-meta-1"),
+                "result": AnyCodable(result),
+            ]
+        )
+
+        let execResponse = syncAwait { await executeTask.value }
+        try assertTrue(execResponse.ok)
+
+        // Response value must be the bare Int 42, NOT a [String: Any] wrapper.
+        try assertEqual(execResponse.value?.value as? Int, 42,
+                        "without _meta, response.value must be the inner value directly")
+        try assertTrue(
+            execResponse.value?.value as? [String: Any] == nil,
+            "without _meta, response.value must NOT be wrapped in a dict"
+        )
+    }
+
+    // MARK: - SD-12 reviewer follow-ups (malformed __trace__ + null-fallback)
+
+    test("testTraceSentinelMalformedPayloadDoesNotAdvanceAlarmTimestamp") {
+        // Reviewer MAJOR (SD-12): the trace branch at ExtensionBridge.swift:277-291
+        // is gated by a chain of `if let` extractions. If a regression strips
+        // those guards and hardcodes `event = "alarm_fire"` (or otherwise
+        // unconditionally calls recordAlarmFire), a __trace__ with an empty
+        // body would spuriously advance lastAlarmFireTimestamp. This test locks
+        // the gating contract: a __trace__ with requestId only must NOT touch
+        // any HealthStore counter.
+        let (bridge, health, dir) = makeBridgeWithHealth()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let before = health.lastAlarmFireTimestamp
+        Thread.sleep(forTimeInterval: 0.05)
+
+        let response = bridge.handleResult(
+            commandID: "tr-malformed",
+            params: ["requestId": AnyCodable("__trace__")]
+            // no "result" field — the if-let chain at line 277 must short-circuit
+        )
+
+        try assertTrue(response.ok,
+                       "malformed __trace__ must still return ack (silent no-op)")
+        try assertEqual(
+            health.lastAlarmFireTimestamp.timeIntervalSince1970,
+            before.timeIntervalSince1970,
+            "__trace__ without a result field must NOT advance lastAlarmFireTimestamp"
+        )
+    }
+
+    test("testTraceSentinelWrongResultTypeIgnoredCleanly") {
+        // Reviewer MAJOR follow-up: locks the type-guard at line 280
+        //     let traceType = result["type"] as? String, traceType == "trace"
+        // If that guard is dropped (any type triggers the body), an
+        // alarm_fire-event payload mis-tagged with type="something-else"
+        // would erroneously advance the alarm timestamp.
+        let (bridge, health, dir) = makeBridgeWithHealth()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let before = health.lastAlarmFireTimestamp
+        Thread.sleep(forTimeInterval: 0.05)
+
+        let traceResult: [String: Any] = [
+            "type": "not-a-trace",  // wrong type — guard at line 280 must reject
+            "id": "tr-bad-1",
+            "layer": "extension-bg",
+            "event": "alarm_fire",  // looks like alarm but type guard rejects
+            "data": [:],
+        ]
+        _ = bridge.handleResult(
+            commandID: "tr-bad",
+            params: [
+                "requestId": AnyCodable("__trace__"),
+                "result": AnyCodable(traceResult),
+            ]
+        )
+
+        try assertEqual(
+            health.lastAlarmFireTimestamp.timeIntervalSince1970,
+            before.timeIntervalSince1970,
+            "__trace__ with result.type != \"trace\" must be ignored — "
+                + "alarm timestamp must NOT advance"
+        )
+    }
+
+    test("testSuccessWithMissingValueDefaultsToNSNull") {
+        // Reviewer ADVISORY (SD-12): ExtensionBridge.swift:357
+        //   let innerValue = resultDict["value"] as Any? ?? NSNull()
+        // defends against {ok:true} without a value key — extensions sending
+        // a void result. If a regression replaces `?? NSNull()` with `?? ""`
+        // or removes the coalesce entirely, callers stop seeing NSNull and
+        // start seeing either an empty string or a Swift Optional<Any>, both
+        // of which break round-trip equality for void scripts.
+        let bridge = ExtensionBridge()
+
+        let executeTask = Task {
+            await bridge.handleExecute(
+                commandID: "exec-void-1",
+                params: ["script": AnyCodable("doSomethingVoid()")]
+            )
+        }
+        Thread.sleep(forTimeInterval: 0.1)
+
+        // No "value" key, no "_meta" — exercises the else branch (line 365)
+        // with the null-coalesced innerValue.
+        let result: [String: Any] = ["ok": true]
+        _ = bridge.handleResult(
+            commandID: "res-void-1",
+            params: [
+                "requestId": AnyCodable("exec-void-1"),
+                "result": AnyCodable(result),
+            ]
+        )
+
+        let execResponse = syncAwait { await executeTask.value }
+        try assertTrue(execResponse.ok,
+                       "execute must succeed even when result.value is absent")
+        try assertTrue(
+            execResponse.value?.value is NSNull,
+            "innerValue must default to NSNull when result.value key is absent; "
+                + "got \(String(describing: execResponse.value?.value))"
+        )
+    }
 }
