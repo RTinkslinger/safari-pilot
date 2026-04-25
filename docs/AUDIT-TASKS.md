@@ -165,10 +165,11 @@
 **Root cause:** Method exists, ARCHITECTURE.md claims it's used as a DoS guard, but it was removed from server.ts at `75177e8` because it broke cross-domain link clicks. Dead code with stale documentation.
 **Fix:** Deleted `domainMatches()` method (and its orphaned helper `extractRegistrableDomain` + `TWO_PART_TLDS` constant) from `src/security/tab-ownership.ts`. Updated ARCHITECTURE.md ownership-flow steps 7d.2/7d.3 to reflect that the deferred path triggers on "extension engine selected" alone, plus the Domain-guard bullet rewritten to record the deletion + rationale. Re-wiring would re-introduce the original cross-domain-click bug; the post-execution `_meta.tabId` verification at step 8.post2 already provides identity-based ownership without needing a pre-execution domain guard. No new tests (TypeScript compile-time check catches any re-introduction; zero callers existed). Doc + dead-code cleanup, no reviewer dispatched.
 
-### T25. Fix shutdown detection in CommandDispatcher
+### T25. Fix shutdown detection in CommandDispatcher ✅ RESOLVED 2026-04-25 (commit `3b94994`)
 **Findings:** M17 (daemon-core audit)
 **Root cause:** `main.swift` uses `trimmed.contains("\"shutdown\"")` on raw NDJSON line. Page content containing the word "shutdown" could crash the daemon. Should use parsed `command.method == "shutdown"`.
 **Origin:** `c5ab358` (2026-04-12) — never modified.
+**Fix:** Extracted a `public static func isShutdownLine(_:) -> Bool` helper in `CommandDispatcher.swift` that parses the NDJSON line and returns `parsed.method == "shutdown"`. The run() loop now calls this helper instead of the substring check. (Note: the audit said "main.swift" but the bug was actually in `CommandDispatcher.run()`:72; main.swift just calls `dispatcher.run()`.) 3 Swift tests cover real-shutdown-command, id-as-shutdown-but-method-is-execute (the load-bearing T25 oracle), and malformed-NDJSON. Mutation cycle confirmed: reverting to substring check fails ONLY Test 2. Helper is `public static` to give tests a seam without driving run() (which calls exit(0)). upp:test-reviewer fast PASS 0/0/1.
 
 ### T26. Add thread safety to `Trace.swift`
 **Findings:** M19 (daemon-core audit)
