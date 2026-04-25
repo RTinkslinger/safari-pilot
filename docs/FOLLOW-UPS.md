@@ -8,25 +8,6 @@ Running list of findings surfaced by reviewers (Codex, `upp:test-reviewer`, advi
 
 ## Open
 
-### SD-04 — 7 of 9 security layers have zero e2e coverage
-- **Severity:** P1 (the product's core value is the 9-layer pipeline; 7 layers can be deleted without any test failing)
-- **Source:** `upp:test-reviewer` retro review #1 (2026-04-24)
-- **Symptom:** `security-ownership.test.ts` covers TabOwnership (layers 2/post-8); the other 7 production layers are uncovered. The CLAUDE.md litmus "delete a critical component — does any test fail?" **fails** for:
-  1. **KillSwitch** — no test triggers it and asserts `KILL_SWITCH_ACTIVE` fail-closed
-  2. **DomainPolicy** — no denylist + `DOMAIN_NOT_ALLOWED` assertion
-  3. **HumanApproval** — no untrusted-domain sensitive-action flag test
-  4. **RateLimiter** — no 121st-call-to-one-domain test asserting `RATE_LIMITED`
-  5. **Per-domain CircuitBreaker** (distinct from T12's engine breaker) — no 5-failures-open-break-120s e2e
-  6. **IdpiScanner** — no prompt-injection payload → trace/result annotation test
-  7. **ScreenshotRedaction** — no banking/cross-origin blur-CSS attachment test
-  8. **AuditLog** — no assertion that a tool call left an audit record
-- **Current understanding (from review, not verified):** each layer lives in `src/security/` and is wired into `server.ts executeToolWithSecurity`. Each test can be short: one adversarial call + one trace-event or error-envelope assertion.
-- **Discriminator per layer:** trace-event scan against `~/.safari-pilot/trace.ndjson` after the adversarial call, OR `rejects.toThrow(/<specific error code>/)`. Same pattern already working in T7/T8.
-- **Entry points / files:**
-  - `src/security/{kill-switch,domain-policy,human-approval,rate-limiter,circuit-breaker,idpi-scanner,screenshot-redaction,audit-log}.ts`
-  - `src/server.ts` — `executeToolWithSecurity` layer wiring
-  - `test/e2e/security-ownership.test.ts` — the pattern to mimic
-
 ### SD-05 — No end-to-end lifecycle workflow test
 - **Severity:** P1 (the exact bug class CLAUDE.md history warns against — URL-as-identity cascade)
 - **Source:** `upp:test-reviewer` retro review #1 (Check 9 LIFECYCLE GAP)
@@ -239,6 +220,18 @@ Running list of findings surfaced by reviewers (Codex, `upp:test-reviewer`, advi
 ---
 
 ## Resolved
+
+### SD-04 — 7 of 9 security layers have zero coverage (2026-04-25, commit `29eb006`)
+
+Resolved by adding 60 tests across 9 files:
+- 56 unit tests (8 files in `test/unit/security/`): KillSwitch (5), RateLimiter (5), per-domain CircuitBreaker (7), AuditLog (6), DomainPolicy (7), HumanApproval (10), IdpiScanner (9), ScreenshotRedaction (7).
+- 4 e2e tests (`test/e2e/security-layers.test.ts`): DomainPolicy trace event, HumanApproval degraded envelope + tab-didn't-open, IdpiScanner metadata annotation, ScreenshotRedaction redactionScript metadata.
+
+Boundary split: pure-logic layers (KillSwitch/RateLimiter/per-domain CircuitBreaker/AuditLog) at unit scope because triggering via MCP would disrupt the shared client or has no read surface. The other 4 at e2e scope to prove `executeToolWithSecurity` wiring, not just the layer in isolation.
+
+`upp:test-reviewer` (full mode, 9 checks) verdict: **PASS** (CRITICAL: 0, MAJOR: 1 — addressed; ADVISORY: 6 — 5 of 6 addressed with 4 additional unit files covering missing edge cases, 1 style nit declined). Discrimination: each test has an inline-documented mutation recipe that makes it fail.
+
+CLAUDE.md litmus now passes for all 8 newly-covered layers. Total tests: 82 unit + 14 canary + 40 e2e = 136 (was 68).
 
 ### SD-02 — `test/canary/` inherits e2e `globalSetup` probes (2026-04-25, commit `84abc17`)
 
