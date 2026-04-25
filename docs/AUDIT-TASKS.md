@@ -215,10 +215,12 @@
 
 **Fix:** Picked the audit's deletion option per advisor review and the T24 deletion precedent. Wiring the field would have introduced a security feature with new failure modes that needed its own threat model + tests, not a quiet inclusion in a debt-cleanup batch — particularly because `BASE_DEFAULT_POLICY.extensionAllowed` was `false`, so strict wiring would have blocked extension on every unknown domain. Removed the field from `src/types.ts` (DomainPolicy interface), `src/security/domain-policy.ts` (PolicyRule interface, EvaluateResult, BASE_DEFAULT_POLICY, SENSITIVE_POLICY, blocked/trusted ctor branches), and 2 stale assertions in `test/unit/security/domain-policy.test.ts`. Reviewer skipped (deletion-only). The legitimate banking-disable-extension security feature is filed as SD-30 in FOLLOW-UPS.md.
 
-### T32. Eliminate DaemonEngine `executeJsInTab` duplication
+### T32. Eliminate DaemonEngine `executeJsInTab` duplication ✅ RESOLVED 2026-04-25 (commit `960f1c8`)
 **Findings:** M6 (engine audit)
 **Root cause:** `daemon.ts:226-246` inlines wrapping, escaping, and template from `AppleScriptEngine`. The two diverge — DaemonEngine misses CSP detection, ShadowDOM signals, and uses different template formatting.
 **Origin:** `5d037dc` (2026-04-15).
+
+**Fix:** Extracted `wrapJavaScript`, `buildTabScript`, `parseJsResult` (and the previously-private `mapJsErrorName`) into a new `src/engines/js-helpers.ts`. Both engines import from there: AppleScriptEngine's public methods become 1-line delegates; `DaemonEngine.executeJsInTab` uses the same wrap → template → parse pipeline, gaining CSP_BLOCKED detection, ShadowDOM-closed signals, and structured JS-error code mapping by composition. Discriminating test (`daemon.test.ts` T32 case) mocks the TCP command socket to return an empty `value` (the bytes osascript emits when CSP blocks `do JavaScript`) and asserts `error.code === 'CSP_BLOCKED'`. Mutation-verified. Reviewer skipped because `parseJsResult` itself was already reviewed under T13.
 
 ### T33. Fix Shadow DOM closed heuristic ordering
 **Findings:** M9 (engine audit)
