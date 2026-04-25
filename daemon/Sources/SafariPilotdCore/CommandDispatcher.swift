@@ -68,8 +68,12 @@ public final class CommandDispatcher: @unchecked Sendable {
 
             let response = await dispatch(line: trimmed)
 
-            // Determine whether to exit before writing the final response
-            let isShutdown = trimmed.contains("\"shutdown\"")
+            // T25: parse-based shutdown detection. The previous
+            // `trimmed.contains("\"shutdown\"")` substring check fired on
+            // any NDJSON line whose content (e.g. an execute script body)
+            // contained the literal string `"shutdown"` — page content
+            // could crash the daemon.
+            let isShutdown = Self.isShutdownLine(trimmed)
 
             write(response)
 
@@ -78,6 +82,18 @@ public final class CommandDispatcher: @unchecked Sendable {
                 exit(0)
             }
         }
+    }
+
+    /// Returns true iff the given NDJSON line parses as a command with
+    /// `method == "shutdown"`. Used by the run loop to decide when to
+    /// exit. Public + static so that tests can verify the discriminator
+    /// without driving the run loop (which calls `exit(0)`).
+    ///
+    /// T25: replaces the previous `trimmed.contains("\"shutdown\"")`
+    /// substring check that was vulnerable to user content (execute
+    /// scripts, page text) containing the literal `"shutdown"`.
+    public static func isShutdownLine(_ line: String) -> Bool {
+        return (try? NDJSONParser.parseCommand(line: line))?.method == "shutdown"
     }
 
     // MARK: - Dispatch

@@ -563,4 +563,53 @@ func registerCommandDispatcherTests() {
         try assertEqual(dict?["pendingCommandsCount"] as? Int, 0,
                         "snapshot must include bridge pendingCommandsCount")
     }
+
+    // MARK: - T25: shutdown detection (substring trap fix)
+    //
+    // Pre-T25 the run loop used `trimmed.contains("\"shutdown\"")` on the
+    // raw NDJSON line. Page content, execute-script bodies, or any other
+    // NDJSON payload containing the literal string `"shutdown"` would
+    // trigger `exit(0)` even if the command's actual method was something
+    // else. The fix: parse the line and compare `command.method` against
+    // the literal string "shutdown".
+    //
+    // We can't test the run loop directly (it calls exit(0) which kills
+    // the test process), so the discrimination is encoded on the static
+    // helper `CommandDispatcher.isShutdownLine(_:)` that the run loop
+    // delegates to.
+
+    test("testIsShutdownLineReturnsTrueForRealShutdownCommand") {
+        let line = #"{"id":"sd-1","method":"shutdown"}"#
+        try assertTrue(
+            CommandDispatcher.isShutdownLine(line),
+            "isShutdownLine must return true for a real shutdown NDJSON command"
+        )
+    }
+
+    test("testIsShutdownLineReturnsFalseWhenShutdownStringAppearsInJsonValue") {
+        // Discrimination target: src/CommandDispatcher.swift:72 (pre-T25,
+        // `trimmed.contains("\"shutdown\"")`). The execute command below
+        // uses the literal string `"shutdown"` as the command id (a
+        // realistic attack/bug surface — any user-controlled JSON value
+        // could legitimately be the word "shutdown" in quotes). Pre-T25
+        // the raw-line substring check would fire and exit the daemon.
+        // Post-T25 the parser sees `method == "execute"` and returns false.
+        let line = #"{"id":"shutdown","method":"execute","params":{"script":"return 1;"}}"#
+        try assertFalse(
+            CommandDispatcher.isShutdownLine(line),
+            "isShutdownLine must NOT return true when the literal substring \"shutdown\" "
+                + "appears as a JSON VALUE elsewhere in the line (id, params, etc.); "
+                + "production run loop would otherwise exit on benign user input"
+        )
+    }
+
+    test("testIsShutdownLineReturnsFalseForMalformedNDJSON") {
+        // Defensive: malformed JSON must not crash; parse failure returns
+        // false (the run loop's safe default — keep running).
+        let line = "this is not JSON at all"
+        try assertFalse(
+            CommandDispatcher.isShutdownLine(line),
+            "isShutdownLine must return false for unparseable lines (no exit on garbage)"
+        )
+    }
 }
