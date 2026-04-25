@@ -68,14 +68,20 @@ Build pipeline: edit → `bash scripts/build-extension.sh` → verify entitlemen
 | **T56** | `src/tools/interaction.ts:362` | `safari_handle_dialog` declares `requiresDialogIntercept: true` but works on AppleScript — overstated requirement |
 | **T57** | `daemon/Sources/SafariPilotdCore/NDJSONParser.swift` | silent catch — add logging at parse-failure points |
 | **T58** | `daemon/Sources/SafariPilotdCore/ExtensionHTTPServer.swift` | bind failure on port 19475 logs and continues; should be fatal |
-| **T59** | `src/tools/extraction.ts` (`safari_take_screenshot`) + `src/security/` | domain-allowlist screenshot policy — refuse `safari_take_screenshot` for banking/payment-processor patterns. Filed during T36 deletion (2026-04-26) as the actually-useful security control to replace the deleted no-op CSS-blur module. Hard wall (throw `ScreenshotBlockedError`), not soft DOM blur. Needs threat-model + default-policy decision (like SD-30) before wiring. Banking-domain test fixtures from the deleted `screenshot-redaction.ts` (BANKING_DOMAIN_PATTERNS regex list) preserved in commit history at `74e4847~1` for re-use. |
+| **T59** ⬅ IN PROGRESS | `src/tools/extraction.ts` (`safari_take_screenshot`) + `src/security/` | domain-allowlist screenshot policy — handler-level `ScreenshotPolicy` check, `ScreenshotBlockedError`, frontmost-tab AppleScript fallback, operator-configurable seed list. Threat-model decided 2026-04-26 (spec: `docs/upp/specs/2026-04-26-threat-model-decisions.md`). Plan: `docs/upp/plans/2026-04-26-t59-screenshot-domain-policy.md`. Branch: `fix/t59-screenshot-domain-policy`. |
 
 ### Deferred features (intentional, filed for later)
 
+*SD-30 permanently closed 2026-04-26 (moved to Resolved). SD-33 split into 4 sub-items below (moved to Resolved).*
+
+### HealthStore wiring sub-items (SD-33 split, P3)
+
 | ID | Surface | One-liner |
 |---|---|---|
-| **SD-30** | DomainPolicy + selectEngine | banking-disable-extension security feature is legitimate but unimplemented; needs threat-model + default-policy decision before wiring |
-| **SD-33** | `daemon/Sources/SafariPilotdCore/HealthStore.swift` | `incrementRoundtrip` / `incrementTimeout` / `incrementUncertain` / `incrementForceReload` have ZERO production callers (verified by grep). Their `*Count1h` / `forceReloadCount24h` accessors surface in the health snapshot but always read 0 because nothing writes. Wire to actual production telemetry sites OR delete the methods + accessors + tests. Surfaced by T39 re-scope. |
+| **SD-33a** | `daemon/Sources/SafariPilotdCore/CommandDispatcher.swift` | Wire `incrementRoundtrip()` — call site: `handle()` success path after a command result is returned to the bridge. Discriminator: `roundtripCount1h` reads non-zero after dispatching one extension command. |
+| **SD-33b** | `daemon/Sources/SafariPilotdCore/ExtensionBridge.swift` or `CommandDispatcher.swift` | Wire `incrementTimeout()` — call site: command deadline expiry branch where a command is aborted past its deadline. Discriminator: `timeoutCount1h` reads non-zero after forcing a command timeout. |
+| **SD-33c** | `daemon/Sources/SafariPilotdCore/` (grep required) | INVESTIGATE `incrementUncertain()` — no verified production uncertain path found by grep. Phase 1: determine whether an uncertain state is reachable in the current storage-bus IPC flow. If path exists → wire. If no path → delete method, backing array, accessor, test. Do NOT wire to an invented call site. |
+| **SD-33d** | `daemon/Sources/SafariPilotdCore/ExtensionBridge.swift` | Wire `incrementForceReload()` — call site: inside the `forceReloadExtension()` recovery flow. Discriminator: `forceReloadCount24h` reads non-zero after calling `forceReloadExtension()`. |
 
 ### ROADMAP backlog (not from audit, but tracked)
 
@@ -120,6 +126,8 @@ Lookup-only index; full fix-context paragraphs are in `docs/AUDIT-TASKS.md` / `d
 | T40 | `09d2bf7` | `09d2bf7` | `ARCHITECTURE.md` brought current — verified date refresh, cross-origin frames claim removed (T34), 12-of-17-modules drift, recoverSession T38 step, T39 + SD-33 caveat on the unwired `roundtrip`/`timeout`/`uncertain` counts. Of the audit's original 8 claims, 4 had been resolved by intervening commits (T8/T12/T24); 4 needed actual edits this commit; +1 found via parallel verification (12-vs-13 inconsistency). |
 | T35 | `1626ca9` | `b1aa987` | Renamed `IdpiScanner` → `IdpiAnnotator` (file, class, method `scan()` → `annotate()`, type `ScanResult` → `AnnotationResult`); dropped "scanner" framing across ARCHITECTURE.md / CLAUDE.md / EXECUTION-FLOWS.md / e2e test header. No behavioural change — pure rename. Class header documents the well-defined route from annotator → scanner if a future threat-model review wants real blocking. |
 | T36 | `74e4847` | (this commit) | Deleted `ScreenshotRedaction` no-op layer (164 LOC + 7 unit tests + 1 e2e test + wiring at server.ts:945-952). The module returned a CSS-blur script in `_meta.redactionScript` but the script was never injected before `screencapture -x`, and the OS-level capture is immune to CSS blur regardless. Domain-block screenshot policy (the actually-useful primitive) filed as T59 for separate scheduling. |
+| SD-30 | — | `5800d8f` | Permanently deferred. Extension has 4 unique capabilities applescript lacks (httpOnly cookies, network intercept, CSP bypass, shadow DOM) — accepted risks. Complexity of per-domain engine restriction not justified by defense-in-depth marginal gain. Decision recorded in `docs/upp/specs/2026-04-26-threat-model-decisions.md`. |
+| SD-33 | — | `5800d8f` | Wire decision: wire SD-33a/b/d; investigate SD-33c first. Split into 4 sub-items filed under "HealthStore wiring sub-items" in open table. Decision recorded in `docs/upp/specs/2026-04-26-threat-model-decisions.md`. |
 
 Pre-2026-04-25 sprint resolved entries (SD-01..SD-28, T13..T25 originals): see archives.
 
@@ -127,10 +135,10 @@ Pre-2026-04-25 sprint resolved entries (SD-01..SD-28, T13..T25 originals): see a
 
 ## Tally
 
-- **22** audit items (T-numbered) open — 0 P0, 4 in extension batch, 0 P2 quality debt (all shipped this sprint), 18 P3 missing-feature/cosmetic (added T59).
-- **2** SD open — SD-30 (banking-disable-extension, deferred feature); SD-33 (HealthStore unwired increment methods, surfaced by T39 re-scope).
+- **22** audit items (T-numbered) open — 0 P0, 4 in extension batch, 0 P2 quality debt (all shipped), 18 P3 missing-feature/cosmetic (T59 in progress).
+- **4** SD open — SD-33a/b/c/d (HealthStore wiring sub-items, split from SD-33 parent 2026-04-26). SD-30 and SD-33 parent resolved.
 - **2** ROADMAP backlog items — navigate_back/forward stale URL, NDJSON line-split flake.
 
-Total open: **26**. **P2 quality debt is empty** — every audit-flagged P2 item shipped this sprint (T7, T34, T35, T36, T37, T38, T39, T40 + the SD-31/SD-32 real bugs). T36's deletion surfaced T59 (domain-block screenshot policy) as the actually-useful security primitive to replace the no-op DOM-blur layer; filed under P3 awaiting threat-model decision. The remainder is missing features, deferred design decisions, or cosmetic.
+Total open: **28**. SD-30 permanently closed + SD-33 split into 4 atomic sub-items (net +2 vs prior 26). T59 in progress — threat-model decided, spec and plan committed, branch `fix/t59-screenshot-domain-policy` pending. P2 quality debt remains empty.
 
 Open follow-up flagged by SD-32 reviewer: an e2e companion test that spawns two concurrent MCP sessions and asserts Session A's keepalive survives Session B's startup would close the unit-test wiring gap (server.ts:1422 stores the otherSessions count into a private field; the unit tests poke the field directly; only an e2e exercises the full registerWithDaemon → field-write → cleanup-skip flow). Worth filing as SD-33 if anyone reports concurrent-session breakage.
