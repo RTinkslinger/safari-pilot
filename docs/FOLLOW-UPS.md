@@ -132,17 +132,6 @@ Running list of findings surfaced by reviewers (Codex, `upp:test-reviewer`, advi
   - `daemon/Tests/SafariPilotdTests/CommandDispatcherTests.swift`
   - `daemon/Tests/SafariPilotdTests/ExtensionHTTPServerTests.swift`
 
-### SD-09 — Private-state peek pattern in unit tests
-- **Severity:** P3 (cosmetic naming coupling; low-priority tidy)
-- **Source:** `upp:test-reviewer` retro review #1 architectural nitpick
-- **Symptom:** Three unit tests use `(instance as unknown as { _field })._field` to read private state: `_sessionWindowId`, `useTcp`, `circuitBreaker`. Any rename or relocation of these fields breaks every test for purely cosmetic reasons.
-- **Current understanding (from review):** expose read-only getters on the SUT (`getSessionWindowId()`, `isTcpMode()`, `getCircuitBreaker()`), have tests read through them. The SUT owns the contract; refactors don't break the tests. This is a skill-factory-grade pattern worth seeding.
-- **Discriminator:** refactor `_sessionWindowId` to a sub-object on server — existing tests would all break; post-fix tests via `getSessionWindowId()` keep passing because the getter's contract is preserved.
-- **Entry points / files:**
-  - `src/server.ts` — add `getSessionWindowId()`, `getCircuitBreaker()`
-  - `src/engines/daemon.ts` — add `isTcpMode()`
-  - `test/unit/server/ensure-session-window.test.ts`, `test/unit/server/record-tool-failure.test.ts`, `test/unit/engines/daemon.test.ts` — swap peeks for getter calls
-
 ### SD-22 — 4 ERROR_CODES values declared but unused (no concrete class, no throw sites)
 - **Severity:** P3 (dead declaration; cosmetic but asymmetric with the other 17 codes)
 - **Source:** Filed during SD-06 work (2026-04-25). grep-zero verified across `src/`, `daemon/Sources/`, `extension/`.
@@ -194,6 +183,16 @@ Running list of findings surfaced by reviewers (Codex, `upp:test-reviewer`, advi
 ---
 
 ## Resolved
+
+### SD-09 — Private-state peek pattern in unit tests (2026-04-25, commit `fdba5f0`)
+
+Resolved by adding read-only getters to the SUTs (`SafariPilotServer.getSessionWindowId()` for `_sessionWindowId`; `DaemonEngine.isTcpMode()` for `useTcp`) and refactoring the 3 affected unit test files to call them instead of reaching into private state via `as unknown as` casts. `circuitBreaker` was already `readonly` public on SafariPilotServer — just dropped the cast.
+
+Per SD-09's stated scope (READ private state via cast), kept:
+- Method-call casts for private test-entry-point methods (`ensureSessionWindow`, `recordToolFailure`)
+- One write-cast in ensure-session-window.test.ts:97 for test-setup mutation
+
+`upp:test-reviewer` (fast mode) verdict: **PASS** (0 CRITICAL, 0 MAJOR, 2 ADVISORY non-gating). Reviewer endorsed the scope, doc framing, and method-vs-getter choice (method form matches codebase convention).
 
 ### SD-08 — BRITTLE spy tests in `record-tool-failure.test.ts` (2026-04-25, commit `5060b8f`)
 
