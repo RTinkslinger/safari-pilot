@@ -34,7 +34,6 @@ Real defects causing real product issues today.
 
 | ID | Surface | One-liner | Notes |
 |---|---|---|---|
-| **T7** | `src/tools/navigation.ts` | `safari_close_tab` doesn't call `tabOwnership.removeTab()` — registry leaks closed tabs | small (≈10 min); single missing call. |
 | **SD-32** | `src/server.ts:1273-1297` + `daemon/Sources/SafariPilotdCore/ExtensionHTTPServer.swift:361` | Concurrent MCP sessions kill each other's dashboard windows — orphan-cleanup AppleScript filters by constant title shared across sessions | regression from SD-21 (commit `c9e8b82`). Multi-session contract is broken. Fix options: embed sessionId in title and filter exact, OR skip orphan cleanup when `otherSessions > 0`, OR tag windows with a custom marker. |
 
 ### Extension-rebuild batch
@@ -122,7 +121,8 @@ Lookup-only index; full fix-context paragraphs are in `docs/AUDIT-TASKS.md` / `d
 | SD-29 | `a173e95` | `f3ead67` | vitest cross-file mock pollution — vi.resetModules + vi.doMock + dynamic import |
 | Reconciliation | — | `da37e52` | 13 stale-open audit items marked RESOLVED + SD-31, SD-32 filed |
 | Tracker | — | `4bec8e3` | Consolidated AUDIT-TASKS + FOLLOW-UPS into this file |
-| SD-31 | `63d4e59` | (this commit) | killSwitch.recordError filters security-pipeline errors (no more TabUrlNotRecognizedError-burst self-DoS) |
+| SD-31 | `63d4e59` | `ecb32d6` | killSwitch.recordError filters security-pipeline errors (no more TabUrlNotRecognizedError-burst self-DoS) |
+| T7 | `71218d9` | (this commit) | Regression guard for existing safari_close_tab tab-ownership cleanup (server.ts:833-852); audit-flagged leak prevented from silently re-emerging |
 
 Pre-2026-04-25 sprint resolved entries (SD-01..SD-28, T13..T25 originals): see archives.
 
@@ -130,8 +130,8 @@ Pre-2026-04-25 sprint resolved entries (SD-01..SD-28, T13..T25 originals): see a
 
 ## Tally
 
-- **29** audit items (T-numbered) open — 1 P0 critical, 4 in extension batch, 7 P2 quality debt, 17 P3 missing-feature/cosmetic.
+- **28** audit items (T-numbered) open — 0 P0, 4 in extension batch, 7 P2 quality debt, 17 P3 missing-feature/cosmetic.
 - **2** SDs open — 1 critical regression (SD-32), 1 deferred feature (SD-30).
 - **2** ROADMAP backlog items — navigate_back/forward stale URL, NDJSON line-split flake.
 
-Total open: **33**. Of these, **2 are real bugs** (T7, SD-32) — the rest are quality debt, missing features, deferred design decisions, or cosmetic.
+Total open: **32**. Of these, **1 is a real bug** (SD-32) — the rest are quality debt, missing features, deferred design decisions, or cosmetic.

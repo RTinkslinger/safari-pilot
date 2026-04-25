@@ -75,7 +75,9 @@
 **Origin:** `aa34541` (2026-04-12) — IDB tools created with async JS. No engine supported async at the time or since.
 **Traces:** C6 agent verified both the AppleScript and extension paths fail, and the mock tests that "passed" bypassed execution entirely.
 
-### T7. Call `removeTab()` after `safari_close_tab`
+### T7. Call `removeTab()` after `safari_close_tab` ✅ RESOLVED 2026-04-25 (regression-guard test commit `71218d9`)
+**Fix verified:** `src/server.ts:833-852` ("8.post1: Tab ownership removal") clears the registry post-execution after every successful `safari_close_tab`. The cleanup lives in the server's post-execution adoption block, not in `NavigationTools.handleCloseTab`. The 2026-04-25 reconciliation Explore agent missed this because it inspected only `navigation.ts`. Regression guard at `test/unit/server/close-tab-registry.test.ts` mutation-verified by commenting out the post-execution block.
+
 **Findings:** H5 (tab-ownership audit)
 **Root cause:** `TabOwnership.removeTab()` exists but is never called. Closed tabs remain in registry. Stale URL could match a user's tab later, granting the agent ownership of a user tab.
 **Origin:** `630526e` (2026-04-12) created `removeTab()`. `316feed` wired `registerTab()` for new_tab but never wired `removeTab()` for close_tab. Identity spec (`2026-04-20`) explicitly listed tab closure as a "Non-Goal" based on incorrect assessment that "orphaned entries are harmless."
