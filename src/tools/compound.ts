@@ -53,6 +53,8 @@ export interface ScrapedPage {
 export interface PaginateResult {
   pages: ScrapedPage[];
   totalPages: number;
+  /** T19: surfaced when pagination bails early (e.g. stale-URL post-navigation tracking failure). */
+  warnings?: string[];
 }
 
 export interface MediaState {
@@ -416,7 +418,9 @@ export class CompoundTools {
     const maxPages = typeof params['maxPages'] === 'number' ? params['maxPages'] : DEFAULT_MAX_PAGES;
 
     const pages: ScrapedPage[] = [];
+    const warnings: string[] = [];
     let currentUrl = tabUrl;
+    let degraded = false;
 
     for (let pageNum = 1; pageNum <= maxPages; pageNum++) {
       // Extract data from current page
@@ -459,17 +463,36 @@ export class CompoundTools {
 
         await sleep(WAIT_NAVIGATE_MS);
 
-        // Update current URL after navigation
+        // T19: query the new URL via the SAME stale `currentUrl` (CompoundTools
+        // does not have positional identity threaded through). If the lookup
+        // fails (ok=false) OR returns an empty/whitespace value, the post-
+        // navigation tab is no longer findable by the old URL — stop the loop
+        // LOUDLY (warning + degraded=true) instead of continuing with a stale
+        // URL that silently scrapes the old page or empty results.
         const urlRes = await this.engine.executeJsInTab(currentUrl, 'return location.href');
-        currentUrl = urlRes.value ?? currentUrl;
+        const newUrl = typeof urlRes.value === 'string' ? urlRes.value.trim() : '';
+        if (!urlRes.ok || !newUrl) {
+          warnings.push(
+            `Pagination stopped at page ${pageNum}: post-navigation URL tracking failed ` +
+              `(stale tab lookup; safari_paginate_scrape uses URL-based tab targeting and ` +
+              `positional identity is not threaded through CompoundTools).`,
+          );
+          degraded = true;
+          break;
+        }
+        currentUrl = newUrl;
       }
     }
 
-    const data: PaginateResult = { pages, totalPages: pages.length };
+    const data: PaginateResult = {
+      pages,
+      totalPages: pages.length,
+      ...(warnings.length > 0 ? { warnings } : {}),
+    };
 
     return {
       content: [{ type: 'text', text: JSON.stringify(data) }],
-      metadata: { engine: 'applescript', degraded: false, latencyMs: Date.now() - start },
+      metadata: { engine: 'applescript', degraded, latencyMs: Date.now() - start },
     };
   }
 
