@@ -292,9 +292,9 @@
 **Origin:** `78938fb` (2026-04-18).
 **Fix (re-scoped):** Test-reviewer + grep verified that of the 4 listed arrays, only `httpRequestErrorTimestamps` has production writers (`main.swift:205`, `ExtensionHTTPServer.swift:342, 529, 540`). The other three (`roundtrip`, `timeout`, `uncertain`) plus `forceReload` are written ONLY from tests — pruning them would prune nothing. Re-scoped this ship to add prune-on-append in `recordHttpRequestError` (1h cutoff matching the existing `httpRequestErrorCount1h` window). Filed the unwired sibling instrumentation methods as SD-33 — needs wire-or-delete decision. Discriminating Swift test uses `Mirror(reflecting:)` on the private array because the public `httpRequestErrorCount1h` filters on read and is non-discriminating for the prune-on-append behaviour. Reviewer: REVISE → PASS after re-scope. Mutation cycle confirmed (revert prune line → 130 → 129/1 fail; restore → 130 pass).
 
-### T40. Update ARCHITECTURE.md — 8 documented claims that contradict code
+### T40. Update ARCHITECTURE.md — 8 documented claims that contradict code ✅ RESOLVED 2026-04-26
 **Findings:** Cross-referenced from C1, C2, H3, H4, H10, M1, M24, and others.
-**Discrepancies:**
+**Discrepancies (per audit, 2026-04-23):**
 1. Line 222: "no _meta -> throw (fail closed)" — code does NOT throw (`75177e8`)
 2. Line 216: domainMatches as deferral condition — removed at `75177e8`
 3. Line 40: "cross-origin frames" capability — manifest lacks `all_frames`
@@ -303,6 +303,24 @@
 6. `SKIP_OWNERSHIP_TOOLS` — already updated in this session
 7. Last verified branch — already updated in this session
 8. Navigate_back/forward handling — updated in this session but verify against T2
+
+**Verification (2026-04-26):** Phase 1 of `upp:systematic-debugging` walked each claim against current code:
+- (1) **Resolved by T8.** `server.ts:913` now throws `TabUrlNotRecognizedError` in the no-_meta deferred path. Doc at line 228 already matches. No edit.
+- (2) **Already documented at line 230** ("Domain guard (T24, 2026-04-25): Removed."). No edit.
+- (3) **STALE → fixed.** Line 40 dropped "cross-origin frames" capability; replaced with explicit "NOT supported" paragraph citing T34 + the cap-vs-manifest parity test that prevents future drift.
+- (4) **Already documented at line 205+** (T12 wiring of `recordEngineFailure` via `recordToolFailure`). No edit.
+- (5) **Verified accurate.** Repo-wide grep confirms 8 listed files all consume `escapeForJsSingleQuote` / `escapeForTemplateLiteral`; only `pdf.ts` still has an inline `.replace()` and that's HTML-attribute escaping (different context, correctly distinct). No edit.
+- (6) **Verified accurate.** `SKIP_OWNERSHIP_TOOLS = { safari_list_tabs, safari_new_tab, safari_health_check }` matches `src/server.ts:124-128`. Comment at line 229 about navigate_back/forward going through deferred path also matches. No edit.
+- (7) **STALE → fixed.** Line 3 bumped from `2026-04-23` to `2026-04-26`.
+- (8) **Verified accurate.** `safari_navigate_back`/`safari_navigate_forward` use post-navigation `executeJsInTabByPosition` (positional targeting); no longer in `SKIP_OWNERSHIP_TOOLS`. Doc matches. No edit.
+
+**Plus +1 finding from parallel verification:** `13 of 17 modules` at line 178 contradicted `12 of 17` at line 180. Confirmed via `src/server.ts:316-336` instantiation block — 12 proxy-based + 5 direct = 17. Fixed line 178.
+
+**Plus +1 finding from sprint context:** Line 312 (recoverSession step) lacked T38's new register call. Updated.
+
+**Plus +1 finding from sprint context:** Line 349 (`health.json`) listed `roundtripCount1h` / `timeoutCount1h` / `uncertainCount1h` as "consumed" without disclosing the SD-33 unwired-instrumentation reality. Added the SD-33 caveat + T39 prune mention for `httpRequestErrorCount1h`.
+
+**Net:** 5 surgical edits to ARCHITECTURE.md. No reviewer dispatch (doc-only, no code change, no test). Doc stays accurate against verified code state at `2026-04-26`.
 
 ---
 

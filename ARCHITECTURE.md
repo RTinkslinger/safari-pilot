@@ -1,6 +1,6 @@
 # Safari Pilot Architecture — Canonical Source of Truth
 
-*Last verified: 2026-04-23 | Branch: main*
+*Last verified: 2026-04-26 | Branch: main*
 
 **This document describes how Safari Pilot ACTUALLY works as shipped. Every statement is backed by verified evidence. If code changes contradict this document, either the code is wrong or this document must be updated — never silently diverge.**
 
@@ -37,7 +37,9 @@ Claude Code / AI Agent
 ## Three-Tier Engine Model
 
 ### Tier 1: Extension Engine (0-5s active, ~22s weighted avg)
-**Capabilities:** Shadow DOM (open), CSP bypass (partial — MAIN world only), dialog interception, network interception, framework detection, cross-origin frames
+**Capabilities:** Shadow DOM (open), CSP bypass (partial — MAIN world only), dialog interception, network interception, framework detection.
+
+**Cross-origin frames (T34, 2026-04-26): NOT supported.** `extension/manifest.json` content_scripts entries default to top-frame injection only — they lack `all_frames: true`. The extension cannot read, query, or interact with cross-origin iframe DOMs. `ENGINE_CAPS.extension.framesCrossOrigin` was flipped to `false` to match this reality and is guarded by `test/unit/engine-selector/cap-manifest-parity.test.ts`. Cross-origin support is tracked under T55 (manifest fix) — landing T55 will require flipping the cap back in the same commit (the parity test enforces this).
 
 **Data flow (verified 2026-04-18, HTTP short-poll IPC):**
 ```
@@ -175,7 +177,7 @@ Logic:
 2. If tool requires extension AND extension NOT available → throw `EngineUnavailableError`
 3. Otherwise: prefer extension → daemon → applescript (best available)
 
-**Response metadata:** Every MCP response includes `_meta.engine` reflecting the engine selector's choice. For proxy-based tools (13 of 17 modules), `_meta.engine` reflects BOTH selector choice AND physical execution engine. For direct-engine tools (Navigation, Compound, Download, PDF), `_meta.engine` reflects selector choice only — physical execution uses a hardcoded engine (AppleScript or daemon).
+**Response metadata:** Every MCP response includes `_meta.engine` reflecting the engine selector's choice. For proxy-based tools (12 of 17 modules), `_meta.engine` reflects BOTH selector choice AND physical execution engine. For direct-engine tools (Navigation, Compound, Download, PDF) and the daemon-direct ExtensionDiagnostics tool, `_meta.engine` reflects selector choice only — physical execution uses a hardcoded engine (AppleScript, daemon, or server).
 
 **Engine proxy pattern (server.ts:228-251):** 12 of 17 tool modules receive an `EngineProxy` instance. Before each tool call, `server.ts:500-502` calls `proxy.setDelegate(selectedEngine)`, so proxy-based tools physically execute through the selected engine. Five modules receive engines directly: `NavigationTools(AppleScriptEngine)`, `CompoundTools(AppleScriptEngine)`, `DownloadTools(server)`, `PdfTools(server)`, `ExtensionDiagnosticsTools(DaemonEngine|null)`.
 
@@ -309,8 +311,8 @@ MCP `initialize()` blocks until all systems are green. Every tool call does a li
   1. `checkExtensionStatus()` — HTTP GET `/status?sessionId=X` (2s timeout). Returns `{ext, mcp, sessionTab, lastPingAge, activeSessions}`.
   2. `checkWindowExists()` — AppleScript: `exists window id N` (2s timeout).
   3. If both green → update `engineAvailability`, proceed.
-  4. If anything down → `recoverSession()`: reopen window if gone, poll for extension up to 10s.
-  5. If recovery fails → throw `SessionRecoveryError` with details of what's down.
+  4. If anything down → `recoverSession()`: reopen window if gone, poll for extension up to 10s, then re-call `registerWithDaemon()` so the daemon's session registry stays consistent across daemon restarts (T38, 2026-04-26 — closes the recovery side of the SD-32 multi-session contract). Both branches (window-only and extension-recovery) re-register on success.
+  5. If recovery fails → throw `SessionRecoveryError` with details of what's down. **No register call on failure** — a session whose recovery failed is not advertised to the daemon as healthy.
 
 - **Multi-session isolation**: Each MCP session gets its own Safari window. Daemon's `HealthStore.activeSessions` tracks registered sessions (60s stale pruning). `/status?sessionId=X` heartbeats the session implicitly.
 
@@ -346,7 +348,7 @@ The MCP server runs one Safari window per process lifetime (`_sessionWindowId`).
 - Disconnect (event-page wake semantics): flips `delivered=true → false` on unacked commands so the next poll redelivers them; clears waiting long-polls with empty commands array. Pending commands are NEVER cancelled on disconnect — the event page unloads aggressively and will wake + poll shortly.
 
 ### Daemon State Files (`~/.safari-pilot/`)
-- `health.json` — extension-engine observability state produced by `HealthStore.swift`. Persisted: `lastAlarmFireTimestamp` + `forceReloadTimestamps` (24h rolling window, filtered on write). In-memory only (reset on daemon restart): `roundtripCount1h`, `timeoutCount1h`, `uncertainCount1h`. Consumed starting in Commit 1a (v0.1.5).
+- `health.json` — extension-engine observability state produced by `HealthStore.swift`. Persisted: `lastAlarmFireTimestamp` + `forceReloadTimestamps` (24h rolling window, filtered on write) + `httpBindFailureCount`. In-memory only (reset on daemon restart): `httpRequestErrorCount1h` (1h rolling window — pruned on append per T39, 2026-04-26), and the placeholders `roundtripCount1h` / `timeoutCount1h` / `uncertainCount1h`. **Caveat (SD-33, 2026-04-26):** the three placeholder counts always surface as 0 in the health snapshot because their increment methods (`incrementRoundtrip`/`incrementTimeout`/`incrementUncertain`) have zero production callers — the instrumentation was scaffolded but never wired. Decision pending: wire them up at the relevant production sites (CommandDispatcher / ExtensionBridge), or delete them. Tracked in `docs/FOLLOW-UPS.md`.
 
 ### Dispatcher ↔ HealthStore routes (Commit 1a)
 - `extension_log` — breadcrumb/telemetry from `background.js`. Messages with prefix `alarm_fire` advance `HealthStore.lastAlarmFireTimestamp` (persisted), letting `/health` surface wake-tick progress across daemon restarts. All messages are logged via `Logger.info("EXT-LOG: …")`. Returns `"log_ack"`.
