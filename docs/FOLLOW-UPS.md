@@ -44,23 +44,6 @@ Running list of findings surfaced by reviewers (Codex, `upp:test-reviewer`, advi
   - `daemon/Tests/SafariPilotdTests/ExtensionHTTPServerTests.swift` (testDisconnectCheckFiresWhenIdleBeyondThreshold + testDisconnectCheckPreservesConnectionWhenFresh)
 
 
-### SD-26 — `watch_download` timeout param: AnyCodable Int decode bypassed; integer JSON literals fall back to 30s default
-- **Severity:** P2 (production bug — silently changes the user-visible timeout from "the value I passed" to 30 seconds)
-- **Source:** Filed during SD-16 work (2026-04-25). Test author had to discover the AnyCodable Int-first decoder behaviour by writing fractional `200.5` to make the test work.
-- **Symptom:** `CommandDispatcher.handleWatchDownload` (line 247) reads `(params["timeout"]?.value as? Double) ?? 30000.0`. AnyCodable's decoder (Models.swift:13-35) tries `Int.self` BEFORE `Double.self`, so any integer JSON literal (e.g. `"timeout":200`) parses as Int. `Int as? Double` returns nil in Swift — the cast fails and the SUT falls back to the 30-second default. Real production callers writing `{"timeout": 5000}` get a 30-second wait, not a 5-second wait.
-- **Current understanding (not verified):** two viable fixes:
-  - **(a)** Widen the cast in `handleWatchDownload` (and similar sites — `extension_poll`'s `waitTimeout`, `pageRangeFirst`/`pageRangeLast` in PdfGenerator) to accept either type:
-    ```swift
-    let timeoutMs = (params["timeout"]?.value as? Double)
-        ?? Double(params["timeout"]?.value as? Int ?? 0)
-        ?? 30000.0
-    ```
-  - **(b)** Fix AnyCodable's decoder to ALWAYS prefer Double over Int (Int values would silently widen). Riskier — affects other call sites that depend on Int-typed params (e.g. session counts, status codes).
-- **Discriminator for the fix:** add a unit test that sends `{"timeout": 200}` (no fractional component) and asserts the timeout fires within ~250ms (currently fires at 30000ms).
-- **Entry points / files:**
-  - `daemon/Sources/SafariPilotdCore/CommandDispatcher.swift:247` (and similar sites: `:152` for waitTimeout, PdfGenerator.swift:115-128 for paper dimensions)
-  - `daemon/Sources/SafariPilotdCore/Models.swift:13-35` (AnyCodable decoder, if option b)
-  - `daemon/Tests/SafariPilotdTests/CommandDispatcherTests.swift` (test for option a)
 
 ### SD-27 — `handleInternalCommand` happy-path coverage missing for extension_status / _execute / _health
 - **Severity:** P2 (the production route used by `ExtensionEngine`'s sentinel protocol — a copy-paste regression here goes silently)
@@ -79,6 +62,22 @@ Running list of findings surfaced by reviewers (Codex, `upp:test-reviewer`, advi
 ---
 
 ## Resolved
+
+### SD-26 — watch_download timeout: Int-vs-Double cast widened (production bug fix) (2026-04-25, commit `aa312f1`)
+
+Pre-SD-26, `(params["timeout"]?.value as? Double) ?? 30000.0` silently fell back to 30 seconds whenever the JSON literal was an integer. AnyCodable's decoder tries `Int.self` BEFORE `Double.self`, so any whole-number JSON literal decoded as Int. `Int as? Double` returns nil in Swift. Real production callers writing `{"timeout": 5000}` got 30 seconds, not 5 seconds.
+
+Fix per option (a) — local widening cast. New helper `numericToDouble(_:)` accepts either Int or Double and widens to Double. Applied to:
+- `handleWatchDownload`'s `timeout` parameter (the original report)
+- `extension_poll`'s `waitTimeout` parameter (same coercion bug class)
+
+Updated the existing SD-16 watch_download test:
+- JSON literal changed from `200.5` (fractional workaround) → `200` (integer, production-realistic)
+- elapsedMs band assertion `[150, 5000)` now also discriminates SD-26: a regression dropping `numericToDouble` would let Int 200 cast to nil → 30000ms fallback → fails the band
+
+Option (b) (changing AnyCodable to prefer Double over Int) was riskier — would silently affect other call sites that depend on Int-typed params (session counts, status codes). Local widening keeps the surface tight.
+
+No reviewer dispatched (production bug fix verified by the existing watch_download test — without the helper, the existing test fails with elapsedMs ~30000ms; with the helper, it passes with elapsedMs ~200ms). Total tests: still 121 Swift; behavioral change verified.
 
 ### SD-25 — PdfGenerator + syncAwait deadlock fixed via nonisolated static factory (2026-04-25, commit `003882a`)
 
