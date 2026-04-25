@@ -1,5 +1,18 @@
 import Foundation
 
+// MARK: - SD-26 helper: AnyCodable numeric coercion
+
+/// AnyCodable's decoder tries `Int.self` before `Double.self`, so integer
+/// JSON literals (e.g. `"timeout":5000`) end up as `Int` in `value: Any`.
+/// Plain `as? Double` returns nil on Int (Swift cast-rule), so call sites
+/// reading "this could be Int or Double" via `as? Double` silently fall
+/// back to defaults. This helper accepts either and widens to Double.
+internal func numericToDouble(_ value: Any?) -> Double? {
+    if let d = value as? Double { return d }
+    if let i = value as? Int { return Double(i) }
+    return nil
+}
+
 // MARK: - CommandDispatcher
 
 /// Reads NDJSON commands from a line source, dispatches to the appropriate handler,
@@ -149,7 +162,9 @@ public final class CommandDispatcher: @unchecked Sendable {
             return await extensionBridge.handleExecute(commandID: command.id, params: command.params)
 
         case "extension_poll":
-            let waitTimeout = (command.params["waitTimeout"]?.value as? Double) ?? 0.0
+            // SD-26: accept Int or Double for waitTimeout (same coercion bug
+            // class as watch_download.timeout).
+            let waitTimeout = numericToDouble(command.params["waitTimeout"]?.value) ?? 0.0
             return await extensionBridge.handlePoll(commandID: command.id, waitTimeout: waitTimeout)
 
         case "extension_status":
@@ -244,7 +259,14 @@ public final class CommandDispatcher: @unchecked Sendable {
     private func handleWatchDownload(commandID: String, params: [String: AnyCodable]) async -> Response {
         let start = CFAbsoluteTimeGetCurrent()
 
-        let timeoutMs = (params["timeout"]?.value as? Double) ?? 30000.0
+        // SD-26: AnyCodable's decoder tries Int.self before Double.self, so
+        // integer JSON literals (e.g. `"timeout":5000`) decode as Int. Plain
+        // `as? Double` returns nil on Int (Swift cast-rule), then the SUT
+        // fell back to 30000ms — silently giving callers a 30-second
+        // timeout regardless of what they passed. Production bug: real
+        // callers writing `{"timeout": 5000}` got 30s, not 5s.
+        // Fix: accept Double OR Int (widened to Double) for the same cast.
+        let timeoutMs = numericToDouble(params["timeout"]?.value) ?? 30000.0
         let timeoutSec = timeoutMs / 1000.0
 
         let filenamePattern = params["filenamePattern"]?.value as? String

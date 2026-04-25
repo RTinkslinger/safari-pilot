@@ -254,20 +254,17 @@ func registerCommandDispatcherTests() {
             healthStore: makeHealthStoreForTest()
         )
 
-        // Short timeout (200.5ms) so the test completes promptly. NOTE the
-        // fractional value: `AnyCodable` decodes integral JSON literals as Int
-        // first, then Double. The SUT casts via `as? Double` which fails on
-        // Int and falls back to 30000ms. Using 200.5 forces Double decoding
-        // and a real 200.5ms timeout. (This is a mild SUT smell — out of scope
-        // for SD-16; tracked implicitly by the fact that test author had to
-        // discover the AnyCodable Int-first decoder behaviour.)
+        // Short timeout (200ms) so the test completes promptly. SD-26 fixed
+        // the Int-vs-Double coercion bug — integer JSON literals like
+        // `"timeout":200` now correctly map to a 200ms timeout instead of
+        // silently falling back to the 30s default.
         // Default download dir is ~/Downloads on macOS, resolved via
         // `defaults read com.apple.Safari DownloadsPath` with ~/Downloads
         // fallback (DownloadWatcher.swift:167-193). On any standard macOS
         // box ~/Downloads exists, so init succeeds and we reach watch() timeout.
         let response = syncAwait {
             await dispatcher.dispatch(
-                line: #"{"id":"wd-1","method":"watch_download","params":{"timeout":200.5}}"#
+                line: #"{"id":"wd-1","method":"watch_download","params":{"timeout":200}}"#
             )
         }
         try assertFalse(response.ok,
@@ -276,13 +273,18 @@ func registerCommandDispatcherTests() {
                         "expected DOWNLOAD_TIMEOUT, got \(response.error?.code ?? "<nil>")")
         try assertEqual(response.error?.retryable, true,
                         "DOWNLOAD_TIMEOUT must be marked retryable per the SUT contract")
-        // Reviewer ADVISORY (SD-16): assert elapsedMs is in a plausible band
-        // for the configured 200.5ms timeout. Catches a regression that
-        // early-returns DOWNLOAD_TIMEOUT before actually waiting.
+        // Reviewer ADVISORY (SD-16): elapsedMs band catches a regression that
+        // early-returns DOWNLOAD_TIMEOUT before actually waiting. SD-26
+        // strengthens this further: a regression that drops the SD-26
+        // numericToDouble helper would let the Int 200 cast to nil → fallback
+        // to 30000ms, putting elapsedMs around 30000ms — well outside the
+        // [150, 5000) band → fails the assertion. So this oracle now also
+        // discriminates the SD-26 fix.
         try assertTrue(
             response.elapsedMs >= 150 && response.elapsedMs < 5000,
-            "elapsedMs must be roughly proportional to the 200.5ms timeout; "
-                + "got \(response.elapsedMs)ms"
+            "elapsedMs must be roughly proportional to the 200ms timeout; "
+                + "got \(response.elapsedMs)ms — if ~30000ms, the SD-26 "
+                + "Int-vs-Double fix has regressed."
         )
     }
 
