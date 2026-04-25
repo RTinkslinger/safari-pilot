@@ -8,20 +8,6 @@ Running list of findings surfaced by reviewers (Codex, `upp:test-reviewer`, advi
 
 ## Open
 
-### SD-13 — ExtensionHTTPServer: 4 of 8 routes + disconnect timeout + onBindFailure untested
-- **Severity:** P1 (the routes flagged as "added for the initialization system" are the untested ones)
-- **Source:** `upp:test-reviewer` retro review #2 (2026-04-24)
-- **Symptom:**
-  - Untested routes: `GET /status`, `GET /session`, `GET /health`, `POST /session/register`. Covered: `/connect`, `/poll`, `/result`, `OPTIONS` (CORS), `onReady`.
-  - Untested 15s disconnect-detection background task (SUT lines 85-91, 467-474) — idle-for-15s → `bridge.isExtensionConnected` must flip false.
-  - Untested `onBindFailure` hook — if a second process is already bound to 19475, `onBindFailure` fires and increments `health.httpBindFailureCount`. No test exercises this.
-  - 400/500-path gaps: malformed JSON on `/connect` or `/result`, missing `requestId` on `/result`, `session/register` without `sessionId`, serialization-failure fallback (`recordHttpRequestError`).
-- **Current understanding (from review):** one test per untested route asserting status + response shape + SUT-side effect. One long-idle test for the disconnect timeout. One "start two servers on the same port" test for `onBindFailure`. Four 400/500-path tests, each asserting on status code and the HealthStore error counter.
-- **Discriminator:** revert any route's SUT branch — corresponding test must fail.
-- **Entry points / files:**
-  - `daemon/Sources/SafariPilotdCore/ExtensionHTTPServer.swift` (all listed line ranges)
-  - `daemon/Tests/SafariPilotdTests/ExtensionHTTPServerTests.swift` — extend
-
 ### SD-14 — ExtensionBridge tests are UNWIRED: direct method calls bypass CommandDispatcher routing
 - **Severity:** P1 (Check 6 Production Call-Site — tests exist, but not through the production boundary)
 - **Source:** `upp:test-reviewer` retro review #2 (2026-04-24)
@@ -155,6 +141,22 @@ Running list of findings surfaced by reviewers (Codex, `upp:test-reviewer`, advi
 ---
 
 ## Resolved
+
+### SD-13 — ExtensionHTTPServer: 4 untested routes + disconnect timeout + onBindFailure (2026-04-25, commit `3e46c2d`)
+
+Resolved by adding 13 tests in `daemon/Tests/SafariPilotdTests/ExtensionHTTPServerTests.swift` covering all four flagged routes plus the disconnect-detection branch, the bind-failure callback, and the three 400-path guards.
+
+Route coverage (6 tests): `GET /status` happy path with all five fields asserted; `GET /status?sessionId=...` implicit-heartbeat; `GET /session` content-type + page-title literal + sessionTabActive flip; `GET /health` happy path with `>0` and `~now` bounds on `lastExecutedResultTimestamp`; `GET /health` negative form (NSNull before any markExecutedResult); `POST /session/register` happy path with three independent oracles.
+
+Error paths (3 tests): `/session/register` missing-key (400, `activeSessionCount` stays 0); `/session/register` empty-body via raw URLRequest (different guard branch, both yield 400); `/result` missing-`requestId` 400 (without the route-level guard, `bridge.handleResult` returns INVALID_PARAMS but the HTTP layer would still emit 200 — 400 is the only protocol-level signal).
+
+Disconnect timeout (2 tests, brackets the 15s threshold): exercise the private `checkDisconnect()` via a new test-only public method `runDisconnectCheckForTest(elapsedSeconds:)` that rewinds `_lastRequestTime` and invokes the check synchronously. SUT addition pattern-aligned with `ExtensionBridge.addToExecutedLogForTest`; @testable import isn't available because the test target is a custom CLT harness (per HealthStoreTests comment); SD-17 tracks the broader cleanup.
+
+onBindFailure (1 test): two servers binding port 19999; the second's `onBindFailure` callback must fire within 5s with a non-nil error.
+
+`upp:test-reviewer` (full mode, 8 checks) verdict: **PASS** (CRITICAL: 0, MAJOR: 0, ADVISORY: 4 — all addressed: A1 tightened `lastPingAge` from `is Int` to range `0...500`; A2 added `testHTTPStatusReturnsNullPingAgeBeforeAnyPing` to symmetrically lock the `?? NSNull()` selection on `/status`; A3 documented intentional brittleness of the page-title literal; A4 confirmed test-only public method acceptable per existing pattern + SD-17 cleanup).
+
+Total tests: 97 unit (TS) + 20 canary + 41 e2e + 110 Swift = 268 (Swift was 97 pre-SD-13; +13).
 
 ### SD-12 — ExtensionBridge `__keepalive__` / `__trace__` / `_meta` sentinels untested (2026-04-25, commit `79ee209`)
 
