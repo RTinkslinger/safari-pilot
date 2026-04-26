@@ -24,6 +24,7 @@ export const ERROR_CODES = {
   EXTENSION_UNCERTAIN: 'EXTENSION_UNCERTAIN',
   SESSION_RECOVERY_FAILED: 'SESSION_RECOVERY_FAILED',
   SESSION_WINDOW_INIT_FAILED: 'SESSION_WINDOW_INIT_FAILED',
+  SCREENSHOT_BLOCKED: 'SCREENSHOT_BLOCKED',
 } as const;
 // SD-22 (2026-04-25): removed 4 dead codes (ELEMENT_NOT_INTERACTABLE,
 // CROSS_ORIGIN_FRAME, DIALOG_UNEXPECTED, FRAME_NOT_FOUND) — declared but
@@ -360,6 +361,23 @@ export class SessionWindowInitError extends SafariPilotError {
       'Check that Safari is running and has at least one window open',
       'Enable Safari > Develop > Allow JavaScript from Apple Events',
       'Grant Automation permission to the controlling app in System Settings > Privacy & Security > Automation',
+    ];
+  }
+}
+
+export class ScreenshotBlockedError extends SafariPilotError {
+  readonly code = ERROR_CODES.SCREENSHOT_BLOCKED;
+  readonly retryable = false;
+  readonly hints: string[];
+  readonly domain: string;
+
+  constructor(domain: string) {
+    super(`Screenshot blocked for domain: ${domain}`);
+    this.domain = domain;
+    this.hints = [
+      `Domain "${domain}" is in the screenshot block list`,
+      'Screenshots are disabled on sensitive financial domains by policy',
+      'Use blockedPatterns in config to customise the block list',
     ];
   }
 }
