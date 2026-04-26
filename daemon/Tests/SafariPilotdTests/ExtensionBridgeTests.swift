@@ -1335,6 +1335,114 @@ func registerExtensionBridgeTests() {
                         "keepalive sentinel must NOT increment roundtripCount1h (wrong wire location)")
     }
 
+    // MARK: - SD-33b: timeout counter wiring
+
+    test("testTimeoutIncrementsTimeoutCounter") {
+        // Discrimination target: ExtensionBridge.swift timeout task `if removed { ... }` block.
+        //   _keepaliveStore?.incrementTimeout()
+        // inserted before continuation.resume(returning: Response.failure(...EXTENSION_TIMEOUT...)).
+        //
+        // Without that line: timeoutCount1h stays 0 → assertEqual fails.
+        // With it placed after the `if removed` guard at the wrong scope (e.g. always):
+        // testNormalResultDoesNotIncrementTimeoutCounter below catches it.
+        let (bridge, health, dir) = makeBridgeWithHealth()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        // Use a short commandTimeout so the test doesn't wait 90s.
+        // ExtensionBridge(commandTimeout:) injection added for SD-33b testability.
+        let fastBridge = ExtensionBridge(commandTimeout: 0.1)
+        fastBridge.setHealthStore(health)
+
+        // Queue a command — no result delivered → timeout fires after 100ms.
+        let executeTask = Task {
+            await fastBridge.handleExecute(
+                commandID: "to-cmd-1",
+                params: ["script": AnyCodable("return 1")]
+            )
+        }
+
+        // Wait for the timeout to fire (the task will complete with EXTENSION_TIMEOUT).
+        let response = syncAwait { await executeTask.value }
+        try assertFalse(response.ok, "timed-out command must return failure")
+        try assertEqual(response.error?.code, "EXTENSION_TIMEOUT",
+                        "failure code must be EXTENSION_TIMEOUT")
+
+        try assertEqual(health.timeoutCount1h, 1,
+                        "handleExecute timeout must increment timeoutCount1h to 1")
+        _ = bridge  // suppress unused warning
+    }
+
+    test("testNormalResultDoesNotIncrementTimeoutCounter") {
+        // Discrimination: a command that resolves normally (result arrives before timeout)
+        // must NOT increment timeoutCount1h. If incrementTimeout() is placed outside
+        // the `if removed { ... }` guard (e.g., unconditionally in the timeout task body),
+        // this test fails.
+        let (bridge, health, dir) = makeBridgeWithHealth()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let fastBridge = ExtensionBridge(commandTimeout: 0.5)
+        fastBridge.setHealthStore(health)
+
+        let executeTask = Task {
+            await fastBridge.handleExecute(
+                commandID: "to-ok-1",
+                params: ["script": AnyCodable("return 1")]
+            )
+        }
+        Thread.sleep(forTimeInterval: 0.05)
+
+        // Deliver result well before the 500ms timeout.
+        _ = fastBridge.handleResult(
+            commandID: "to-res-1",
+            params: [
+                "requestId": AnyCodable("to-ok-1"),
+                "result": AnyCodable(["ok": true, "value": 1]),
+            ]
+        )
+        _ = syncAwait { await executeTask.value }
+
+        try assertEqual(health.timeoutCount1h, 0,
+                        "command resolved normally must NOT increment timeoutCount1h")
+        _ = bridge  // suppress unused warning
+    }
+
+    test("testDispatcherMediatedTimeoutIncrementsTimeoutCounter") {
+        // Reviewer MAJOR (SD-33b): closes the production-entry-point gap.
+        // Production drives extension_execute via CommandDispatcher over NDJSON;
+        // this test exercises the full dispatch → timeout path with a real HealthStore.
+        //
+        // Discrimination: remove incrementTimeout() from the `if removed { }` block
+        // → both this test and testTimeoutIncrementsTimeoutCounter fail.
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("sd33b-disp-\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let health = HealthStore(persistPath: dir.appendingPathComponent("health.json"))
+
+        let fastBridge = ExtensionBridge(commandTimeout: 0.1)
+        fastBridge.setHealthStore(health)
+        let dispatcher = CommandDispatcher(
+            lineSource: { nil },
+            outputSink: { _ in },
+            executor: MockExecutor(),
+            extensionBridge: fastBridge,
+            healthStore: makeHealthStoreForTest()
+        )
+
+        // Drive extension_execute through the dispatcher; no result sent → times out.
+        let dispatchTask = Task {
+            await dispatcher.dispatch(
+                line: #"{"id":"to-disp-1","method":"extension_execute","params":{"script":"return 1"}}"#
+            )
+        }
+        let dispResp = syncAwait { await dispatchTask.value }
+        try assertFalse(dispResp.ok,
+                        "dispatcher-mediated extension_execute must return failure on timeout")
+
+        try assertEqual(health.timeoutCount1h, 1,
+                        "dispatcher-mediated timeout must increment timeoutCount1h to 1")
+    }
+
     test("testDispatcherMediatedResultIncrementsRoundtripCounter") {
         // Reviewer MAJOR (SD-33a): closes the production-entry-point gap.
         // Production sends extension_result over NDJSON through CommandDispatcher;

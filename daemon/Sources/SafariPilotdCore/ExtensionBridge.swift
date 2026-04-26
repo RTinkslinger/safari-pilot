@@ -7,6 +7,9 @@ public final class ExtensionBridge: @unchecked Sendable {
 
     private let queue = DispatchQueue(label: "com.safari-pilot.extension-bridge", qos: .userInitiated)
 
+    /// SD-33b: timeout injection for tests. Production callers use the default (90s).
+    private let commandTimeout: TimeInterval
+
     private var _isConnected: Bool = false
 
     private struct PendingCommand {
@@ -47,8 +50,9 @@ public final class ExtensionBridge: @unchecked Sendable {
         queue.sync { _isConnected }
     }
 
-    public init(timeSource: TimeSource = SystemTimeSource()) {
+    public init(timeSource: TimeSource = SystemTimeSource(), commandTimeout: TimeInterval = 90.0) {
         self.timeSource = timeSource
+        self.commandTimeout = commandTimeout
     }
 
     /// Wire up a HealthStore so keepalive sentinels can update `lastKeepalivePing`.
@@ -131,7 +135,7 @@ public final class ExtensionBridge: @unchecked Sendable {
 
         return await withCheckedContinuation { continuation in
             let timeoutTask = Task {
-                try? await Task.sleep(nanoseconds: UInt64(Self.defaultTimeout * 1_000_000_000))
+                try? await Task.sleep(nanoseconds: UInt64(self.commandTimeout * 1_000_000_000))
                 guard !Task.isCancelled else { return }
                 let removed: Bool = self.queue.sync {
                     if let idx = self.pendingCommands.firstIndex(where: { $0.id == commandID }) {
@@ -141,11 +145,12 @@ public final class ExtensionBridge: @unchecked Sendable {
                     return false
                 }
                 if removed {
+                    self._keepaliveStore?.incrementTimeout()
                     continuation.resume(returning: Response.failure(
                         id: commandID,
                         error: StructuredError(
                             code: "EXTENSION_TIMEOUT",
-                            message: "Extension did not respond within \(Int(Self.defaultTimeout))s",
+                            message: "Extension did not respond within \(Int(self.commandTimeout))s",
                             retryable: true
                         )
                     ))
