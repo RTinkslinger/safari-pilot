@@ -32,14 +32,14 @@ describe('safari_take_screenshot inputSchema (T17)', () => {
     return props;
   }
 
-  it('does not declare `tabUrl` (handler ignores it; screencapture -x targets frontmost only)', () => {
-    // Discrimination target: extraction.ts:174. Pre-T17 the schema declared
-    // tabUrl with the description "used to bring it to front" — implying
-    // tab activation. Activation would violate CLAUDE.md's tab-isolation
-    // principle ("Never switch user tabs"), AND the handler doesn't even
-    // attempt activation. Removing the schema field eliminates the false
-    // contract.
-    expect(getProperties()).not.toHaveProperty('tabUrl');
+  it('declares optional `tabUrl` (T59: used for ScreenshotPolicy domain check; does not retarget screencapture)', () => {
+    // tabUrl added in T59 so callers can supply the current tab URL for
+    // ScreenshotPolicy.checkDomain() before screencapture runs.
+    // screencapture -x still captures the frontmost window — tabUrl does NOT
+    // activate or switch tabs (CLAUDE.md: "Never switch user tabs").
+    const props = getProperties();
+    expect(props).toHaveProperty('tabUrl');
+    expect((props['tabUrl'] as Record<string, unknown>)['type']).toBe('string');
   });
 
   it('does not declare `fullPage` (handler captures viewport only; scroll-and-stitch is roadmap)', () => {
