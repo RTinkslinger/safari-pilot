@@ -1443,6 +1443,110 @@ func registerExtensionBridgeTests() {
                         "dispatcher-mediated timeout must increment timeoutCount1h to 1")
     }
 
+    // MARK: - SD-33c: uncertain counter wiring
+
+    test("testReconcileUncertainIncrementsUncertainCounter") {
+        // Discrimination target: ExtensionBridge.swift handleReconcile(), OUTSIDE queue.sync.
+        //   let uncertainIds = (result["uncertain"] as? [String]) ?? []
+        //   for _ in uncertainIds { _keepaliveStore?.incrementUncertain() }
+        // inserted after the queue.sync block returns `result`, before return.
+        //
+        // Without those lines: uncertainCount1h stays 0 → assertEqual fails.
+        let (bridge, health, dir) = makeBridgeWithHealth()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        // ID unknown to executedLog and pendingCommands → classified as uncertain.
+        let response = bridge.handleReconcile(
+            commandID: "uc-1",
+            executedIds: ["never-seen-cmd"],
+            pendingIds: []
+        )
+        try assertTrue(response.ok)
+        let uncertain = (response.value?.value as? [String: Any])?["uncertain"] as? [String] ?? []
+        try assertTrue(uncertain.contains("never-seen-cmd"),
+                       "handleReconcile must classify unknown executedId as uncertain")
+
+        try assertEqual(health.uncertainCount1h, 1,
+                        "one uncertain ID must increment uncertainCount1h to 1")
+    }
+
+    test("testReconcileAckedDoesNotIncrementUncertainCounter") {
+        // Discrimination: an executedId found in executedLog is classified as `acked`,
+        // NOT uncertain. If incrementUncertain() is placed unconditionally (not gated
+        // on the uncertain array), this test fails.
+        //
+        // The test is structured in two phases:
+        //   Phase 1: prime the wire — call reconcile with an UNKNOWN id → uncertain.
+        //            Assert count == 1. This anchors that the wire IS firing (not trivially-passable).
+        //   Phase 2: call reconcile with an ACKED id (in executedLog).
+        //            Assert count stays at 1, not 2.
+        //            If incrementUncertain() is unconditional, count becomes 2 → test fails.
+        let (bridge, health, dir) = makeBridgeWithHealth()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        // Phase 1: prime with one uncertain reconcile.
+        _ = bridge.handleReconcile(
+            commandID: "uc-prime-1",
+            executedIds: ["never-seen-prime"],
+            pendingIds: []
+        )
+        try assertEqual(health.uncertainCount1h, 1,
+                        "phase 1: one uncertain reconcile must prime count to 1")
+
+        // Complete a command so it enters executedLog.
+        let executeTask = Task {
+            await bridge.handleExecute(
+                commandID: "uc-ack-1",
+                params: ["script": AnyCodable("return 1")]
+            )
+        }
+        Thread.sleep(forTimeInterval: 0.1)
+        _ = bridge.handleResult(
+            commandID: "uc-res-1",
+            params: [
+                "requestId": AnyCodable("uc-ack-1"),
+                "result": AnyCodable(["ok": true, "value": 1]),
+            ]
+        )
+        _ = syncAwait { await executeTask.value }
+
+        // Phase 2: reconcile with the acked id — must NOT increment further.
+        let response = bridge.handleReconcile(
+            commandID: "uc-recon-1",
+            executedIds: ["uc-ack-1"],
+            pendingIds: []
+        )
+        try assertTrue(response.ok)
+        let acked = (response.value?.value as? [String: Any])?["acked"] as? [String] ?? []
+        try assertTrue(acked.contains("uc-ack-1"), "known id must classify as acked")
+
+        // Count must still be 1 (from phase 1 only). If unconditional, it would be 2.
+        try assertEqual(health.uncertainCount1h, 1,
+                        "acked ID must NOT increment uncertainCount1h — count stays at 1 from phase 1")
+    }
+
+    test("testDispatcherMediatedReconcileUncertainIncrementsCounter") {
+        // Reviewer pattern (SD-33a/b): closes production-entry-point gap.
+        // Production drives extension_reconcile via CommandDispatcher over NDJSON.
+        let (bridge, health, dir) = makeBridgeWithHealth()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let dispatcher = CommandDispatcher(
+            lineSource: { nil },
+            outputSink: { _ in },
+            executor: MockExecutor(),
+            extensionBridge: bridge,
+            healthStore: makeHealthStoreForTest()
+        )
+
+        let line = #"{"id":"uc-disp-1","method":"extension_reconcile","params":{"executedIds":["never-seen-disp"],"pendingIds":[]}}"#
+        let resp = syncAwait { await dispatcher.dispatch(line: line) }
+        try assertTrue(resp.ok, "extension_reconcile dispatch must return ok")
+
+        try assertEqual(health.uncertainCount1h, 1,
+                        "dispatcher-mediated reconcile with uncertain ID must increment uncertainCount1h")
+    }
+
     test("testDispatcherMediatedResultIncrementsRoundtripCounter") {
         // Reviewer MAJOR (SD-33a): closes the production-entry-point gap.
         // Production sends extension_result over NDJSON through CommandDispatcher;

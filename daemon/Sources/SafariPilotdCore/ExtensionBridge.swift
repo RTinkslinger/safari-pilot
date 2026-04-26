@@ -476,6 +476,11 @@ public final class ExtensionBridge: @unchecked Sendable {
             ]
         }
 
+        let uncertainIds = (result["uncertain"] as? [String]) ?? []
+        for _ in uncertainIds {
+            _keepaliveStore?.incrementUncertain()
+        }
+
         return Response.success(id: commandID, value: AnyCodable(result))
     }
 
