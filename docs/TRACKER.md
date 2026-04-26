@@ -78,10 +78,10 @@ Build pipeline: edit → `bash scripts/build-extension.sh` → verify entitlemen
 
 | ID | Surface | One-liner |
 |---|---|---|
-| **SD-33a** | `daemon/Sources/SafariPilotdCore/CommandDispatcher.swift` | Wire `incrementRoundtrip()` — call site: `handle()` success path after a command result is returned to the bridge. Discriminator: `roundtripCount1h` reads non-zero after dispatching one extension command. |
-| **SD-33b** | `daemon/Sources/SafariPilotdCore/ExtensionBridge.swift` or `CommandDispatcher.swift` | Wire `incrementTimeout()` — call site: command deadline expiry branch where a command is aborted past its deadline. Discriminator: `timeoutCount1h` reads non-zero after forcing a command timeout. |
-| **SD-33c** | `daemon/Sources/SafariPilotdCore/` (grep required) | INVESTIGATE `incrementUncertain()` — no verified production uncertain path found by grep. Phase 1: determine whether an uncertain state is reachable in the current storage-bus IPC flow. If path exists → wire. If no path → delete method, backing array, accessor, test. Do NOT wire to an invented call site. |
-| **SD-33d** | `daemon/Sources/SafariPilotdCore/ExtensionBridge.swift` | Wire `incrementForceReload()` — call site: inside the `forceReloadExtension()` recovery flow. Discriminator: `forceReloadCount24h` reads non-zero after calling `forceReloadExtension()`. |
+| **SD-33a** ✓ RESOLVED | `daemon/Sources/SafariPilotdCore/ExtensionBridge.swift` | Wire `incrementRoundtrip()` — after `cmd.continuation.resume()` in `handleResult()`. Keepalive/trace early-returns short-circuit before it. 3 unit tests (direct, negative-keepalive, dispatcher-mediated). Commit: `b058b0f`. |
+| **SD-33b** ✓ RESOLVED | `daemon/Sources/SafariPilotdCore/ExtensionBridge.swift` | Wire `incrementTimeout()` — inside `if removed { }` in the handleExecute timeout Task. Added `commandTimeout` injection (default 90s) for testability. 3 unit tests (direct, negative, dispatcher-mediated). Commit: `1addfe1`. |
+| **SD-33c** ✓ RESOLVED | `daemon/Sources/SafariPilotdCore/ExtensionBridge.swift` | Wire `incrementUncertain()` outside `queue.sync` in `handleReconcile()`, once per uncertain ID. Investigation confirmed path IS reachable (tracker phrasing was wrong). 3 unit tests (direct, negative two-phase, dispatcher-mediated). Commit: `bd829b6`. |
+| **SD-33d** ⚠ DEFERRED | `daemon/Sources/SafariPilotdCore/ExtensionBridge.swift` | `forceReloadExtension()` does NOT exist anywhere in the daemon codebase — no production call site found. Deferring until a force-reload recovery mechanism is implemented. Do NOT create a no-op stub. |
 
 ### ROADMAP backlog (not from audit, but tracked)
 
