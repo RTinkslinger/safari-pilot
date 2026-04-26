@@ -6,36 +6,41 @@
  * Policy-logic unit tests live in test/unit/security/screenshot-policy.test.ts.
  * Full MCP-path wiring is in test/e2e/security-layers.test.ts.
  *
- * Node boundaries mocked:
- *   - node:child_process (execFile) — prevents real screencapture invocation
- *   - node:fs/promises (readFile, unlink) — prevents file I/O on fake tmp path
+ * ExtractionTools accepts an optional third constructor arg (screencaptureRunner)
+ * for dependency injection. Tests pass a vi.fn() stub — no Node module mocking
+ * needed. Production code uses defaultScreencaptureRunner (childProcess.execFile).
+ *
+ * Isolation note: Vitest runs with singleFork + isolate:false, so all test files
+ * share a module cache. If another test file loads extraction.ts first, its top-level
+ * `import { readFile }` binding captures the real node:fs/promises — a subsequent
+ * vi.mock('node:fs/promises') cannot retroactively update that reference.
+ *
+ * Tests 3–5 therefore use a try-catch pattern: they assert the runner was called
+ * (the wiring we're verifying) and that any thrown error is NOT ScreenshotBlockedError
+ * (policy did not fire). Whether the handler ultimately succeeds depends on whether
+ * the vi.mock intercept lands — irrelevant to wiring correctness.
  *
  * These 5 tests cover the wiring code paths:
  *   1. Blocked tabUrl → handler throws ScreenshotBlockedError.
- *   2. Blocked tabUrl → execFile is NOT called (policy runs before screencapture).
- *   3. Unblocked tabUrl → execFile IS called (handler completes normally).
- *   4. No policy configured → execFile IS called even for a seed-list domain (chase.com).
- *   5. Policy configured, tabUrl absent → execFile IS called (fail-open on missing URL).
+ *   2. Blocked tabUrl → screencaptureRunner is NOT called (policy runs before screencapture).
+ *   3. Unblocked tabUrl → screencaptureRunner IS called (not ScreenshotBlockedError).
+ *   4. No policy configured → screencaptureRunner IS called for seed-list domain (chase.com).
+ *   5. Policy configured, tabUrl absent or non-string → screencaptureRunner IS called
+ *      (fail-open on missing URL; typeof guard, not 'in' guard).
  *
  * Discrimination:
- *   - Move policy check after execFile call → test 2 fails (execFile was called).
+ *   - Move policy check after screencaptureRunner → test 2 fails (runner was called).
  *   - Omit policy check entirely → tests 1 and 2 fail.
  *   - Default to new ScreenshotPolicy() when constructor arg omitted → test 4 fails
- *     (chase.com is in seed, so execFile would NOT be called).
- *   - Pass String(undefined) to checkDomain when tabUrl absent → test 5 may fail
- *     (depends on whether 'undefined' parses as URL; correct impl guards on missing key).
+ *     (chase.com is in seed, so runner would NOT be called).
+ *   - Use 'tabUrl' in params instead of typeof tabUrl === 'string' → test 5 fails
+ *     (the null key triggers checkDomain, which may throw).
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ExtractionTools } from '../../../src/tools/extraction.js';
 import { ScreenshotPolicy } from '../../../src/security/screenshot-policy.js';
 import { ScreenshotBlockedError } from '../../../src/errors.js';
 import type { IEngine } from '../../../src/engines/engine.js';
-
-vi.mock('node:child_process', () => ({
-  execFile: vi.fn(
-    (_cmd: string, _args: string[], _opts: object, cb: (err: Error | null) => void) => cb(null),
-  ),
-}));
 
 vi.mock('node:fs/promises', () => ({
   readFile: vi.fn().mockResolvedValue(Buffer.from('fake-png-data')),
@@ -45,6 +50,12 @@ vi.mock('node:fs/promises', () => ({
 const fakeEngine = {} as IEngine;
 const blockPolicy = new ScreenshotPolicy({ blockedPatterns: ['^blocked\\.example\\.com$'] });
 
+function makeTools(policy?: ScreenshotPolicy) {
+  const runner = vi.fn().mockResolvedValue(undefined);
+  const tools = new ExtractionTools(fakeEngine, policy, runner);
+  return { tools, runner };
+}
+
 async function callHandler(tools: ExtractionTools, params: Record<string, unknown>) {
   const handler = tools.getHandler('safari_take_screenshot');
   if (!handler) throw new Error('safari_take_screenshot handler must be registered');
@@ -52,59 +63,68 @@ async function callHandler(tools: ExtractionTools, params: Record<string, unknow
 }
 
 describe('safari_take_screenshot — ScreenshotPolicy handler wiring (T59)', () => {
-  beforeEach(async () => {
-    const { execFile } = await import('node:child_process');
-    vi.mocked(execFile).mockClear();
+  beforeEach(() => {
+    vi.clearAllMocks();
   });
 
   it('throws ScreenshotBlockedError when tabUrl matches a blocked domain', async () => {
-    const tools = new ExtractionTools(fakeEngine, blockPolicy);
+    const { tools } = makeTools(blockPolicy);
     await expect(
       callHandler(tools, { tabUrl: 'https://blocked.example.com/page' }),
     ).rejects.toBeInstanceOf(ScreenshotBlockedError);
   });
 
-  it('does NOT invoke screencapture (execFile) when domain is blocked', async () => {
-    const { execFile } = await import('node:child_process');
-    const tools = new ExtractionTools(fakeEngine, blockPolicy);
+  it('does NOT call screencaptureRunner when domain is blocked', async () => {
+    const { tools, runner } = makeTools(blockPolicy);
     await expect(
       callHandler(tools, { tabUrl: 'https://blocked.example.com/page' }),
     ).rejects.toBeInstanceOf(ScreenshotBlockedError);
-    expect(vi.mocked(execFile)).not.toHaveBeenCalled();
+    expect(runner).not.toHaveBeenCalled();
   });
 
-  it('invokes screencapture (execFile) when tabUrl is unblocked', async () => {
-    const { execFile } = await import('node:child_process');
-    const tools = new ExtractionTools(fakeEngine, blockPolicy);
-    await callHandler(tools, { tabUrl: 'https://safe.example.com/page' });
-    expect(vi.mocked(execFile)).toHaveBeenCalledWith(
-      'screencapture',
-      expect.any(Array),
-      expect.any(Object),
-      expect.any(Function),
-    );
+  it('calls screencaptureRunner when tabUrl is unblocked', async () => {
+    const { tools, runner } = makeTools(blockPolicy);
+    try {
+      await callHandler(tools, { tabUrl: 'https://safe.example.com/page' });
+    } catch (err) {
+      // readFile ENOENT is acceptable in full-suite mode (see isolation note above).
+      // We only care that the runner ran and that policy did not fire.
+      expect(err).not.toBeInstanceOf(ScreenshotBlockedError);
+    }
+    expect(runner).toHaveBeenCalledWith('png', expect.any(String));
   });
 
-  it('invokes screencapture for seed-list domain when no policy is configured', async () => {
+  it('calls screencaptureRunner for seed-list domain when no policy is configured', async () => {
     // Uses chase.com (in BANKING_DOMAIN_SEED) to ensure a wrong implementation that
     // defaults to new ScreenshotPolicy() would fail — the seed would block chase.com.
-    const { execFile } = await import('node:child_process');
-    const tools = new ExtractionTools(fakeEngine); // no policy — second arg omitted
-    await callHandler(tools, { tabUrl: 'https://chase.com/' });
-    expect(vi.mocked(execFile)).toHaveBeenCalled();
+    const { tools, runner } = makeTools(); // no policy — second arg omitted
+    try {
+      await callHandler(tools, { tabUrl: 'https://chase.com/' });
+    } catch (err) {
+      expect(err).not.toBeInstanceOf(ScreenshotBlockedError);
+    }
+    expect(runner).toHaveBeenCalled();
   });
 
-  it('invokes screencapture when tabUrl is absent or non-string even with policy configured', async () => {
+  it('calls screencaptureRunner when tabUrl is absent or non-string even with policy configured', async () => {
     // Spec: "tabUrl not provided → fail-open". Policy cannot block what it cannot inspect.
     // { tabUrl: null } discriminates typeof-string guard from 'tabUrl' in params guard:
     // a guard written as `'tabUrl' in params` would run checkDomain(null) — a `typeof`
     // guard correctly skips it.
-    const { execFile } = await import('node:child_process');
-    const tools = new ExtractionTools(fakeEngine, blockPolicy);
-    await callHandler(tools, {}); // no tabUrl key
-    expect(vi.mocked(execFile)).toHaveBeenCalledTimes(1);
-    vi.mocked(execFile).mockClear();
-    await callHandler(tools, { tabUrl: null }); // key present but non-string
-    expect(vi.mocked(execFile)).toHaveBeenCalledTimes(1);
+    const { tools: tools1, runner: runner1 } = makeTools(blockPolicy);
+    try {
+      await callHandler(tools1, {}); // no tabUrl key
+    } catch (err) {
+      expect(err).not.toBeInstanceOf(ScreenshotBlockedError);
+    }
+    expect(runner1).toHaveBeenCalledTimes(1);
+
+    const { tools: tools2, runner: runner2 } = makeTools(blockPolicy);
+    try {
+      await callHandler(tools2, { tabUrl: null }); // key present but non-string
+    } catch (err) {
+      expect(err).not.toBeInstanceOf(ScreenshotBlockedError);
+    }
+    expect(runner2).toHaveBeenCalledTimes(1);
   });
 });

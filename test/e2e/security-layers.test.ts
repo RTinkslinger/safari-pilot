@@ -1,5 +1,5 @@
 /**
- * SD-04 e2e coverage for the 4 layers that are reachable through the MCP
+ * SD-04 e2e coverage for the security layers reachable through the MCP
  * boundary without invasive runtime configuration:
  *
  *   - DomainPolicy (layer 4) — emits `domain_policy` trace event with the
@@ -9,12 +9,13 @@
  *   - IdpiAnnotator (layer 8a, renamed from IdpiScanner per T35) — extraction
  *     tool result on prompt-injection content → metadata.idpiThreats annotation.
  *     The layer never blocks; the assertion is metadata-only.
+ *   - ScreenshotPolicy (T59) — handler-level check inside ExtractionTools;
+ *     safari_take_screenshot on a seed-list domain → `error: SCREENSHOT_BLOCKED`.
  *
  * (Former layer 8b — ScreenshotRedaction — was deleted under T36 (2026-04-26)
  * because the redaction script was returned in metadata but never injected
  * before screencapture, and `screencapture -x` is OS-level so CSS blur is
- * immune anyway. The whole post-execution layer was a no-op annotation. A
- * domain-block screenshot policy is filed as T59 if real protection is wanted.)
+ * immune anyway. The whole post-execution layer was a no-op annotation.)
  *
  * The other 4 layers (KillSwitch, RateLimiter, per-domain CircuitBreaker,
  * AuditLog) are unit-tested under `test/unit/security/` because their
@@ -127,6 +128,45 @@ describe('Security layers e2e (SD-04)', () => {
     // server.ts → the tab would actually open before the throw → the
     // accountsTabExists check above flips true → test fails.
   }, 25_000);
+
+  // ── ScreenshotPolicy (T59) ───────────────────────────────────────────────
+  it('ScreenshotPolicy (T59): safari_take_screenshot returns SCREENSHOT_BLOCKED for a seed-list domain', async () => {
+    // Wiring litmus: verifies ExtractionTools is constructed with ScreenshotPolicy
+    // in server.ts → checkDomain() fires before screencapture → SCREENSHOT_BLOCKED.
+    //
+    // stripe.com is in BANKING_DOMAIN_SEED. Its root URL does NOT trigger
+    // HumanApproval (which only fires for stripe.com/pay and checkout.stripe.com
+    // paths). TabOwnership passes because we open the tab ourselves first.
+    //
+    // Discrimination: comment out `new ScreenshotPolicy(...)` in the
+    // ExtractionTools constructor call in server.ts → screencaptureRunner runs
+    // instead of throwing → no SCREENSHOT_BLOCKED → assertion fails.
+    const tab = await callTool(
+      client,
+      'safari_new_tab',
+      { url: `https://stripe.com/?sp_t59=${Date.now()}` },
+      nextId(),
+      15_000,
+    );
+    const tabUrl = tab.tabUrl as string;
+
+    try {
+      const raw = await rawCallTool(
+        client,
+        'safari_take_screenshot',
+        { tabUrl },
+        nextId(),
+        15_000,
+      );
+
+      expect(raw.meta?.['degraded']).toBe(true);
+      expect(raw.payload['error']).toBe('SCREENSHOT_BLOCKED');
+      // Domain must appear in the payload — discriminates against a generic error envelope.
+      expect(JSON.stringify(raw.payload)).toContain('stripe.com');
+    } finally {
+      try { await callTool(client, 'safari_close_tab', { tabUrl }, nextId()); } catch { /* ignore */ }
+    }
+  }, 30_000);
 
   // ── Layer 8a: IdpiAnnotator ───────────────────────────────────────────────
   it('IdpiAnnotator: extraction tools annotate metadata when content matches injection patterns', async () => {

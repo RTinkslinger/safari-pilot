@@ -61,6 +61,7 @@ export interface SafariPilotConfig {
   daemon: DaemonConfig;
   healthCheck: HealthCheckConfig;
   extension: ExtensionConfig;
+  screenshotPolicy?: { blockedPatterns?: string[] };
 }
 
 export const DEFAULT_CONFIG: SafariPilotConfig = {
@@ -202,6 +203,10 @@ function validate(config: SafariPilotConfig): void {
   assertSection('extension', config.extension);
   assertBoolean('extension.enabled', config.extension.enabled);
   assertString('extension.killSwitchVersion', config.extension.killSwitchVersion);
+
+  if (config.screenshotPolicy !== undefined && config.screenshotPolicy.blockedPatterns !== undefined) {
+    assertStringArray('screenshotPolicy.blockedPatterns', config.screenshotPolicy.blockedPatterns);
+  }
 }
 
 // ─── Path resolution ─────────────────────────────────────────────────────────

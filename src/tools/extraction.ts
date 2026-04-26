@@ -1,4 +1,17 @@
-import { execFile } from 'node:child_process';
+import * as childProcess from 'node:child_process';
+
+type ScreencaptureRunner = (format: string, filePath: string) => Promise<void>;
+
+function defaultScreencaptureRunner(format: string, filePath: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    childProcess.execFile(
+      'screencapture',
+      ['-x', '-t', format, filePath],
+      { timeout: 10000 },
+      (error) => { if (error) reject(error); else resolve(); },
+    );
+  });
+}
 import { readFile, unlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -7,6 +20,7 @@ import { escapeForJsSingleQuote } from '../escape.js';
 import { hasLocatorParams, extractLocatorFromParams, generateLocatorJs } from '../locator.js';
 import type { IEngine } from '../engines/engine.js';
 import type { Engine, ToolResponse, ToolRequirements } from '../types.js';
+import { ScreenshotPolicy } from '../security/screenshot-policy.js';
 
 export interface ToolDefinition {
   name: string;
@@ -19,10 +33,14 @@ type Handler = (params: Record<string, unknown>) => Promise<ToolResponse>;
 
 export class ExtractionTools {
   private engine: IEngine;
+  private screenshotPolicy: ScreenshotPolicy | undefined;
+  private screencaptureRunner: ScreencaptureRunner;
   private handlers: Map<string, Handler> = new Map();
 
-  constructor(engine: IEngine) {
+  constructor(engine: IEngine, screenshotPolicy?: ScreenshotPolicy, screencaptureRunner: ScreencaptureRunner = defaultScreencaptureRunner) {
     this.engine = engine;
+    this.screenshotPolicy = screenshotPolicy;
+    this.screencaptureRunner = screencaptureRunner;
     this.registerHandlers();
   }
 
@@ -172,6 +190,10 @@ export class ExtractionTools {
         inputSchema: {
           type: 'object',
           properties: {
+            tabUrl: {
+              type: 'string',
+              description: 'Current URL of the tab being screenshotted. Used for screenshot domain policy check. Does not retarget screencapture.',
+            },
             path: {
               type: 'string',
               description: 'Optional file path to save the screenshot. If omitted, returns base64 data.',
@@ -382,6 +404,11 @@ export class ExtractionTools {
   }
 
   private async handleTakeScreenshot(params: Record<string, unknown>): Promise<ToolResponse> {
+    const tabUrl = params['tabUrl'];
+    if (this.screenshotPolicy && typeof tabUrl === 'string') {
+      this.screenshotPolicy.checkDomain(tabUrl);
+    }
+
     const start = Date.now();
     const format = (params['format'] as string | undefined) ?? 'png';
     const savePath = params['path'] as string | undefined;
@@ -390,12 +417,7 @@ export class ExtractionTools {
     const usingTmpFile = !savePath;
 
     try {
-      await new Promise<void>((resolve, reject) => {
-        execFile('screencapture', ['-x', '-t', screenshotFormat, tmpFile], { timeout: 10000 }, (error) => {
-          if (error) reject(error);
-          else resolve();
-        });
-      });
+      await this.screencaptureRunner(screenshotFormat, tmpFile);
 
       const buffer = await readFile(tmpFile);
       const base64 = buffer.toString('base64');

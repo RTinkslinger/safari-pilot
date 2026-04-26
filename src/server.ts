@@ -32,6 +32,7 @@ import { RateLimiter } from './security/rate-limiter.js';
 import { CircuitBreaker } from './security/circuit-breaker.js';
 import { IdpiAnnotator } from './security/idpi-annotator.js';
 import { HumanApproval } from './security/human-approval.js';
+import { ScreenshotPolicy } from './security/screenshot-policy.js';
 import {
   RateLimitedError,
   HumanApprovalRequiredError,
@@ -314,7 +315,7 @@ export class SafariPilotServer {
     // engine directly (for tab management tools that always need AppleScript)
     const navTools = new NavigationTools(engine);
     const interactionTools = new InteractionTools(proxy, this);
-    const extractionTools = new ExtractionTools(proxy);
+    const extractionTools = new ExtractionTools(proxy, new ScreenshotPolicy(this.config.screenshotPolicy));
     const networkTools = new NetworkTools(proxy);
     const storageTools = new StorageTools(proxy);
     const shadowTools = new ShadowTools(proxy);
