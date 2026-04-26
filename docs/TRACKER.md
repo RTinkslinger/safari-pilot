@@ -68,7 +68,7 @@ Build pipeline: edit → `bash scripts/build-extension.sh` → verify entitlemen
 | **T56** | `src/tools/interaction.ts:362` | `safari_handle_dialog` declares `requiresDialogIntercept: true` but works on AppleScript — overstated requirement |
 | **T57** | `daemon/Sources/SafariPilotdCore/NDJSONParser.swift` | silent catch — add logging at parse-failure points |
 | **T58** | `daemon/Sources/SafariPilotdCore/ExtensionHTTPServer.swift` | bind failure on port 19475 logs and continues; should be fatal |
-| **T59** ⬅ IN PROGRESS | `src/tools/extraction.ts` (`safari_take_screenshot`) + `src/security/` | domain-allowlist screenshot policy — handler-level `ScreenshotPolicy` check, `ScreenshotBlockedError`, frontmost-tab AppleScript fallback, operator-configurable seed list. Threat-model decided 2026-04-26 (spec: `docs/upp/specs/2026-04-26-threat-model-decisions.md`). Plan: `docs/upp/plans/2026-04-26-t59-screenshot-domain-policy.md`. Branch: `fix/t59-screenshot-domain-policy`. |
+| **T59** ✓ RESOLVED | `src/tools/extraction.ts` (`safari_take_screenshot`) + `src/security/` | domain-allowlist screenshot policy — `ScreenshotPolicy` + `ScreenshotBlockedError` shipped 2026-04-26. 10 unit tests (policy-logic) + 5 unit tests (handler-wiring) + 1 e2e litmus (stripe.com → SCREENSHOT_BLOCKED). Commits: `796cc83`, `64385aa`, `43dc2d6`. |
 
 ### Deferred features (intentional, filed for later)
 
@@ -135,10 +135,10 @@ Pre-2026-04-25 sprint resolved entries (SD-01..SD-28, T13..T25 originals): see a
 
 ## Tally
 
-- **22** audit items (T-numbered) open — 0 P0, 4 in extension batch, 0 P2 quality debt (all shipped), 18 P3 missing-feature/cosmetic (T59 in progress).
+- **21** audit items (T-numbered) open — 0 P0, 4 in extension batch, 0 P2 quality debt (all shipped), 17 P3 missing-feature/cosmetic (T59 RESOLVED 2026-04-26).
 - **4** SD open — SD-33a/b/c/d (HealthStore wiring sub-items, split from SD-33 parent 2026-04-26). SD-30 and SD-33 parent resolved.
 - **2** ROADMAP backlog items — navigate_back/forward stale URL, NDJSON line-split flake.
 
-Total open: **28**. SD-30 permanently closed + SD-33 split into 4 atomic sub-items (net +2 vs prior 26). T59 in progress — threat-model decided, spec and plan committed, branch `fix/t59-screenshot-domain-policy` pending. P2 quality debt remains empty.
+Total open: **27**. T59 RESOLVED — `ScreenshotPolicy` wired end-to-end; 15 unit tests + 1 e2e litmus; merged to main 2026-04-26. P2 quality debt remains empty.
 
 Open follow-up flagged by SD-32 reviewer: an e2e companion test that spawns two concurrent MCP sessions and asserts Session A's keepalive survives Session B's startup would close the unit-test wiring gap (server.ts:1422 stores the otherSessions count into a private field; the unit tests poke the field directly; only an e2e exercises the full registerWithDaemon → field-write → cleanup-skip flow). Worth filing as SD-33 if anyone reports concurrent-session breakage.
