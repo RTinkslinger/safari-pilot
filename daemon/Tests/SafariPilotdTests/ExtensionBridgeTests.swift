@@ -1285,6 +1285,94 @@ func registerExtensionBridgeTests() {
 
     // MARK: - SD-15: bridge full-journey lifecycle (Check 9)
 
+    // MARK: - SD-33a: roundtrip counter wiring
+
+    test("testHandleResultIncrementsRoundtripCounter") {
+        // Discrimination target: ExtensionBridge.swift, the line
+        //   _keepaliveStore?.incrementRoundtrip()
+        // inserted after cmd.continuation.resume(returning: callerResponse).
+        //
+        // Without that line: roundtripCount1h stays 0 → assertEqual fails.
+        // With the line placed BEFORE the keepalive guard (wrong location):
+        // testKeepaliveDoesNotIncrementRoundtripCounter below catches it.
+        let (bridge, health, dir) = makeBridgeWithHealth()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let executeTask = Task {
+            await bridge.handleExecute(
+                commandID: "rt-cmd-1",
+                params: ["script": AnyCodable("return 1")]
+            )
+        }
+        Thread.sleep(forTimeInterval: 0.1)
+
+        _ = bridge.handleResult(
+            commandID: "rt-res-1",
+            params: [
+                "requestId": AnyCodable("rt-cmd-1"),
+                "result": AnyCodable(["ok": true, "value": 1]),
+            ]
+        )
+        _ = syncAwait { await executeTask.value }
+
+        try assertEqual(health.roundtripCount1h, 1,
+                        "handleResult on a real command must increment roundtripCount1h to 1")
+    }
+
+    test("testKeepaliveDoesNotIncrementRoundtripCounter") {
+        // Discrimination target: the keepalive early-return at ExtensionBridge.swift:267-274
+        // must short-circuit BEFORE any roundtrip increment. If incrementRoundtrip is
+        // placed BEFORE the keepalive guard (wrong location), this test fails.
+        let (bridge, health, dir) = makeBridgeWithHealth()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        _ = bridge.handleResult(
+            commandID: "rt-ka-1",
+            params: ["requestId": AnyCodable("__keepalive__")]
+        )
+
+        try assertEqual(health.roundtripCount1h, 0,
+                        "keepalive sentinel must NOT increment roundtripCount1h (wrong wire location)")
+    }
+
+    test("testDispatcherMediatedResultIncrementsRoundtripCounter") {
+        // Reviewer MAJOR (SD-33a): closes the production-entry-point gap.
+        // Production sends extension_result over NDJSON through CommandDispatcher;
+        // a mutation that placed incrementRoundtrip() in a different code path
+        // only reachable via direct handleResult() calls would pass the two tests
+        // above but fail here.
+        //
+        // Discrimination: remove the incrementRoundtrip() wire in handleResult →
+        // dispatcher-mediated path also sees 0 → this test fails.
+        let (bridge, health, dir) = makeBridgeWithHealth()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let dispatcher = CommandDispatcher(
+            lineSource: { nil },
+            outputSink: { _ in },
+            executor: MockExecutor(),
+            extensionBridge: bridge,
+            healthStore: makeHealthStoreForTest()
+        )
+
+        let executeTask = Task {
+            await bridge.handleExecute(
+                commandID: "rt-disp-1",
+                params: ["script": AnyCodable("return 1")]
+            )
+        }
+        Thread.sleep(forTimeInterval: 0.1)
+
+        let line = #"{"id":"rt-res-disp-1","method":"extension_result","params":{"requestId":"rt-disp-1","result":{"ok":true,"value":1}}}"#
+        let dispResp = syncAwait { await dispatcher.dispatch(line: line) }
+        try assertTrue(dispResp.ok, "dispatcher-mediated extension_result must return ok")
+
+        _ = syncAwait { await executeTask.value }
+
+        try assertEqual(health.roundtripCount1h, 1,
+                        "dispatcher-mediated extension_result must increment roundtripCount1h to 1")
+    }
+
     test("testBridgeFullJourneyConnectExecutePollDisconnectReconcileResultTeardown") {
         // SD-15 (lifecycle): the individual ops (connect, execute, poll, result,
         // reconcile, disconnect) and pairwise wake sequences are tested by other

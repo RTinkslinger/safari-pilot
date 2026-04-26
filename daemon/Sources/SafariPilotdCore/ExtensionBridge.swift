@@ -383,6 +383,7 @@ public final class ExtensionBridge: @unchecked Sendable {
         ])
 
         cmd.continuation.resume(returning: callerResponse)
+        _keepaliveStore?.incrementRoundtrip()
 
         // Record in executedLog for reconcile (prune expired entries while we're here)
         queue.sync {
