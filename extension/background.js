@@ -135,11 +135,26 @@ async function findTargetTab(tabUrl) {
   if (tabUrl) {
     const target = tabUrl.replace(/\/$/, '');
 
-    // Primary: browser.tabs.query (works when event page is fully active)
-    const all = await browser.tabs.query({});
-    if (all.length > 0) {
-      const match = all.find((t) => (t.url || '').replace(/\/$/, '') === target);
-      if (match) return match;
+    // Test-only escape hatch: if `__sp_test_skip_tabs_query__` is set in
+    // storage, the tabs.query primary path is skipped. Used by e2e tests to
+    // simulate Safari's alarm-wake context where tabs.query({}) returns [].
+    // Production never sets this key; the DEBUG_HARNESS markers strip the
+    // read from release builds entirely (see scripts/build-extension.sh).
+    let skipTabsQuery = false;
+    /*@DEBUG_HARNESS_BEGIN@*/
+    try {
+      const flag = await browser.storage.local.get('__sp_test_skip_tabs_query__');
+      skipTabsQuery = !!flag['__sp_test_skip_tabs_query__'];
+    } catch { /* ignore */ }
+    /*@DEBUG_HARNESS_END@*/
+
+    if (!skipTabsQuery) {
+      // Primary: browser.tabs.query (works when event page is fully active)
+      const all = await browser.tabs.query({});
+      if (all.length > 0) {
+        const match = all.find((t) => (t.url || '').replace(/\/$/, '') === target);
+        if (match) return match;
+      }
     }
 
     // Fallback: persistent tab cache (works when tabs.query returns [] in
@@ -152,6 +167,13 @@ async function findTargetTab(tabUrl) {
         }
       }
     }
+
+    // T27: tabUrl was explicitly provided but BOTH lookups missed. Fail
+    // closed instead of falling through to the active-tab — silently
+    // running the agent's command in whichever tab is frontmost would
+    // violate tab isolation. The caller turns null into a TAB_NOT_FOUND
+    // structured error.
+    return null;
   }
   const actives = await browser.tabs.query({ active: true, currentWindow: true });
   return actives[0];
@@ -174,7 +196,13 @@ async function executeCommand(cmd) {
 
   const tab = await findTargetTab(cmd.tabUrl);
   if (!tab || tab.id == null) {
-    const result = { ok: false, error: { message: `No target tab for url="${cmd.tabUrl}"` } };
+    // T27: structured error so the daemon's ExtensionBridge.handleResult
+    // lifts `name` into StructuredError.code. The TS-side ExtensionEngine
+    // round-trips that as the error code, surfacing TAB_NOT_FOUND to MCP.
+    const error = cmd.tabUrl
+      ? { name: 'TAB_NOT_FOUND', message: `No agent-owned tab matches url="${cmd.tabUrl}" (extension cache miss)` }
+      : { message: `No target tab for url="${cmd.tabUrl}"` };
+    const result = { ok: false, error };
     await updatePendingEntry(commandId, { status: 'completed', result });
     return result;
   }
@@ -513,6 +541,35 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return false;
   }
   return false;
+});
+
+// Test-only: dispatcher for the `__SP_TEST_HARNESS__:` bridge in
+// content-isolated.js. Executes state mutations that aren't reachable from
+// the isolated world (tabCacheMap is module-local to background.js).
+// Stripped from release builds.
+browser.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type !== '__sp_test__') return false;
+  const op = message.op || {};
+  (async () => {
+    try {
+      if (op.action === 'setStorageFlag') {
+        await browser.storage.local.set({ [op.key]: op.value });
+        sendResponse({ ok: true, value: { set: op.key } });
+      } else if (op.action === 'removeStorageFlag') {
+        await browser.storage.local.remove(op.key);
+        sendResponse({ ok: true, value: { removed: op.key } });
+      } else if (op.action === 'clearTabCache') {
+        tabCacheMap.clear();
+        await browser.storage.local.remove(STORAGE_KEY_TAB_CACHE);
+        sendResponse({ ok: true, value: { cleared: 'tabCacheMap+storage' } });
+      } else {
+        sendResponse({ ok: false, error: { name: 'TEST_HARNESS_UNKNOWN_ACTION', message: `unknown action: ${op.action}` } });
+      }
+    } catch (e) {
+      sendResponse({ ok: false, error: { name: 'TEST_HARNESS_ERROR', message: e?.message ?? String(e) } });
+    }
+  })();
+  return true; // async sendResponse
 });
 /*@DEBUG_HARNESS_END@*/
 

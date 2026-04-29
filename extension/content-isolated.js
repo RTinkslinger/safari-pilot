@@ -34,6 +34,22 @@
     if (cmd.commandId && processedCommandIds.has(cmd.commandId)) return;
     if (cmd.commandId) processedCommandIds.add(cmd.commandId);
 
+    /*@DEBUG_HARNESS_BEGIN@*/
+    // Test bridge: scripts prefixed with `__SP_TEST_HARNESS__:` are intercepted
+    // here and executed in the isolated world (where browser.storage.local is
+    // available), instead of being forwarded to the MAIN world. Used by e2e
+    // tests to manipulate extension-side state (storage flags, cache reset)
+    // that no shipped tool exposes. Stripped from release builds by
+    // scripts/build-extension.sh — production has no such prefix and skips
+    // this branch.
+    const TEST_HARNESS_PREFIX = '__SP_TEST_HARNESS__:';
+    if (cmd.method === 'execute_script' && typeof cmd.params?.script === 'string'
+        && cmd.params.script.startsWith(TEST_HARNESS_PREFIX)) {
+      handleTestHarnessCommand(cmd, cmd.params.script.slice(TEST_HARNESS_PREFIX.length));
+      return;
+    }
+    /*@DEBUG_HARNESS_END@*/
+
     const requestId = `sp_${++nextRequestId}_${Date.now()}`;
 
     const promise = new Promise((resolve, reject) => {
@@ -78,6 +94,34 @@
       }
     );
   }
+
+  /*@DEBUG_HARNESS_BEGIN@*/
+  // Test-bridge transport. Operates in the isolated world. Forwards the parsed
+  // op to background.js (which owns the state being mutated — tabCacheMap is a
+  // module-local Map that can't be reached from this script). Background's
+  // onMessage handler executes the op and returns {ok, value, error}.
+  async function handleTestHarnessCommand(cmd, payload) {
+    let result;
+    try {
+      const op = JSON.parse(payload);
+      const resp = await browser.runtime.sendMessage({ type: '__sp_test__', op });
+      if (resp?.ok) {
+        result = { ok: true, value: resp.value ?? null };
+      } else {
+        result = { ok: false, error: resp?.error ?? { name: 'TEST_HARNESS_NO_RESPONSE', message: 'no response from background' } };
+      }
+    } catch (e) {
+      result = { ok: false, error: { name: 'TEST_HARNESS_ERROR', message: e?.message ?? String(e) } };
+    }
+    try {
+      await browser.storage.local.set({
+        sp_result: { commandId: cmd.commandId, result, timestamp: Date.now() },
+      });
+    } catch (e) {
+      console.warn('[safari-pilot] test-harness sp_result write failed:', e?.message);
+    }
+  }
+  /*@DEBUG_HARNESS_END@*/
 
   (async () => {
     try {
