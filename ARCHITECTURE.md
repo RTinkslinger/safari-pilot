@@ -39,7 +39,7 @@ Claude Code / AI Agent
 ### Tier 1: Extension Engine (0-5s active, ~22s weighted avg)
 **Capabilities:** Shadow DOM (open), CSP bypass (partial — MAIN world only), dialog interception, network interception, framework detection.
 
-**Cross-origin frames (T34, 2026-04-26): NOT supported.** `extension/manifest.json` content_scripts entries default to top-frame injection only — they lack `all_frames: true`. The extension cannot read, query, or interact with cross-origin iframe DOMs. `ENGINE_CAPS.extension.framesCrossOrigin` was flipped to `false` to match this reality and is guarded by `test/unit/engine-selector/cap-manifest-parity.test.ts`. Cross-origin support is tracked under T55 (manifest fix) — landing T55 will require flipping the cap back in the same commit (the parity test enforces this).
+**Cross-origin frames (T34, 2026-04-26): NOT supported.** `extension/manifest.json` content_scripts entries default to top-frame injection only — they lack `all_frames: true`. The extension cannot read, query, or interact with cross-origin iframe DOMs. `ENGINE_CAPS.extension.framesCrossOrigin` was flipped to `false` to match this reality and is guarded by `test/unit/engine-selector/cap-manifest-parity.test.ts`. Cross-origin support is tracked under **T55a** (frame-aware storage-bus routing — the actual prereq) — landing T55a + manifest `all_frames: true` will require flipping the cap back in the same commit (the parity test enforces this). T55 was reduced to docs-only on 2026-04-29 after audit re-read established that a manifest-only flip would race the single-slot `sp_result` storage key across frames.
 
 **Data flow (verified 2026-04-18, HTTP short-poll IPC):**
 ```

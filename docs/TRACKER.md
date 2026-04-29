@@ -64,7 +64,7 @@ Build pipeline: edit → `bash scripts/build-extension.sh` → verify entitlemen
 | **T52** | `scripts/postinstall.sh` + `update-daemon.sh` | mix of legacy `launchctl unload/load` and modern `launchctl kickstart`/`bootstrap` — pick one |
 | **T53** | `scripts/postinstall.sh` | download/extraction failures swallowed by `\|\| true` guards |
 | **T54** | `scripts/update-daemon.sh` | `pkill -f` should be `pkill -x` to avoid matching unrelated commands |
-| **T55** | `extension/manifest.json` | add `all_frames: true` to content_scripts (or document the limitation; pair with T34) |
+| **T55a** | `extension/background.js` + `extension/content-isolated.js` + `extension/manifest.json` | frame-aware storage-bus routing (`frameId` discrimination on `sp_cmd`/`sp_result`) — true prereq for cross-origin frames. Once shipped, manifest gains `all_frames: true` and `ENGINE_CAPS.extension.framesCrossOrigin` flips to `true` in the same commit; the cap-manifest parity test enforces atomicity. |
 | **T56** | `src/tools/interaction.ts:362` | `safari_handle_dialog` declares `requiresDialogIntercept: true` but works on AppleScript — overstated requirement |
 | **T57** | `daemon/Sources/SafariPilotdCore/NDJSONParser.swift` | silent catch — add logging at parse-failure points |
 | **T58** | `daemon/Sources/SafariPilotdCore/ExtensionHTTPServer.swift` | bind failure on port 19475 logs and continues; should be fatal |
@@ -128,6 +128,7 @@ Lookup-only index; full fix-context paragraphs are in `docs/AUDIT-TASKS.md` / `d
 | T36 | `74e4847` | (this commit) | Deleted `ScreenshotRedaction` no-op layer (164 LOC + 7 unit tests + 1 e2e test + wiring at server.ts:945-952). The module returned a CSS-blur script in `_meta.redactionScript` but the script was never injected before `screencapture -x`, and the OS-level capture is immune to CSS blur regardless. Domain-block screenshot policy (the actually-useful primitive) filed as T59 for separate scheduling. |
 | SD-30 | — | `5800d8f` | Permanently deferred. Extension has 4 unique capabilities applescript lacks (httpOnly cookies, network intercept, CSP bypass, shadow DOM) — accepted risks. Complexity of per-domain engine restriction not justified by defense-in-depth marginal gain. Decision recorded in `docs/upp/specs/2026-04-26-threat-model-decisions.md`. |
 | SD-33 | — | `5800d8f` | Wire decision: wire SD-33a/b/d; investigate SD-33c first. Split into 4 sub-items filed under "HealthStore wiring sub-items" in open table. Decision recorded in `docs/upp/specs/2026-04-26-threat-model-decisions.md`. |
+| T55 | — | (this commit) | RESOLVED-as-documented (2026-04-29). Original wording "add `all_frames: true` to content_scripts (or document the limitation)" allowed two paths. Audit re-read against the runtime (`extension/content-isolated.js:30-79` filters only by `tabId`, not `frameId`; `sp_result` is single-slot, last-writer-wins) established that a manifest-only flip would race across frames — strictly worse than today's documented limitation. The actual prereq — frame-aware storage-bus routing — is now tracked as **T55a** in the open P3 table. `src/engine-selector.ts`, `test/unit/engine-selector/cap-manifest-parity.test.ts`, and `ARCHITECTURE.md` all updated to point at T55a. Cap stays `false`; parity invariant preserved. No shipped tool currently declares `requiresFramesCrossOrigin: true`, so no functional regression. |
 
 Pre-2026-04-25 sprint resolved entries (SD-01..SD-28, T13..T25 originals): see archives.
 
@@ -135,10 +136,10 @@ Pre-2026-04-25 sprint resolved entries (SD-01..SD-28, T13..T25 originals): see a
 
 ## Tally
 
-- **21** audit items (T-numbered) open — 0 P0, 4 in extension batch, 0 P2 quality debt (all shipped), 17 P3 missing-feature/cosmetic (T59 RESOLVED 2026-04-26).
+- **21** audit items (T-numbered) open — 0 P0, 4 in extension batch, 0 P2 quality debt (all shipped), 17 P3 missing-feature/cosmetic (T55 → RESOLVED-as-documented 2026-04-29; T55a (frame-aware storage bus) added in its place — net P3 count unchanged).
 - **4** SD open — SD-33a/b/c/d (HealthStore wiring sub-items, split from SD-33 parent 2026-04-26). SD-30 and SD-33 parent resolved.
 - **2** ROADMAP backlog items — navigate_back/forward stale URL, NDJSON line-split flake.
 
-Total open: **27**. T59 RESOLVED — `ScreenshotPolicy` wired end-to-end; 15 unit tests + 1 e2e litmus; merged to main 2026-04-26. P2 quality debt remains empty.
+Total open: **27**. T59 RESOLVED — `ScreenshotPolicy` wired end-to-end; 15 unit tests + 1 e2e litmus; merged to main 2026-04-26. P2 quality debt remains empty. T55 reduced to docs-only 2026-04-29 (replaced in P3 by T55a).
 
 Open follow-up flagged by SD-32 reviewer: an e2e companion test that spawns two concurrent MCP sessions and asserts Session A's keepalive survives Session B's startup would close the unit-test wiring gap (server.ts:1422 stores the otherSessions count into a private field; the unit tests poke the field directly; only an e2e exercises the full registerWithDaemon → field-write → cleanup-skip flow). Worth filing as SD-33 if anyone reports concurrent-session breakage.
