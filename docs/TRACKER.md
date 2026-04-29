@@ -89,6 +89,8 @@ Build pipeline: edit → `bash scripts/build-extension.sh` → verify entitlemen
 |---|---|---|
 | ROADMAP-#3 | `safari_navigate_back` / `safari_navigate_forward` | stale-URL query after history.back/forward — tool queries page info by old URL |
 | ROADMAP-flake | NDJSON parser | line-split flake under parallel test runs (long click JS payloads with embedded newlines break the daemon's line-based JSON parser) |
+| **T61** | `src/tools/navigation.ts` `handleNavigate` | `safari_navigate` does not surface the post-navigation URL in a way the e2e helper sees — `phase1-core-navigation.test.ts:50 expect(result.url).toContain('httpbin.org')` reads `result.url === undefined`. Handler returns `JSON.stringify(pageInfo ?? { url, title: '' })`; either `pageInfo` resolves to `{url: undefined}` (page-info JS shape mismatch) or the helper parse path strips it. Surfaced in v0.1.17 production smoke 2026-04-30. Cascades into T62. |
+| **T62** | `src/security/tab-ownership` registry update path after `safari_navigate` | After T61 cascade or independently, `safari_close_tab` with the new (post-navigate) URL throws `Tab URL not recognized as agent-owned`. CLAUDE.md asserts "after `safari_navigate` succeeds, ownership registry updates to the new URL" — this contract is not holding in `phase1-core-navigation.test.ts` 1.3. Verify under T61 fix; if it persists, T62 is the standalone registry-update bug. |
 
 ---
 
@@ -138,7 +140,7 @@ Pre-2026-04-25 sprint resolved entries (SD-01..SD-28, T13..T25 originals): see a
 
 - **21** audit items (T-numbered) open — 0 P0, 4 in extension batch, 0 P2 quality debt (all shipped), 17 P3 missing-feature/cosmetic (T55 → RESOLVED-as-documented 2026-04-29; T55a (frame-aware storage bus) added in its place — net P3 count unchanged).
 - **4** SD open — SD-33a/b/c/d (HealthStore wiring sub-items, split from SD-33 parent 2026-04-26). SD-30 and SD-33 parent resolved.
-- **2** ROADMAP backlog items — navigate_back/forward stale URL, NDJSON line-split flake.
+- **4** ROADMAP backlog items — navigate_back/forward stale URL, NDJSON line-split flake, T61 (navigate response url undefined), T62 (post-navigate ownership registry).
 
 Total open: **27**. T59 RESOLVED — `ScreenshotPolicy` wired end-to-end; 15 unit tests + 1 e2e litmus; merged to main 2026-04-26. P2 quality debt remains empty. T55 reduced to docs-only 2026-04-29 (replaced in P3 by T55a).
 
