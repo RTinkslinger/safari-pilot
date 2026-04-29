@@ -390,7 +390,19 @@ export class ExtractionTools {
     // DataCloneError on the structured-clone boundary). `await` on a
     // non-Promise is a no-op, so synchronous `return <value>` scripts still
     // work. Pair with content-main.js's `await fn()` in execute_script (T6).
-    const js = `
+    //
+    // Test-bridge passthrough: scripts starting with `__SP_TEST_HARNESS__:`
+    // are intercepted in extension/content-isolated.js (DEBUG_HARNESS-gated).
+    // The bridge guard there checks `script.startsWith(prefix)`, which would
+    // FAIL on the IIFE-wrapped script (because the wrapper's preamble starts
+    // the string). Bypass the wrapping for harness scripts so the raw prefix
+    // reaches the bridge. The prefix is namespaced; no collision with real
+    // scripts in production. In release builds the bridge is stripped, so a
+    // harness-prefixed script (which never appears in production) would just
+    // error in MAIN world's `new Function()`. Same outcome — no behavior
+    // change for any real caller.
+    const isHarness = typeof script === 'string' && script.startsWith('__SP_TEST_HARNESS__:');
+    const js = isHarness ? script : `
       return (async () => {
         var __userResult = await (async function() { ${script} })();
         return { value: __userResult, type: typeof __userResult };

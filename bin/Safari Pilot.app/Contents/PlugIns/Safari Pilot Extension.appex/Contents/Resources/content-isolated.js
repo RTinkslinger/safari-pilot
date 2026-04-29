@@ -34,6 +34,8 @@
     if (cmd.commandId && processedCommandIds.has(cmd.commandId)) return;
     if (cmd.commandId) processedCommandIds.add(cmd.commandId);
 
+    
+
     const requestId = `sp_${++nextRequestId}_${Date.now()}`;
 
     const promise = new Promise((resolve, reject) => {
@@ -78,6 +80,8 @@
       }
     );
   }
+
+  
 
   (async () => {
     try {
@@ -143,6 +147,18 @@
 
   window.addEventListener('message', (event) => {
     if (event.source !== window) return;
+
+    // T21: SPA URL change relay. Forward the new URL to background via
+    // runtime.sendMessage so background can refresh its tabCacheMap.
+    // Top-frame discrimination happens in background via sender.frameId.
+    if (event.data?.type === 'SAFARI_PILOT_URL_CHANGE') {
+      const url = event.data.url;
+      if (typeof url === 'string') {
+        browser.runtime.sendMessage({ type: 'sp_url_changed', url }).catch(() => {});
+      }
+      return;
+    }
+
     if (event.data?.type !== 'SAFARI_PILOT_RESPONSE') return;
 
     const { requestId, ok, value, error } = event.data;

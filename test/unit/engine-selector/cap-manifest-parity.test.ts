@@ -17,10 +17,13 @@
  * compares its `all_frames` reality to the cap value.
  *   - Pre-fix:  cap=true,  no all_frames → FAIL
  *   - Post-fix: cap=false, no all_frames → PASS
- *   - When T55 lands (manifest gains all_frames:true on every entry) the
- *     test will require ENGINE_CAPS.extension.framesCrossOrigin to flip
- *     back to true — self-coordinating between the type-system claim and
- *     the manifest reality.
+ *   - When T55a lands (frame-aware storage-bus routing is implemented AND
+ *     the manifest gains all_frames:true on every entry) the test will
+ *     require ENGINE_CAPS.extension.framesCrossOrigin to flip back to true —
+ *     self-coordinating between the type-system claim and the manifest
+ *     reality. T55 (2026-04-29) reduced to docs-only after audit re-read
+ *     established that a manifest-only flip would race the single-slot
+ *     `sp_result` storage key across frames.
  *
  * Note: ENGINE_CAPS is currently decorative — `selectEngine` does not
  * consult capability flags for routing, only `tool.requires*` and runtime

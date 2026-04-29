@@ -89,6 +89,18 @@ async function httpPost(path, body) {
 }
 
 async function httpPoll() {
+  /*@DEBUG_HARNESS_BEGIN@*/
+  // Test-only: precise injection of a single transient fetch failure on
+  // the NEXT /poll iteration, used by T22's e2e to verify the pollLoop's
+  // retry ladder without involving daemon kickstart (which destabilizes
+  // both the daemon and MCP-side TCP connection). Read-once-and-clear so
+  // a single trigger drives exactly one retry cycle.
+  if (globalThis.__sp_test_inject_next_poll_failure) {
+    globalThis.__sp_test_inject_next_poll_failure = false;
+    const err = new TypeError('__sp_test_injected_failure');
+    throw err;
+  }
+  /*@DEBUG_HARNESS_END@*/
   const res = await fetch(`${HTTP_URL}/poll`, {
     signal: AbortSignal.timeout(10000),
   });
@@ -135,11 +147,26 @@ async function findTargetTab(tabUrl) {
   if (tabUrl) {
     const target = tabUrl.replace(/\/$/, '');
 
-    // Primary: browser.tabs.query (works when event page is fully active)
-    const all = await browser.tabs.query({});
-    if (all.length > 0) {
-      const match = all.find((t) => (t.url || '').replace(/\/$/, '') === target);
-      if (match) return match;
+    // Test-only escape hatch: if `__sp_test_skip_tabs_query__` is set in
+    // storage, the tabs.query primary path is skipped. Used by e2e tests to
+    // simulate Safari's alarm-wake context where tabs.query({}) returns [].
+    // Production never sets this key; the DEBUG_HARNESS markers strip the
+    // read from release builds entirely (see scripts/build-extension.sh).
+    let skipTabsQuery = false;
+    /*@DEBUG_HARNESS_BEGIN@*/
+    try {
+      const flag = await browser.storage.local.get('__sp_test_skip_tabs_query__');
+      skipTabsQuery = !!flag['__sp_test_skip_tabs_query__'];
+    } catch { /* ignore */ }
+    /*@DEBUG_HARNESS_END@*/
+
+    if (!skipTabsQuery) {
+      // Primary: browser.tabs.query (works when event page is fully active)
+      const all = await browser.tabs.query({});
+      if (all.length > 0) {
+        const match = all.find((t) => (t.url || '').replace(/\/$/, '') === target);
+        if (match) return match;
+      }
     }
 
     // Fallback: persistent tab cache (works when tabs.query returns [] in
@@ -152,6 +179,13 @@ async function findTargetTab(tabUrl) {
         }
       }
     }
+
+    // T27: tabUrl was explicitly provided but BOTH lookups missed. Fail
+    // closed instead of falling through to the active-tab — silently
+    // running the agent's command in whichever tab is frontmost would
+    // violate tab isolation. The caller turns null into a TAB_NOT_FOUND
+    // structured error.
+    return null;
   }
   const actives = await browser.tabs.query({ active: true, currentWindow: true });
   return actives[0];
@@ -174,7 +208,13 @@ async function executeCommand(cmd) {
 
   const tab = await findTargetTab(cmd.tabUrl);
   if (!tab || tab.id == null) {
-    const result = { ok: false, error: { message: `No target tab for url="${cmd.tabUrl}"` } };
+    // T27: structured error so the daemon's ExtensionBridge.handleResult
+    // lifts `name` into StructuredError.code. The TS-side ExtensionEngine
+    // round-trips that as the error code, surfacing TAB_NOT_FOUND to MCP.
+    const error = cmd.tabUrl
+      ? { name: 'TAB_NOT_FOUND', message: `No agent-owned tab matches url="${cmd.tabUrl}" (extension cache miss)` }
+      : { message: `No target tab for url="${cmd.tabUrl}"` };
+    const result = { ok: false, error };
     await updatePendingEntry(commandId, { status: 'completed', result });
     return result;
   }
@@ -375,6 +415,52 @@ async function gcPendingStorage() {
   if (changed) await writePending(pending);
 }
 
+// ─── Storage-bus cleanup (T44) ──────────────────────────────────────────────
+// Safari may suspend the event page between writing `sp_cmd` and removing it
+// at executeCommand:285 (post-success cleanup). On wake, that orphan key is
+// invisible to the previous session's resultListener (which is dead) and can
+// be re-read by content-isolated.js:96-100 on next tab load — phantom
+// execution. Same risk for `sp_result` left behind by a session that died
+// before delivering its result. Run this after gcPendingStorage so the
+// "live" predicate reflects the post-GC pending map, and before
+// connectAndReconcile/pollLoop so the daemon's first dispatched command
+// can never collide with a leftover key.
+async function cleanupStaleStorageBus() {
+  try {
+    const stored = await browser.storage.local.get(['sp_cmd', 'sp_result']);
+    const pending = await readPending();
+    const liveIds = new Set();
+    for (const [commandId, entry] of Object.entries(pending)) {
+      if (entry && entry.status === 'executing') {
+        liveIds.add(commandId);
+      }
+    }
+    const toRemove = [];
+    const removedDetails = {};
+    if (stored.sp_cmd && (!stored.sp_cmd.commandId || !liveIds.has(stored.sp_cmd.commandId))) {
+      toRemove.push('sp_cmd');
+      removedDetails.sp_cmd = stored.sp_cmd.commandId ?? null;
+    }
+    if (stored.sp_result && (!stored.sp_result.commandId || !liveIds.has(stored.sp_result.commandId))) {
+      toRemove.push('sp_result');
+      removedDetails.sp_result = stored.sp_result.commandId ?? null;
+    }
+    if (toRemove.length > 0) {
+      await browser.storage.local.remove(toRemove);
+      // Trace contract (load-bearing for T44 e2e discriminator):
+      // emitted ONLY on actual orphan removal. Test asserts the
+      // commandIds match the planted poison after a forceUnload.
+      // Pre-fix this function doesn't exist → trace never appears.
+      emitTrace('__cleanup__', 'orphan_storage_bus_removed', {
+        removed: toRemove,
+        commandIds: removedDetails,
+      });
+    }
+  } catch (e) {
+    console.warn('[safari-pilot] cleanupStaleStorageBus error:', e?.message);
+  }
+}
+
 // ─── Connect + Reconcile ────────────────────────────────────────────────────
 async function connectAndReconcile() {
   const pending = await readPending();
@@ -393,11 +479,31 @@ async function connectAndReconcile() {
   }
 }
 
-// ─── Poll loop ──────────────────────────────────────────────────────────────
+// ─── Poll loop (T22: transient-retry ladder) ────────────────────────────────
+// On any non-Abort/non-Timeout error (network blip, daemon restart, dropped
+// TCP), retry with exponential backoff + jitter rather than yielding to the
+// keepalive alarm immediately. After MAX_ATTEMPTS, yield so the alarm
+// (≤60 s) is the upper-bound recovery time. The success-after-retry path
+// emits `pollloop_recovered` with `attempts > 0` — observable in
+// `~/.safari-pilot/daemon-trace.ndjson`. Do NOT add this trace emission to
+// the alarm-rearm path: T22's e2e test discriminates the retry-vs-alarm
+// recovery paths specifically by asserting on `pollloop_recovered` with
+// `attempts > 0`. An alarm-rearm always restarts pollLoop with attempts=0.
 async function pollLoop() {
+  // 0 + 250 + 500 + 1000 + 2000 = 3750 ms total wait; with ~1 s daemon cold
+  // start the post-fix recovery comfortably fits inside the test's 10 s
+  // budget. Dropping a tail tier vs. the original 6-tier plan was a
+  // test-reviewer recommendation to preserve budget margin.
+  const BACKOFF_MS = [0, 250, 500, 1000, 2000];
+  const MAX_ATTEMPTS = 5;
+  let attempts = 0;
   while (true) {
     try {
       const data = await httpPoll();
+      if (attempts > 0) {
+        emitTrace('__pollloop__', 'pollloop_recovered', { attempts });
+        attempts = 0;
+      }
       if (data && data.commands) {
         for (const cmd of data.commands) {
           const result = await executeCommand(cmd);
@@ -405,11 +511,24 @@ async function pollLoop() {
         }
       }
     } catch (err) {
-      if (err.name === 'AbortError' || err.name === 'TimeoutError') {
+      // AbortError = clean cancel from another path (e.g. test teardown).
+      if (err.name === 'AbortError') return;
+      // TimeoutError = the per-fetch 10 s timeout fired with no command —
+      // this is the NORMAL idle case (the daemon long-polls up to 5 s).
+      // Pre-T22 this killed the loop, requiring an alarm to re-arm: bug.
+      if (err.name === 'TimeoutError') {
+        attempts = 0;
+        continue;
+      }
+      attempts++;
+      if (attempts > MAX_ATTEMPTS) {
+        emitTrace('__pollloop__', 'pollloop_yield_to_alarm', { attempts, errName: err?.name, errMessage: err?.message });
+        console.warn('[safari-pilot] pollLoop yielding to alarm after retries:', err?.name, err?.message);
         return;
       }
-      console.warn('[safari-pilot] pollLoop error:', err.name, err.message);
-      return;
+      const baseMs = BACKOFF_MS[Math.min(attempts, BACKOFF_MS.length - 1)];
+      const jitter = Math.random() * 250;
+      await new Promise((r) => setTimeout(r, baseMs + jitter));
     }
   }
 }
@@ -419,6 +538,7 @@ async function wakeSequence(reason) {
   try {
     await loadTabCache();
     await gcPendingStorage();
+    await cleanupStaleStorageBus();
     await connectAndReconcile();
     await pollLoop();
   } catch (e) {
@@ -498,6 +618,24 @@ if (!listenersAttached) {
       handleCommand(message, sender).then(sendResponse);
       return true;
     }
+    // T21: SPA URL change relayed from content-isolated.js. Top-frame only —
+    // a child frame's pushState would otherwise clobber the top-level tab URL.
+    if (message?.type === 'sp_url_changed' && typeof message.url === 'string') {
+      if (sender?.frameId !== 0) {
+        sendResponse({ ok: true, ignored: 'non_top_frame' });
+        return false;
+      }
+      const tabId = sender?.tab?.id;
+      if (tabId == null) {
+        sendResponse({ ok: false, error: { message: 'no sender.tab.id' } });
+        return false;
+      }
+      const existing = tabCacheMap.get(tabId) || { url: '', title: '' };
+      tabCacheMap.set(tabId, { url: message.url, title: existing.title });
+      saveTabCache().catch(() => {});
+      sendResponse({ ok: true });
+      return false;
+    }
     return false;
   });
 }
@@ -513,6 +651,93 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return false;
   }
   return false;
+});
+
+// Test-only: dispatcher for the `__SP_TEST_HARNESS__:` bridge in
+// content-isolated.js. Executes state mutations that aren't reachable from
+// the isolated world (tabCacheMap is module-local to background.js).
+// Stripped from release builds.
+browser.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type !== '__sp_test__') return false;
+  const op = message.op || {};
+  (async () => {
+    try {
+      if (op.action === 'setStorageFlag') {
+        // Note: setting `sp_cmd` / `sp_result` directly via this action
+        // will be wiped by `executeCommand`'s post-success cleanup before
+        // any subsequent test observation can land. For T44's poison
+        // verification, use `forceUnloadWithPoison` instead — it plants
+        // the poison atomically after the bridge call's cleanup completes.
+        await browser.storage.local.set({ [op.key]: op.value });
+        sendResponse({ ok: true, value: { set: op.key } });
+      } else if (op.action === 'removeStorageFlag') {
+        await browser.storage.local.remove(op.key);
+        sendResponse({ ok: true, value: { removed: op.key } });
+      } else if (op.action === 'clearTabCache') {
+        tabCacheMap.clear();
+        await browser.storage.local.remove(STORAGE_KEY_TAB_CACHE);
+        sendResponse({ ok: true, value: { cleared: 'tabCacheMap+storage' } });
+      } else if (op.action === 'getStorage') {
+        const stored = await browser.storage.local.get(op.key);
+        sendResponse({ ok: true, value: { key: op.key, value: stored[op.key] ?? null } });
+      } else if (op.action === 'forceUnload') {
+        // Acknowledge before reloading — the response must flush before the
+        // runtime tears down. Same pattern as the existing
+        // __safari_pilot_test_force_unload__ handler.
+        sendResponse({ ok: true, value: 'unload_requested' });
+        setTimeout(() => browser.runtime.reload(), 50);
+        return;
+      } else if (op.action === 'injectNextPollFailure') {
+        // Arms a one-shot fetch-failure injection in the next httpPoll
+        // iteration. Used by T22's e2e to verify pollLoop's retry ladder
+        // without daemon kickstart (which has shown to deadlock the
+        // daemon process under concurrent test load — separate
+        // production bug, tracked elsewhere).
+        globalThis.__sp_test_inject_next_poll_failure = true;
+        sendResponse({ ok: true, value: { armed: true } });
+      } else if (op.action === 'forceUnloadWithPoison') {
+        // Atomic plant-and-unload for T44's e2e verification. The bridge
+        // architecture itself uses `sp_cmd`/`sp_result`, and
+        // `executeCommand` cleanup wipes both post-success — so a separate
+        // setStorageFlag → forceUnload sequence would have its poison
+        // wiped before reload. This single action:
+        //   T+0   : ack + return (bridge response flushes through normal path)
+        //   T+~50 : bridge content-isolated writes its own sp_result, bg's
+        //           resultListener resolves, `executeCommand` cleanup wipes
+        //           sp_cmd/sp_result. State is null.
+        //   T+250 : timer fires — plants the poison into sp_cmd/sp_result.
+        //   T+350 : reload. wakeSequence → cleanupStaleStorageBus runs on
+        //           the poison; production fix (T44) removes it; pre-fix
+        //           the poison persists.
+        // Test waits ~5 s for reload + reconcile, then reads back via
+        // `getStorage`. Discriminator: pre-fix sees the poison, post-fix
+        // sees null.
+        // Note: response wrapped in an object — handleEvaluate's harness
+        // path JSON.parses the result, and a bare string 'foo' would
+        // fail to parse. Object survives JSON.stringify→parse roundtrip.
+        sendResponse({ ok: true, value: { scheduled: true, action: 'poison_and_unload' } });
+        setTimeout(async () => {
+          try {
+            const writes = {};
+            if (op.poison?.sp_result) writes.sp_result = op.poison.sp_result;
+            if (op.poison?.sp_cmd) writes.sp_cmd = op.poison.sp_cmd;
+            if (Object.keys(writes).length > 0) {
+              await browser.storage.local.set(writes);
+            }
+          } catch (e) {
+            console.warn('[safari-pilot test-harness] poison plant failed:', e?.message);
+          }
+          setTimeout(() => browser.runtime.reload(), 100);
+        }, 250);
+        return;
+      } else {
+        sendResponse({ ok: false, error: { name: 'TEST_HARNESS_UNKNOWN_ACTION', message: `unknown action: ${op.action}` } });
+      }
+    } catch (e) {
+      sendResponse({ ok: false, error: { name: 'TEST_HARNESS_ERROR', message: e?.message ?? String(e) } });
+    }
+  })();
+  return true; // async sendResponse
 });
 /*@DEBUG_HARNESS_END@*/
 
