@@ -89,6 +89,18 @@ async function httpPost(path, body) {
 }
 
 async function httpPoll() {
+  /*@DEBUG_HARNESS_BEGIN@*/
+  // Test-only: precise injection of a single transient fetch failure on
+  // the NEXT /poll iteration, used by T22's e2e to verify the pollLoop's
+  // retry ladder without involving daemon kickstart (which destabilizes
+  // both the daemon and MCP-side TCP connection). Read-once-and-clear so
+  // a single trigger drives exactly one retry cycle.
+  if (globalThis.__sp_test_inject_next_poll_failure) {
+    globalThis.__sp_test_inject_next_poll_failure = false;
+    const err = new TypeError('__sp_test_injected_failure');
+    throw err;
+  }
+  /*@DEBUG_HARNESS_END@*/
   const res = await fetch(`${HTTP_URL}/poll`, {
     signal: AbortSignal.timeout(10000),
   });
@@ -424,14 +436,25 @@ async function cleanupStaleStorageBus() {
       }
     }
     const toRemove = [];
+    const removedDetails = {};
     if (stored.sp_cmd && (!stored.sp_cmd.commandId || !liveIds.has(stored.sp_cmd.commandId))) {
       toRemove.push('sp_cmd');
+      removedDetails.sp_cmd = stored.sp_cmd.commandId ?? null;
     }
     if (stored.sp_result && (!stored.sp_result.commandId || !liveIds.has(stored.sp_result.commandId))) {
       toRemove.push('sp_result');
+      removedDetails.sp_result = stored.sp_result.commandId ?? null;
     }
     if (toRemove.length > 0) {
       await browser.storage.local.remove(toRemove);
+      // Trace contract (load-bearing for T44 e2e discriminator):
+      // emitted ONLY on actual orphan removal. Test asserts the
+      // commandIds match the planted poison after a forceUnload.
+      // Pre-fix this function doesn't exist → trace never appears.
+      emitTrace('__cleanup__', 'orphan_storage_bus_removed', {
+        removed: toRemove,
+        commandIds: removedDetails,
+      });
     }
   } catch (e) {
     console.warn('[safari-pilot] cleanupStaleStorageBus error:', e?.message);
@@ -640,6 +663,11 @@ browser.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   (async () => {
     try {
       if (op.action === 'setStorageFlag') {
+        // Note: setting `sp_cmd` / `sp_result` directly via this action
+        // will be wiped by `executeCommand`'s post-success cleanup before
+        // any subsequent test observation can land. For T44's poison
+        // verification, use `forceUnloadWithPoison` instead — it plants
+        // the poison atomically after the bridge call's cleanup completes.
         await browser.storage.local.set({ [op.key]: op.value });
         sendResponse({ ok: true, value: { set: op.key } });
       } else if (op.action === 'removeStorageFlag') {
@@ -658,6 +686,49 @@ browser.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         // __safari_pilot_test_force_unload__ handler.
         sendResponse({ ok: true, value: 'unload_requested' });
         setTimeout(() => browser.runtime.reload(), 50);
+        return;
+      } else if (op.action === 'injectNextPollFailure') {
+        // Arms a one-shot fetch-failure injection in the next httpPoll
+        // iteration. Used by T22's e2e to verify pollLoop's retry ladder
+        // without daemon kickstart (which has shown to deadlock the
+        // daemon process under concurrent test load — separate
+        // production bug, tracked elsewhere).
+        globalThis.__sp_test_inject_next_poll_failure = true;
+        sendResponse({ ok: true, value: { armed: true } });
+      } else if (op.action === 'forceUnloadWithPoison') {
+        // Atomic plant-and-unload for T44's e2e verification. The bridge
+        // architecture itself uses `sp_cmd`/`sp_result`, and
+        // `executeCommand` cleanup wipes both post-success — so a separate
+        // setStorageFlag → forceUnload sequence would have its poison
+        // wiped before reload. This single action:
+        //   T+0   : ack + return (bridge response flushes through normal path)
+        //   T+~50 : bridge content-isolated writes its own sp_result, bg's
+        //           resultListener resolves, `executeCommand` cleanup wipes
+        //           sp_cmd/sp_result. State is null.
+        //   T+250 : timer fires — plants the poison into sp_cmd/sp_result.
+        //   T+350 : reload. wakeSequence → cleanupStaleStorageBus runs on
+        //           the poison; production fix (T44) removes it; pre-fix
+        //           the poison persists.
+        // Test waits ~5 s for reload + reconcile, then reads back via
+        // `getStorage`. Discriminator: pre-fix sees the poison, post-fix
+        // sees null.
+        // Note: response wrapped in an object — handleEvaluate's harness
+        // path JSON.parses the result, and a bare string 'foo' would
+        // fail to parse. Object survives JSON.stringify→parse roundtrip.
+        sendResponse({ ok: true, value: { scheduled: true, action: 'poison_and_unload' } });
+        setTimeout(async () => {
+          try {
+            const writes = {};
+            if (op.poison?.sp_result) writes.sp_result = op.poison.sp_result;
+            if (op.poison?.sp_cmd) writes.sp_cmd = op.poison.sp_cmd;
+            if (Object.keys(writes).length > 0) {
+              await browser.storage.local.set(writes);
+            }
+          } catch (e) {
+            console.warn('[safari-pilot test-harness] poison plant failed:', e?.message);
+          }
+          setTimeout(() => browser.runtime.reload(), 100);
+        }, 250);
         return;
       } else {
         sendResponse({ ok: false, error: { name: 'TEST_HARNESS_UNKNOWN_ACTION', message: `unknown action: ${op.action}` } });

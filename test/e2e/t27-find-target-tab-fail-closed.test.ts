@@ -135,15 +135,17 @@ describe('T27 — findTargetTab fails closed on tabUrl + cache miss', () => {
       key: '__sp_test_skip_tabs_query__',
       value: true,
     });
+    // Bridge returns {ok:true, value: {set: <key>}}; handleEvaluate's harness
+    // bypass strips the IIFE wrap, so payload === the bridge value field.
     expect(setFlag, 'bridge setStorageFlag must succeed').toBeDefined();
-    expect((setFlag.value as Record<string, unknown> | undefined)?.set).toBe('__sp_test_skip_tabs_query__');
+    expect((setFlag as Record<string, unknown>).set).toBe('__sp_test_skip_tabs_query__');
 
     // 4) Clear the cache (in-memory tabCacheMap + persisted storage key).
     //    After this, findTargetTab(tabA_url) cannot resolve through either
     //    primary or fallback path.
     const clearCache = await harness(client, nextId, tabA!, { action: 'clearTabCache' });
     expect(clearCache, 'bridge clearTabCache must succeed').toBeDefined();
-    expect((clearCache.value as Record<string, unknown> | undefined)?.cleared).toBe('tabCacheMap+storage');
+    expect((clearCache as Record<string, unknown>).cleared).toBe('tabCacheMap+storage');
 
     // 5) The bug-trigger: ask the extension engine to run a script in tab A.
     //    The daemon's TabOwnership still has tabA (we never closed it), so
@@ -153,36 +155,45 @@ describe('T27 — findTargetTab fails closed on tabUrl + cache miss', () => {
     //    Pre-fix: falls through to active-tab → command runs in tab B,
     //             the script `return location.href` returns B's URL.
     //    Post-fix: returns null → MCP surfaces TAB_NOT_FOUND error.
-    const bug = await rawCallTool(
-      client,
-      'safari_evaluate',
-      { tabUrl: tabA!, script: 'return location.href;' },
-      nextId(),
-      10000,
-    );
+    let payload: Record<string, unknown> | null = null;
+    let errorMsg: string | null = null;
+    try {
+      const bug = await rawCallTool(
+        client,
+        'safari_evaluate',
+        { tabUrl: tabA!, script: 'return location.href;' },
+        nextId(),
+        10000,
+      );
+      payload = bug.payload;
+    } catch (e) {
+      // handleEvaluate throws on result.ok===false → MCP returns JSON-RPC
+      // error -32603 → rawCallTool rejects. Capture the message for
+      // pre-/post-fix discrimination.
+      errorMsg = (e as Error).message;
+    }
 
     // ─── Discriminating assertions ─────────────────────────────────────
-    // Assertion A (the load-bearing one): the call must NOT have silently
-    // executed in tab B. If it did, location.href would equal tab B's URL
-    // (something resembling https://example.org/?sp_t27b=...).
-    const value = (bug.payload as { value?: unknown }).value;
-    expect(
-      typeof value === 'string' && value.includes('sp_t27b='),
-      `Pre-fix bug indicator: command silently ran in tab B (got value=${JSON.stringify(value)}). T27's fix must prevent this.`,
-    ).toBe(false);
+    // Pre-T27 path: findTargetTab falls through to active tab → command
+    //   silently runs in tab B → payload.value contains sp_t27b= marker.
+    //   No error thrown — payload populated successfully.
+    // Post-T27 path: findTargetTab returns null → caller emits
+    //   {error: {name: 'TAB_NOT_FOUND', message: 'No agent-owned tab
+    //   matches url="..." (extension cache miss)'}}. handleEvaluate throws.
+    //   rawCallTool rejects. errorMsg contains TAB_NOT_FOUND signature.
 
-    // Assertion B: the failure mode must be the documented one — a structured
-    // error with name 'TAB_NOT_FOUND'. Anything else (e.g. an unrelated
-    // error code or a successful return for tab A) means the fix wasn't
-    // exercised by this test path and the discriminator is invalid.
-    const errorPayload =
-      (bug.payload as { error?: { name?: string; message?: string } }).error;
-    const errorNameOk = errorPayload?.name === 'TAB_NOT_FOUND';
-    const errorMessageOk = typeof errorPayload?.message === 'string'
-      && errorPayload.message.length > 0;
+    // Assertion A (load-bearing): post-fix path must surface the
+    // TAB_NOT_FOUND failure mode, NOT a silent success in tab B.
+    if (payload !== null) {
+      const value = (payload as { value?: unknown }).value;
+      expect(
+        typeof value === 'string' && value.includes('sp_t27b='),
+        `Pre-fix bug indicator: command silently ran in tab B (got value=${JSON.stringify(value)}). T27's fix must prevent this.`,
+      ).toBe(false);
+    }
     expect(
-      errorNameOk && errorMessageOk,
-      `Expected structured TAB_NOT_FOUND error, got payload=${JSON.stringify(bug.payload)}`,
-    ).toBe(true);
+      errorMsg,
+      `Expected the call to reject with TAB_NOT_FOUND. Got: errorMsg=${errorMsg}, payload=${JSON.stringify(payload)}`,
+    ).toMatch(/TAB_NOT_FOUND|No agent-owned tab matches/);
   }, 60000);
 });

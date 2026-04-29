@@ -32,6 +32,25 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { rawCallTool, callTool, type McpTestClient } from '../helpers/mcp-client.js';
 import { getSharedClient } from '../helpers/shared-client.js';
+import { readFileSync, existsSync } from 'node:fs';
+import { join } from 'node:path';
+import { homedir } from 'node:os';
+
+// Daemon writes extension `emitTrace` events here (via /result with
+// requestId='__trace__'). T44's discriminator reads this for the
+// `orphan_storage_bus_removed` event emitted by `cleanupStaleStorageBus`
+// after wake.
+const LIVE_DAEMON_TRACE_FILE = join(homedir(), '.safari-pilot', 'daemon-trace.ndjson');
+
+interface TraceEvent { event?: string; data?: Record<string, unknown>; ts?: string }
+
+function readDaemonTraceEvents(): TraceEvent[] {
+  if (!existsSync(LIVE_DAEMON_TRACE_FILE)) return [];
+  return readFileSync(LIVE_DAEMON_TRACE_FILE, 'utf-8')
+    .split('\n')
+    .filter((l) => l.trim().length > 0)
+    .map((l) => { try { return JSON.parse(l) as TraceEvent; } catch { return {} as TraceEvent; } });
+}
 
 async function harness(
   client: McpTestClient,
@@ -78,11 +97,20 @@ describe('T44 — wakeSequence cleans stale sp_result / sp_cmd', () => {
     // Settle so content scripts inject and tabs.onCreated fires.
     await new Promise((r) => setTimeout(r, 1500));
 
-    // 2) Inject TWO stale storage-bus keys — sp_result and sp_cmd — both
-    //    with commandIds prefixed `T44_STALE_NEVER_PENDING_` so no live
-    //    pending entry can match (collision with a real Date.now()-prefixed
-    //    id is structurally impossible). Timestamps are also old so any
-    //    "live if recent" predicate would also reject them.
+    // 2) Construct TWO stale storage-bus values — sp_result and sp_cmd —
+    //    both with commandIds prefixed `T44_STALE_NEVER_PENDING_` so no
+    //    live pending entry can match (collision with a real
+    //    Date.now()-prefixed id is structurally impossible). Timestamps
+    //    are also old so any "live if recent" predicate would reject them.
+    //
+    //    The bridge architecture itself uses sp_cmd/sp_result for RPC and
+    //    `executeCommand` post-success cleanup wipes both — so a
+    //    set-via-bridge → verify-via-bridge → reload-via-bridge sequence
+    //    gets its poison wiped before reload. Use the atomic
+    //    `forceUnloadWithPoison` action which delays the poison plant
+    //    until AFTER the bridge call's own cleanup completes, then
+    //    reloads. The poison is in storage at the moment of reload →
+    //    wakeSequence → cleanupStaleStorageBus runs on it.
     const staleResultId = `T44_STALE_NEVER_PENDING_RESULT_${Date.now()}`;
     const staleCmdId = `T44_STALE_NEVER_PENDING_CMD_${Date.now()}`;
     const staleResult = {
@@ -98,96 +126,77 @@ describe('T44 — wakeSequence cleans stale sp_result / sp_cmd', () => {
       timestamp: Date.now() - 60000,
       deadline: Date.now() - 30000,
     };
-    const setResRes = await harness(client, nextId, tabA!, {
-      action: 'setStorageFlag',
-      key: 'sp_result',
-      value: staleResult,
-    });
-    expect((setResRes.value as Record<string, unknown> | undefined)?.set).toBe('sp_result');
-    const setCmdRes = await harness(client, nextId, tabA!, {
-      action: 'setStorageFlag',
-      key: 'sp_cmd',
-      value: staleCmd,
-    });
-    expect((setCmdRes.value as Record<string, unknown> | undefined)?.set).toBe('sp_cmd');
 
-    // 3) Confirm both poisons really landed (sanity check; isolates a
-    //    bridge-bug failure from a wake-cleanup-bug failure).
-    const sanityResult = await harness(client, nextId, tabA!, {
-      action: 'getStorage',
-      key: 'sp_result',
-    });
-    expect(
-      (sanityResult.value as { value?: Record<string, unknown> | null } | undefined)?.value,
-      'bridge sanity check: sp_result must read back the poison we just wrote',
-    ).toMatchObject({ commandId: staleResultId });
-    const sanityCmd = await harness(client, nextId, tabA!, {
-      action: 'getStorage',
-      key: 'sp_cmd',
-    });
-    expect(
-      (sanityCmd.value as { value?: Record<string, unknown> | null } | undefined)?.value,
-      'bridge sanity check: sp_cmd must read back the poison we just wrote',
-    ).toMatchObject({ commandId: staleCmdId });
+    // 3) Capture the kickstart-boundary timestamp BEFORE perturbation —
+    //    used to filter trace events to those emitted AFTER reload.
+    const reloadAt = Date.now();
 
-    // 4) Trigger forceUnload. The bridge dispatches `runtime.reload()`
-    //    after a 50ms ack delay; the extension reinstalls and runs a
-    //    fresh `wakeSequence` (loadTabCache → gcPendingStorage →
-    //    [cleanupStaleStorageBus, post-fix] → connectAndReconcile →
-    //    pollLoop).
-    await harness(client, nextId, tabA!, { action: 'forceUnload' });
+    // 4) Atomic plant-and-unload. After ~250 ms (post-bridge-cleanup),
+    //    background plants the poison into sp_cmd/sp_result. After
+    //    another ~100 ms, runtime.reload() fires.
+    const plantUnload = await harness(client, nextId, tabA!, {
+      action: 'forceUnloadWithPoison',
+      poison: { sp_result: staleResult, sp_cmd: staleCmd },
+    });
+    expect((plantUnload as Record<string, unknown>).scheduled).toBe(true);
+    expect((plantUnload as Record<string, unknown>).action).toBe('poison_and_unload');
 
     // Wait for reload + reconcile. Extension reload + daemon reconnect
     // empirically takes 3-5s in CI; give it a full 7s for safety.
     await new Promise((r) => setTimeout(r, 7000));
 
-    // 5) Read sp_result back. Discriminator:
-    //    PRE-FIX:  still equals stalePoison (wakeSequence never touched it)
-    //    POST-FIX: null/undefined (cleanupStaleStorageBus removed it)
+    // 5) Trace assertion (load-bearing discriminator).
+    //    `cleanupStaleStorageBus` emits `orphan_storage_bus_removed` with
+    //    the planted commandIds when it removes them. Pre-fix this
+    //    function does not exist → trace event never appears.
     //
-    //    NOTE on post-unload bridge availability: forceUnload reloads
-    //    the extension. The bridge still works because it lives in the
-    //    DEBUG_HARNESS-built artifact; tab A's content scripts re-inject
-    //    on tab navigation/reload. We rely on tabs.onCreated/onUpdated
-    //    re-populating tabCacheMap for tab A so findTargetTab can
-    //    resolve `tabA!` for this read. If this read flakes due to
-    //    cache cold-start, tighten the wait above.
-    let resultRead: Record<string, unknown>;
-    let cmdRead: Record<string, unknown>;
-    try {
-      resultRead = await harness(client, nextId, tabA!, {
-        action: 'getStorage',
-        key: 'sp_result',
-      }, 15000);
-      cmdRead = await harness(client, nextId, tabA!, {
-        action: 'getStorage',
-        key: 'sp_cmd',
-      }, 15000);
-    } catch (e) {
-      throw new Error(
-        `Post-unload bridge read failed (likely tabCacheMap cold-start) — ` +
-        `consider increasing the post-unload settle wait. Original error: ${(e as Error).message}`,
-      );
-    }
-    const resultReadback = (resultRead.value as { value?: unknown } | undefined)?.value;
-    const cmdReadback = (cmdRead.value as { value?: unknown } | undefined)?.value;
+    //    sp_cmd cannot be verified via the bridge's `getStorage` because
+    //    the act of dispatching that read overwrites sp_cmd with the
+    //    bridge's own command (storage-bus single-slot key). The trace
+    //    is the only safe observation point. Same for sp_result here for
+    //    consistency, though sp_result is also bridge-readable (the
+    //    bridge reads sp_result before its own response write).
+    expect(
+      existsSync(LIVE_DAEMON_TRACE_FILE),
+      'daemon-trace.ndjson must exist after wake — daemon writes extension ' +
+      `emitTrace events here. If missing, the trace sink is broken.`,
+    ).toBe(true);
+    const trace = readDaemonTraceEvents();
+    const cleanupEvents = trace.filter((e) =>
+      e.event === 'orphan_storage_bus_removed' &&
+      typeof e.ts === 'string' && new Date(e.ts).getTime() >= reloadAt,
+    );
+    expect(
+      cleanupEvents.length,
+      `Pre-fix bug indicator: no \`orphan_storage_bus_removed\` trace events ` +
+      `after reloadAt=${new Date(reloadAt).toISOString()}. ` +
+      `\`cleanupStaleStorageBus\` either was not invoked or did not remove ` +
+      `our planted poison. T44's fix must run cleanupStaleStorageBus in ` +
+      `wakeSequence and remove orphan keys whose commandId isn't in the ` +
+      `live pending set.`,
+    ).toBeGreaterThan(0);
 
-    // Load-bearing assertions. The bridge's getStorage returns
-    // `stored[key] ?? null` (background.js dispatcher) — so a missing key
-    // reads back as exactly `null`. Anything else means the cleanup
-    // didn't fire (or fired but left residue).
+    // The cleanup event must reference BOTH our planted poison commandIds
+    // (sp_result with staleResultId, sp_cmd with staleCmdId). A trace
+    // event that removed neither would not satisfy this — the test would
+    // be silently passing on incidental cleanups of other orphans.
+    const hasResultCleanup = cleanupEvents.some((e) => {
+      const ids = e.data?.['commandIds'] as Record<string, string> | undefined;
+      return ids?.sp_result === staleResultId;
+    });
+    const hasCmdCleanup = cleanupEvents.some((e) => {
+      const ids = e.data?.['commandIds'] as Record<string, string> | undefined;
+      return ids?.sp_cmd === staleCmdId;
+    });
     expect(
-      resultReadback,
-      `Pre-fix bug indicator: sp_result was NOT cleaned up by wakeSequence ` +
-      `(read back: ${JSON.stringify(resultReadback)}). T44's fix must remove ` +
-      `orphan storage-bus keys whose commandId is not in the live pending set.`,
-    ).toBeNull();
+      hasResultCleanup,
+      `Cleanup event must report sp_result removal with commandId=${staleResultId}. ` +
+      `Captured events: ${JSON.stringify(cleanupEvents)}`,
+    ).toBe(true);
     expect(
-      cmdReadback,
-      `Pre-fix bug indicator: sp_cmd was NOT cleaned up by wakeSequence ` +
-      `(read back: ${JSON.stringify(cmdReadback)}). Stale sp_cmd is the ` +
-      `phantom-execution risk — content scripts on tab load read it via ` +
-      `content-isolated.js:96-100.`,
-    ).toBeNull();
+      hasCmdCleanup,
+      `Cleanup event must report sp_cmd removal with commandId=${staleCmdId}. ` +
+      `Captured events: ${JSON.stringify(cleanupEvents)}`,
+    ).toBe(true);
   }, 45000);
 });
