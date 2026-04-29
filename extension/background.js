@@ -595,6 +595,24 @@ if (!listenersAttached) {
       handleCommand(message, sender).then(sendResponse);
       return true;
     }
+    // T21: SPA URL change relayed from content-isolated.js. Top-frame only —
+    // a child frame's pushState would otherwise clobber the top-level tab URL.
+    if (message?.type === 'sp_url_changed' && typeof message.url === 'string') {
+      if (sender?.frameId !== 0) {
+        sendResponse({ ok: true, ignored: 'non_top_frame' });
+        return false;
+      }
+      const tabId = sender?.tab?.id;
+      if (tabId == null) {
+        sendResponse({ ok: false, error: { message: 'no sender.tab.id' } });
+        return false;
+      }
+      const existing = tabCacheMap.get(tabId) || { url: '', title: '' };
+      tabCacheMap.set(tabId, { url: message.url, title: existing.title });
+      saveTabCache().catch(() => {});
+      sendResponse({ ok: true });
+      return false;
+    }
     return false;
   });
 }

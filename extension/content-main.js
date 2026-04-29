@@ -232,6 +232,50 @@
     window.__safariPilotExecutedCommands = new Map(); // commandId → {result, timestamp}
   }
 
+  // ─── T21: SPA URL refresh (history.pushState / replaceState / popstate) ───
+  // Safari does NOT reliably fire `tabs.onUpdated` for SPA URL changes via
+  // the History API. The extension's `tabCacheMap` therefore goes stale on
+  // any client-side route change, causing `findTargetTab` cache-only lookups
+  // (alarm-wake context) to miss — surfacing as TAB_NOT_FOUND post-T27.
+  //
+  // This wrapper runs in MAIN world (the page's `history` object lives here
+  // and ISOLATED-world content scripts can't intercept it directly). Each
+  // hook fires a `SAFARI_PILOT_URL_CHANGE` postMessage to the same window.
+  // The ISOLATED-world relay (content-isolated.js) forwards to background
+  // via `runtime.sendMessage({type:'sp_url_changed', url})` and background
+  // updates `tabCacheMap`.
+  //
+  // Idempotency: stamp `__sp_t21_wrapped = true` on the wrapped function so
+  // Safari's bf-cache restore (which re-runs content scripts) doesn't
+  // double-wrap. SPA libraries that wrap pushState themselves (Next.js,
+  // React Router) sit either above or below us; either way, our wrapper
+  // fires the event when invoked. We do NOT re-wrap once stamped.
+  if (!history.pushState.__sp_t21_wrapped) {
+    const _emit = () => {
+      try {
+        window.postMessage(
+          { type: 'SAFARI_PILOT_URL_CHANGE', url: location.href },
+          window.location.origin
+        );
+      } catch { /* ignore — postMessage should never throw, but guard anyway */ }
+    };
+    const _wrap = (orig) => {
+      const wrapped = function(...args) {
+        const r = orig.apply(this, args);
+        _emit();
+        return r;
+      };
+      wrapped.__sp_t21_wrapped = true;
+      return wrapped;
+    };
+    history.pushState = _wrap(history.pushState);
+    history.replaceState = _wrap(history.replaceState);
+    // popstate fires on history.back/forward and on user back/forward
+    // navigation. The URL is already updated by the time this listener
+    // fires (per HTML spec).
+    window.addEventListener('popstate', _emit);
+  }
+
   // ─── Message Channel from ISOLATED World ──────────────────────────────────
   // The ISOLATED world relay forwards background script commands here via
   // window.postMessage. We respond with results on the same channel.
