@@ -89,18 +89,7 @@ async function httpPost(path, body) {
 }
 
 async function httpPoll() {
-  /*@DEBUG_HARNESS_BEGIN@*/
-  // Test-only: precise injection of a single transient fetch failure on
-  // the NEXT /poll iteration, used by T22's e2e to verify the pollLoop's
-  // retry ladder without involving daemon kickstart (which destabilizes
-  // both the daemon and MCP-side TCP connection). Read-once-and-clear so
-  // a single trigger drives exactly one retry cycle.
-  if (globalThis.__sp_test_inject_next_poll_failure) {
-    globalThis.__sp_test_inject_next_poll_failure = false;
-    const err = new TypeError('__sp_test_injected_failure');
-    throw err;
-  }
-  /*@DEBUG_HARNESS_END@*/
+  
   const res = await fetch(`${HTTP_URL}/poll`, {
     signal: AbortSignal.timeout(10000),
   });
@@ -153,12 +142,7 @@ async function findTargetTab(tabUrl) {
     // Production never sets this key; the DEBUG_HARNESS markers strip the
     // read from release builds entirely (see scripts/build-extension.sh).
     let skipTabsQuery = false;
-    /*@DEBUG_HARNESS_BEGIN@*/
-    try {
-      const flag = await browser.storage.local.get('__sp_test_skip_tabs_query__');
-      skipTabsQuery = !!flag['__sp_test_skip_tabs_query__'];
-    } catch { /* ignore */ }
-    /*@DEBUG_HARNESS_END@*/
+    
 
     if (!skipTabsQuery) {
       // Primary: browser.tabs.query (works when event page is fully active)
@@ -640,106 +624,7 @@ if (!listenersAttached) {
   });
 }
 
-/*@DEBUG_HARNESS_BEGIN@*/
-// Test-only: allows e2e to simulate event-page unload on demand.
-// Stripped from release builds by scripts/build-extension.sh.
-browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message?.type === '__safari_pilot_test_force_unload__') {
-    // browser.runtime.reload() reinstalls the extension — simulates a fresh cold-wake.
-    sendResponse({ ok: true });
-    setTimeout(() => browser.runtime.reload(), 50);
-    return false;
-  }
-  return false;
-});
 
-// Test-only: dispatcher for the `__SP_TEST_HARNESS__:` bridge in
-// content-isolated.js. Executes state mutations that aren't reachable from
-// the isolated world (tabCacheMap is module-local to background.js).
-// Stripped from release builds.
-browser.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  if (message?.type !== '__sp_test__') return false;
-  const op = message.op || {};
-  (async () => {
-    try {
-      if (op.action === 'setStorageFlag') {
-        // Note: setting `sp_cmd` / `sp_result` directly via this action
-        // will be wiped by `executeCommand`'s post-success cleanup before
-        // any subsequent test observation can land. For T44's poison
-        // verification, use `forceUnloadWithPoison` instead — it plants
-        // the poison atomically after the bridge call's cleanup completes.
-        await browser.storage.local.set({ [op.key]: op.value });
-        sendResponse({ ok: true, value: { set: op.key } });
-      } else if (op.action === 'removeStorageFlag') {
-        await browser.storage.local.remove(op.key);
-        sendResponse({ ok: true, value: { removed: op.key } });
-      } else if (op.action === 'clearTabCache') {
-        tabCacheMap.clear();
-        await browser.storage.local.remove(STORAGE_KEY_TAB_CACHE);
-        sendResponse({ ok: true, value: { cleared: 'tabCacheMap+storage' } });
-      } else if (op.action === 'getStorage') {
-        const stored = await browser.storage.local.get(op.key);
-        sendResponse({ ok: true, value: { key: op.key, value: stored[op.key] ?? null } });
-      } else if (op.action === 'forceUnload') {
-        // Acknowledge before reloading — the response must flush before the
-        // runtime tears down. Same pattern as the existing
-        // __safari_pilot_test_force_unload__ handler.
-        sendResponse({ ok: true, value: 'unload_requested' });
-        setTimeout(() => browser.runtime.reload(), 50);
-        return;
-      } else if (op.action === 'injectNextPollFailure') {
-        // Arms a one-shot fetch-failure injection in the next httpPoll
-        // iteration. Used by T22's e2e to verify pollLoop's retry ladder
-        // without daemon kickstart (which has shown to deadlock the
-        // daemon process under concurrent test load — separate
-        // production bug, tracked elsewhere).
-        globalThis.__sp_test_inject_next_poll_failure = true;
-        sendResponse({ ok: true, value: { armed: true } });
-      } else if (op.action === 'forceUnloadWithPoison') {
-        // Atomic plant-and-unload for T44's e2e verification. The bridge
-        // architecture itself uses `sp_cmd`/`sp_result`, and
-        // `executeCommand` cleanup wipes both post-success — so a separate
-        // setStorageFlag → forceUnload sequence would have its poison
-        // wiped before reload. This single action:
-        //   T+0   : ack + return (bridge response flushes through normal path)
-        //   T+~50 : bridge content-isolated writes its own sp_result, bg's
-        //           resultListener resolves, `executeCommand` cleanup wipes
-        //           sp_cmd/sp_result. State is null.
-        //   T+250 : timer fires — plants the poison into sp_cmd/sp_result.
-        //   T+350 : reload. wakeSequence → cleanupStaleStorageBus runs on
-        //           the poison; production fix (T44) removes it; pre-fix
-        //           the poison persists.
-        // Test waits ~5 s for reload + reconcile, then reads back via
-        // `getStorage`. Discriminator: pre-fix sees the poison, post-fix
-        // sees null.
-        // Note: response wrapped in an object — handleEvaluate's harness
-        // path JSON.parses the result, and a bare string 'foo' would
-        // fail to parse. Object survives JSON.stringify→parse roundtrip.
-        sendResponse({ ok: true, value: { scheduled: true, action: 'poison_and_unload' } });
-        setTimeout(async () => {
-          try {
-            const writes = {};
-            if (op.poison?.sp_result) writes.sp_result = op.poison.sp_result;
-            if (op.poison?.sp_cmd) writes.sp_cmd = op.poison.sp_cmd;
-            if (Object.keys(writes).length > 0) {
-              await browser.storage.local.set(writes);
-            }
-          } catch (e) {
-            console.warn('[safari-pilot test-harness] poison plant failed:', e?.message);
-          }
-          setTimeout(() => browser.runtime.reload(), 100);
-        }, 250);
-        return;
-      } else {
-        sendResponse({ ok: false, error: { name: 'TEST_HARNESS_UNKNOWN_ACTION', message: `unknown action: ${op.action}` } });
-      }
-    } catch (e) {
-      sendResponse({ ok: false, error: { name: 'TEST_HARNESS_ERROR', message: e?.message ?? String(e) } });
-    }
-  })();
-  return true; // async sendResponse
-});
-/*@DEBUG_HARNESS_END@*/
 
 // First-run initialization for this event-page load cycle.
 initialize('script_load');
