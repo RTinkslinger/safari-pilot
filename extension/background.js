@@ -456,11 +456,31 @@ async function connectAndReconcile() {
   }
 }
 
-// ─── Poll loop ──────────────────────────────────────────────────────────────
+// ─── Poll loop (T22: transient-retry ladder) ────────────────────────────────
+// On any non-Abort/non-Timeout error (network blip, daemon restart, dropped
+// TCP), retry with exponential backoff + jitter rather than yielding to the
+// keepalive alarm immediately. After MAX_ATTEMPTS, yield so the alarm
+// (≤60 s) is the upper-bound recovery time. The success-after-retry path
+// emits `pollloop_recovered` with `attempts > 0` — observable in
+// `~/.safari-pilot/daemon-trace.ndjson`. Do NOT add this trace emission to
+// the alarm-rearm path: T22's e2e test discriminates the retry-vs-alarm
+// recovery paths specifically by asserting on `pollloop_recovered` with
+// `attempts > 0`. An alarm-rearm always restarts pollLoop with attempts=0.
 async function pollLoop() {
+  // 0 + 250 + 500 + 1000 + 2000 = 3750 ms total wait; with ~1 s daemon cold
+  // start the post-fix recovery comfortably fits inside the test's 10 s
+  // budget. Dropping a tail tier vs. the original 6-tier plan was a
+  // test-reviewer recommendation to preserve budget margin.
+  const BACKOFF_MS = [0, 250, 500, 1000, 2000];
+  const MAX_ATTEMPTS = 5;
+  let attempts = 0;
   while (true) {
     try {
       const data = await httpPoll();
+      if (attempts > 0) {
+        emitTrace('__pollloop__', 'pollloop_recovered', { attempts });
+        attempts = 0;
+      }
       if (data && data.commands) {
         for (const cmd of data.commands) {
           const result = await executeCommand(cmd);
@@ -468,11 +488,24 @@ async function pollLoop() {
         }
       }
     } catch (err) {
-      if (err.name === 'AbortError' || err.name === 'TimeoutError') {
+      // AbortError = clean cancel from another path (e.g. test teardown).
+      if (err.name === 'AbortError') return;
+      // TimeoutError = the per-fetch 10 s timeout fired with no command —
+      // this is the NORMAL idle case (the daemon long-polls up to 5 s).
+      // Pre-T22 this killed the loop, requiring an alarm to re-arm: bug.
+      if (err.name === 'TimeoutError') {
+        attempts = 0;
+        continue;
+      }
+      attempts++;
+      if (attempts > MAX_ATTEMPTS) {
+        emitTrace('__pollloop__', 'pollloop_yield_to_alarm', { attempts, errName: err?.name, errMessage: err?.message });
+        console.warn('[safari-pilot] pollLoop yielding to alarm after retries:', err?.name, err?.message);
         return;
       }
-      console.warn('[safari-pilot] pollLoop error:', err.name, err.message);
-      return;
+      const baseMs = BACKOFF_MS[Math.min(attempts, BACKOFF_MS.length - 1)];
+      const jitter = Math.random() * 250;
+      await new Promise((r) => setTimeout(r, baseMs + jitter));
     }
   }
 }
