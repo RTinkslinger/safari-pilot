@@ -403,6 +403,41 @@ async function gcPendingStorage() {
   if (changed) await writePending(pending);
 }
 
+// ─── Storage-bus cleanup (T44) ──────────────────────────────────────────────
+// Safari may suspend the event page between writing `sp_cmd` and removing it
+// at executeCommand:285 (post-success cleanup). On wake, that orphan key is
+// invisible to the previous session's resultListener (which is dead) and can
+// be re-read by content-isolated.js:96-100 on next tab load — phantom
+// execution. Same risk for `sp_result` left behind by a session that died
+// before delivering its result. Run this after gcPendingStorage so the
+// "live" predicate reflects the post-GC pending map, and before
+// connectAndReconcile/pollLoop so the daemon's first dispatched command
+// can never collide with a leftover key.
+async function cleanupStaleStorageBus() {
+  try {
+    const stored = await browser.storage.local.get(['sp_cmd', 'sp_result']);
+    const pending = await readPending();
+    const liveIds = new Set();
+    for (const [commandId, entry] of Object.entries(pending)) {
+      if (entry && entry.status === 'executing') {
+        liveIds.add(commandId);
+      }
+    }
+    const toRemove = [];
+    if (stored.sp_cmd && (!stored.sp_cmd.commandId || !liveIds.has(stored.sp_cmd.commandId))) {
+      toRemove.push('sp_cmd');
+    }
+    if (stored.sp_result && (!stored.sp_result.commandId || !liveIds.has(stored.sp_result.commandId))) {
+      toRemove.push('sp_result');
+    }
+    if (toRemove.length > 0) {
+      await browser.storage.local.remove(toRemove);
+    }
+  } catch (e) {
+    console.warn('[safari-pilot] cleanupStaleStorageBus error:', e?.message);
+  }
+}
+
 // ─── Connect + Reconcile ────────────────────────────────────────────────────
 async function connectAndReconcile() {
   const pending = await readPending();
@@ -447,6 +482,7 @@ async function wakeSequence(reason) {
   try {
     await loadTabCache();
     await gcPendingStorage();
+    await cleanupStaleStorageBus();
     await connectAndReconcile();
     await pollLoop();
   } catch (e) {
@@ -562,6 +598,16 @@ browser.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         tabCacheMap.clear();
         await browser.storage.local.remove(STORAGE_KEY_TAB_CACHE);
         sendResponse({ ok: true, value: { cleared: 'tabCacheMap+storage' } });
+      } else if (op.action === 'getStorage') {
+        const stored = await browser.storage.local.get(op.key);
+        sendResponse({ ok: true, value: { key: op.key, value: stored[op.key] ?? null } });
+      } else if (op.action === 'forceUnload') {
+        // Acknowledge before reloading — the response must flush before the
+        // runtime tears down. Same pattern as the existing
+        // __safari_pilot_test_force_unload__ handler.
+        sendResponse({ ok: true, value: 'unload_requested' });
+        setTimeout(() => browser.runtime.reload(), 50);
+        return;
       } else {
         sendResponse({ ok: false, error: { name: 'TEST_HARNESS_UNKNOWN_ACTION', message: `unknown action: ${op.action}` } });
       }
