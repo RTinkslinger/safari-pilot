@@ -75,6 +75,14 @@ export class AppleScriptEngine extends BaseEngine {
 
   /**
    * Build an AppleScript that navigates to a URL (opens new document if needed).
+   *
+   * The script ends with `return "<url>"` so osascript's stdout is non-empty.
+   * `AppleScriptEngine.execute` pipes raw stdout through `parseJsResult`, which
+   * treats `raw === ''` as `CSP_BLOCKED` (T13 — added for `do JavaScript` paths
+   * where empty output really does mean a CSP block). A pure-OSA setter
+   * (`set URL of tab N to "..."`) returns nothing, producing empty stdout
+   * misclassified as CSP. Returning the target URL gives parseJsResult a
+   * non-empty bare string → its fallback `{ ok: true, value: raw }` fires.
    */
   public buildNavigateScript(url: string, windowId?: number, tabIndex?: number): string {
     const escapedUrl = url.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
@@ -85,6 +93,7 @@ export class AppleScriptEngine extends BaseEngine {
       return `tell application "Safari"
   tell window id ${windowId}
     set URL of tab ${tabIndex} to "${escapedUrl}"
+    return "${escapedUrl}"
   end tell
 end tell`;
     }
@@ -94,6 +103,7 @@ end tell`;
   else
     set URL of current tab of front window to "${escapedUrl}"
   end if
+  return "${escapedUrl}"
 end tell`;
   }
 
