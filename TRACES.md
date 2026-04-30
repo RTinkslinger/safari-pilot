@@ -14,6 +14,26 @@
 
 ## Current Work
 
+### Iteration 37 - 2026-04-30
+**What:** Resumed from prior CHECKPOINT (extension batch); T22 e2e GREEN; production v0.1.17 ship — discovered+fixed silent build-script bug (DEBUG_HARNESS strip was no-op'ing on a non-existent Resources/ path); T60/T63 filed; T61 root-caused + fixed surgically; T62 + ROADMAP-#3 collapsed as cascades.
+**Changes:**
+- `scripts/build-extension.sh` (`251e24f`) — strip step targeted `$XCODE_PROJECT_DIR/Safari Pilot Extension/Resources` which doesn't exist; xcodeproj refs source via `../../../extension/*.js`. The `[[ -f ]] || continue` guard silently no-op'd every prior release build. Fix: strip-in-place on `$EXT_DIR` with mktemp backup + EXIT trap restoring source after archive.
+- `package.json` (`251e24f`) — 0.1.16 → 0.1.17 (first build where strip actually runs)
+- `bin/Safari Pilot.app` + `bin/Safari Pilot.zip` (`366e5e7`) — production rebuild signed + notarized + stapled. DEBUG_HARNESS markers / bridge dispatcher absent in deployed appex (verified). app-sandbox + network.client entitlements present.
+- `docs/TRACKER.md` (`53ecb80`, `8434624`, `240f00f`) — filed T60 (daemon Hummingbird HTTP deadlock under extension-reload-during-poll), T61 (safari_navigate result.url undefined), T62 (post-navigate ownership), T63 (engine-telemetry mismatch); T61 + T62 + ROADMAP-#3 → Resolved by `cee676b`.
+- `src/engines/applescript.ts` (`cee676b`) — `buildNavigateScript` now ends with `return "${escapedUrl}"` so osascript stdout is non-empty; doc-comment explains why.
+- Merge commits `ccc1724` (extension batch) + `35445c4` (T61 fix).
+**Context:**
+- **Build-script bug was latent until T55 added DEBUG_HARNESS markers.** Prior production builds shipped clean only because there was nothing to strip. Once markers were added in the extension batch, every "production" rebuild silently bundled them. v0.1.17 is the first build where `grep -c DEBUG_HARNESS bin/Safari Pilot.app/.../*.js` returns 0 in deployed appex.
+- **T61 root cause:** `AppleScriptEngine.execute` pipes raw osascript stdout through `parseJsResult`. T13 (`0636182`) added `raw === ''` → `CSP_BLOCKED` to detect CSP-blocked `do JavaScript` calls. The heuristic was applied to *all* execute() calls, including pure-OSA setters like `set URL of tab N to "..."` which legitimately return empty stdout. Handler then took the `!navResult.ok` branch and returned `errorResponse {error}` shape, not `{url, title}`.
+- **Cascade collapse:** server.ts:790-802 (T2 fix — post-navigate ownership refresh) reads `parsed.url` from the response. With the error-shape response, `parsed.url=undefined`, refresh no-ops, next call hits `TabUrlNotRecognizedError`. That's T62. ROADMAP-#3 (back/forward stale URL) was the same downstream cascade. All 3 items collapsed to one fix. phase1-core-navigation: 4 failed | 2 passed → 6/6 GREEN.
+- **Why `safari_new_tab` worked through the same code path:** `buildNewTabScript` ends with `return (URL of _tab) & "|||" & ${windowId} & "|||" & _idx` — non-empty stdout takes the `parseJsResult` bare-string fallback. Same fix pattern applied to `buildNavigateScript`.
+- **Surgical scope rationale (advisor-confirmed):** could have fixed `parseJsResult` itself (Option A — architecturally cleaner, the empty-raw heuristic only makes sense for `do JavaScript` paths) but that touches shared code with 3 pinning tests and wide blast radius. Chose Option B (1 file, 2 lines) per CLAUDE.md surgical-changes principle. The architectural cleanup is its own ticket if needed.
+- **T22 e2e finally verified GREEN** at session start (daemon Hummingbird recovered between sessions — bug filed as T60 with documented workaround: full Safari quit + relaunch).
+- **All-test sanity at session end:** 138/138 unit + 19/19 e2e (initialization + phase1 + phase2 + evaluate-async). Production stack healthy.
+- **Backlog count:** ROADMAP backlog 5 → 3 (one item resolved, one filed). Audit P3 unchanged at 17.
+---
+
 ### Iteration 36 - 2026-04-26
 **What:** T59 full implementation — ScreenshotPolicy wired end-to-end, all handler-wiring tests GREEN in full suite, e2e litmus added, ARCHITECTURE.md updated.
 **Changes:**
