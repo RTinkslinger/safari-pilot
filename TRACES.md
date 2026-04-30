@@ -14,6 +14,22 @@
 
 ## Current Work
 
+### Iteration 39 - 2026-04-30
+**What:** T49 + T50 + T51 batched fix — three small schema/handler honesty bugs cleaned up.
+**Changes:**
+- `src/tools/interaction.ts` — T49: removed `delay` property from `safari_type` schema (handler never paced — sync for-loop). T50: added validation throw at `handleScroll` entry rejecting multi-mode conflicts (`toTop`, `toBottom`, `toElement` are mutually exclusive — pass only one).
+- `src/tools/navigation.ts` — T51: removed `bypassCache` property from `safari_reload` schema; updated `handleReload` to emit spec-compliant `location.reload()` only (was emitting non-standard `location.reload(true)` when `bypassCache:true`).
+- `test/unit/tools/schema-cleanup-t49-t50-t51.test.ts` — 10 new unit tests: schema-removal + handler-parity (proves handlers don't read dropped params after schema cleanup) + 4 multi-mode mutex throw cases (toTop+toBottom, toTop+toElement, toBottom+toElement, all-three) + 2 single-mode regression guards asserting `calls.toEqual(['executeJsInTab'])`.
+**Context:**
+- **All three bugs were "lying parameters"** — schema declared functionality the handler didn't deliver. Pattern: schema-handler drift accumulates over time; LLM consumers (and humans) read the schema as ground truth and silently get nothing.
+- **Verification before fix-shape decision:** grepped repo for callers — `delay` zero callers, `bypassCache` zero callers. Removal is principled (no breakage) regardless of underlying WebKit behavior.
+- **T51 specifically:** `location.reload(true)` boolean argument was never in the WHATWG spec (MDN flags as non-standard). WebKit's actual handling is unverified, but doesn't matter — the param has zero callers, so removal is safe regardless.
+- **Reviewer-driven test strengthening:** First reviewer pass returned REVISE on schema-only oracles ("could pass with handler drift"). Added handler-parity tests: T49 calls handleType with `delay:0` and `delay:9999`, asserts emitted JS is byte-identical AND contains no pause construct. T51 calls handleReload with `bypassCache:true`, asserts emitted JS is `location.reload()` and not `location.reload(true)`. Second pass PASS.
+- **Test infrastructure:** `makeRecordingEngine` factory captures every `execute()` and `executeJsInTab()` call name + the actual JS string emitted, so handler-parity tests can read what the handler tried to run rather than just observing return value. Pass-through `buildTabScript` so `NavigationTools.executeJsInTab`'s private wrapper preserves the JS verbatim.
+- **Verification:** 166/166 unit GREEN (was 156 + 10 new). No regressions.
+- **Backlog:** 17 P3 → 14 P3 (T49 + T50 + T51 RESOLVED). 21 audit items open → 18.
+---
+
 ### Iteration 38 - 2026-04-30
 **What:** T63 RESOLVED — engine-telemetry mismatch fixed via new `requiresApplescript` capability flag on `ToolRequirements`. Honoured by `selectEngine()` (after `requiresExtension` priority check, so correctness still wins over telemetry honesty). 7 NavigationTools + 4 CompoundTools + `safari_health_check` tagged.
 **Changes:**

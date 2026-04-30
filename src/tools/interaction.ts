@@ -256,7 +256,6 @@ export class InteractionTools {
             selector: { type: 'string', description: 'CSS selector for the target element' },
             ...elementTargetingParams,
             content: { type: 'string', description: 'Text to type' },
-            delay: { type: 'number', description: 'Delay between keystrokes in ms', default: 50 },
           },
           required: ['tabUrl', 'content'],
         },
@@ -731,6 +730,17 @@ export class InteractionTools {
     const toTop = params['toTop'] === true;
     const toBottom = params['toBottom'] === true;
     const toElement = params['toElement'] as string | undefined;
+
+    // T50 — `toTop`, `toBottom`, and `toElement` are mutually exclusive scroll
+    // modes. Pre-T50 the handler emitted each branch as a separate JS
+    // statement, so a multi-mode call ran them serially with last-write-wins
+    // and no caller-visible warning.
+    const modeCount = (toTop ? 1 : 0) + (toBottom ? 1 : 0) + (toElement ? 1 : 0);
+    if (modeCount > 1) {
+      throw new Error(
+        '`toTop`, `toBottom`, and `toElement` are mutually exclusive — pass only one.',
+      );
+    }
 
     // scroll optionally targets an element (if omitted, scrolls page)
     const hasTarget = params['ref'] || params['selector'] || hasLocatorParams(params);

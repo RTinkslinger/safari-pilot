@@ -73,16 +73,11 @@ export class NavigationTools {
       },
       {
         name: 'safari_reload',
-        description: 'Reload the page in the specified tab, optionally bypassing the cache.',
+        description: 'Reload the page in the specified tab.',
         inputSchema: {
           type: 'object',
           properties: {
             tabUrl: { type: 'string', description: 'Current URL of the tab to reload' },
-            bypassCache: {
-              type: 'boolean',
-              description: 'Force a hard reload bypassing browser cache',
-              default: false,
-            },
           },
           required: ['tabUrl'],
         },
@@ -244,10 +239,12 @@ export class NavigationTools {
   private async handleReload(params: Record<string, unknown>): Promise<ToolResponse> {
     const start = Date.now();
     const tabUrl = params['tabUrl'] as string;
-    const bypassCache = params['bypassCache'] === true;
 
-    const reloadJs = bypassCache ? 'location.reload(true)' : 'location.reload()';
-    await this.executeJsInTab(tabUrl, reloadJs);
+    // T51 — `bypassCache: true` historically emitted `location.reload(true)`,
+    // but the boolean argument is non-standard (never in the WHATWG spec)
+    // and Safari/WebKit's behavior is unverified. The param had zero
+    // callers in the repo. Spec-compliant `location.reload()` only.
+    await this.executeJsInTab(tabUrl, 'location.reload()');
     await sleep(WAIT_NAVIGATE_MS);
 
     const pageInfo = await this.executeJsInTab(tabUrl, PAGE_INFO_JS);
