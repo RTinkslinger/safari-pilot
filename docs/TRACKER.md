@@ -58,9 +58,9 @@ Build pipeline: edit → `bash scripts/build-extension.sh` → verify entitlemen
 | **T46** | `daemon/Sources/SafariPilotdCore/PdfGenerator.swift` | possible `CheckedContinuation` leak on error path |
 | **T47** | `.github/workflows/release.yml` | verify extension entitlements + code-sign before uploading to GitHub Release |
 | **T48** | `src/server.ts` | refuse `safari_navigate` (and similar) targeting the session dashboard tab |
-| **T49** | `src/tools/interaction.ts:259+` | `safari_type` `delay` param declared in schema but ignored in handler |
-| **T50** | `src/tools/interaction.ts:745+` | `safari_scroll` conflicting modes — schema lets caller pass both `to:'top'` and `y:100`; both branches execute |
-| **T51** | `src/tools/navigation.ts:249` | `safari_reload` `bypassCache` uses deprecated `location.reload(true)` syntax |
+| ~~T49~~ | RESOLVED 2026-04-30 | See "Resolved this sprint" below. |
+| ~~T50~~ | RESOLVED 2026-04-30 | See "Resolved this sprint" below. |
+| ~~T51~~ | RESOLVED 2026-04-30 | See "Resolved this sprint" below. |
 | **T52** | `scripts/postinstall.sh` + `update-daemon.sh` | mix of legacy `launchctl unload/load` and modern `launchctl kickstart`/`bootstrap` — pick one |
 | **T53** | `scripts/postinstall.sh` | download/extraction failures swallowed by `\|\| true` guards |
 | **T54** | `scripts/update-daemon.sh` | `pkill -f` should be `pkill -x` to avoid matching unrelated commands |
@@ -100,6 +100,7 @@ Lookup-only index; full fix-context paragraphs are in `docs/AUDIT-TASKS.md` / `d
 |---|---|---|---|
 | T61 + T62 + ROADMAP-#3 | `cee676b` | (this commit) | `buildNavigateScript` now `return "<url>"` so osascript stdout is non-empty — empty stdout from pure-OSA setter was misclassified as CSP_BLOCKED by `parseJsResult`. Single root cause; T62 (post-navigate ownership) and ROADMAP-#3 (back/forward stale URL) both resolved as cascades. phase1-core-navigation: 4 failed → 6/6 GREEN. |
 | T63 | (this branch) | (this commit) | New `requiresApplescript` capability flag on `ToolRequirements`. `selectEngine()` honours it and short-circuits to `'applescript'` AFTER the `requiresExtension` check (correctness > telemetry). Tagged 7 NavigationTools, 4 CompoundTools, and `safari_health_check` — all the tools whose handlers run raw AppleScript independent of engine availability (constructed with `AppleScriptEngine` directly, bypassing `EngineProxy`). Result: `__engine` metadata stamped at server.ts:982,997 now reflects what actually ran. Telemetry-only fix; no correctness impact. New tests: 18 unit (`test/unit/engine-selector/applescript-only.test.ts`) + 5 e2e (`test/e2e/t63-engine-telemetry.test.ts`) covering the primary regression case + capability-collision priority + deferred-ownership branch. |
+| T49 + T50 + T51 | (this branch) | (this commit) | Three small honesty fixes batched. **T49**: `safari_type` schema declared `delay: { default: 50 }` but handler had no per-keystroke pacing (sync for-loop). Zero callers pass it. Dropped from schema. **T50**: `safari_scroll` accepted `toTop`, `toBottom`, `toElement` independently — handler emitted each as a separate JS statement, so multi-mode silently ran all branches with last-write-wins. Added validation throw at handler entry: `\`toTop\`, \`toBottom\`, and \`toElement\` are mutually exclusive — pass only one`. **T51**: `safari_reload` schema declared `bypassCache` and handler emitted non-standard `location.reload(true)` (boolean arg never in WHATWG spec; zero callers). Dropped from schema; handler emits spec-compliant `location.reload()` only. New tests: 10 unit (`test/unit/tools/schema-cleanup-t49-t50-t51.test.ts`) — schema-removal + handler-parity (proves handlers don't read dropped params) + mutex multi-mode coverage + single-mode regression guards. |
 | T13 | `0636182` | `dede5fb` | parseJsResult bare-empty CSP — collapsed triple-nested conditional |
 | T15 | `1e56bba` | `f7ed832` | safari_new_tab.idempotent flipped true→false |
 | T16 | `1809b1a` | `9ad595a` | safari_hover description: dropped false "CSS :hover" claim |
@@ -139,7 +140,7 @@ Pre-2026-04-25 sprint resolved entries (SD-01..SD-28, T13..T25 originals): see a
 
 ## Tally
 
-- **21** audit items (T-numbered) open — 0 P0, 4 in extension batch, 0 P2 quality debt (all shipped), 17 P3 missing-feature/cosmetic (T55 → RESOLVED-as-documented 2026-04-29; T55a (frame-aware storage bus) added in its place — net P3 count unchanged).
+- **18** audit items (T-numbered) open — 0 P0, 4 in extension batch, 0 P2 quality debt (all shipped), 14 P3 missing-feature/cosmetic (T49/T50/T51 RESOLVED 2026-04-30 via batched schema-cleanup commit; T55 → RESOLVED-as-documented 2026-04-29 with T55a added in its place).
 - **4** SD open — SD-33a/b/c/d (HealthStore wiring sub-items, split from SD-33 parent 2026-04-26). SD-30 and SD-33 parent resolved.
 - **2** ROADMAP backlog items — NDJSON line-split flake, T60 (daemon Hummingbird HTTP deadlock). T61/T62/ROADMAP-#3 RESOLVED 2026-04-30 by `cee676b`; T63 RESOLVED 2026-04-30 via new `requiresApplescript` capability flag honoured by `selectEngine()`.
 
