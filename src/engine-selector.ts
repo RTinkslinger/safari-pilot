@@ -88,6 +88,13 @@ export function selectEngine(
     );
   }
 
+  // T63 — tools that always use raw AppleScript (NavigationTools, CompoundTools,
+  // safari_health_check) declare `requiresApplescript` so the engine telemetry
+  // matches reality. Checked AFTER `requiresExtension` so a misconfigured tool
+  // that sets both flags still routes to extension when extension capability is
+  // genuinely required (correctness wins over telemetry honesty).
+  if (tool.requiresApplescript) return 'applescript';
+
   if (extensionAvailable) return 'extension';
   if (available.daemon) return 'daemon';
   return 'applescript';

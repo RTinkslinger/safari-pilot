@@ -301,7 +301,7 @@ export class SafariPilotServer {
           },
         },
       },
-      requirements: { idempotent: true },
+      requirements: { idempotent: true, requiresApplescript: true },
       handler: async (params) => this.handleHealthCheck(params),
     });
 
