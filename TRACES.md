@@ -14,6 +14,25 @@
 
 ## Current Work
 
+### Iteration 38 - 2026-04-30
+**What:** T63 RESOLVED — engine-telemetry mismatch fixed via new `requiresApplescript` capability flag on `ToolRequirements`. Honoured by `selectEngine()` (after `requiresExtension` priority check, so correctness still wins over telemetry honesty). 7 NavigationTools + 4 CompoundTools + `safari_health_check` tagged.
+**Changes:**
+- `src/types.ts` — added `requiresApplescript?: boolean` to `ToolRequirements` with doc explaining the honesty-only purpose and the correctness-priority caveat.
+- `src/engine-selector.ts` — `selectEngine` short-circuits to `'applescript'` when flag set, AFTER the `requiresExtension` throw branch.
+- `src/tools/navigation.ts`, `src/tools/compound.ts` — tagged 11 tool definitions with the flag.
+- `src/server.ts` — tagged inline `safari_health_check` registration.
+- `test/unit/engine-selector/applescript-only.test.ts` — 18 tests: selector logic (5 cases including triangulation + capability-collision priority) + `it.each` invariant over `getDefinitions()` for nav (7) + compound (4) + tool-set regression guard.
+- `test/e2e/t63-engine-telemetry.test.ts` — 5 tests through real MCP/JSON-RPC stack: `safari_new_tab`, `safari_navigate`, `safari_list_tabs`, `safari_health_check`, `safari_navigate_back` (deferred-ownership branch). Each asserts BOTH `payload.__engine` (server.ts:997 stamp) AND `meta.engine` (server.ts:982 stamp) === `'applescript'`.
+- `docs/TRACKER.md` — T63 moved to Resolved this sprint; backlog count 3 → 2.
+**Context:**
+- **Root cause:** `NavigationTools` and `CompoundTools` are constructed with raw `AppleScriptEngine` (server.ts:316, 329) rather than `EngineProxy`, because their handlers call AppleScript-specific methods (`buildNavigateScript`, `buildNewTabScript`) absent from `IEngine`. Yet `selectedEngineName` (server.ts:600) was running the normal capability-match path returning `'extension'`, then stamping it into both `result.metadata.engine` (server.ts:982) and embedded JSON `__engine` (server.ts:997). Telemetry lied; bug surfaced during T61 trace investigation when `tool-calls.jsonl` showed `__engine: "extension"` for a `safari_navigate` that physically cannot route through extension.
+- **Fix-shape decision (advisor-checked):** Two paths considered. (A) capability flag `requiresApplescript` on `ToolRequirements`, declared per-tool; tool module owns the truth. (B) central Set in server.ts of "always-applescript" tool names. Chose A — the bug exists *because* state was split between definition (in tool module) and wiring (in server.ts), and A collapses that split. B would re-create the same forgetting-to-update-the-Set hazard.
+- **Reviewer-driven test improvements:** First reviewer pass returned REVISE — unit suite couldn't prove the metadata stamping in server.ts is consistent with selector output (a fix that updated the selector but broke the stamping site would still pass). Added e2e suite asserting the stamps directly through the real MCP protocol. Second pass PASS with one non-gating MAJOR (deferred-ownership branch); added the `safari_navigate_back` e2e to close it before GREEN.
+- **Correctness > telemetry:** capability-collision test confirms a tool tagged BOTH `requiresApplescript` AND `requiresShadowDom` with extension unavailable still throws `EngineUnavailableError` — `requiresExtension` check runs first.
+- **Verification at session end:** 18/18 new unit + 5/5 new e2e GREEN. Full unit suite 156/156 passing (was 138 pre-T63, +18 new). Pre-existing ROADMAP-flake (NDJSON line-split under parallel runs) reproduces independently of T63 changes — verified by stashing T63 and re-running T27 on clean main: same `Unexpected token ':'` failure. Not a regression.
+- **Backlog:** 3 → 2 ROADMAP items remaining (NDJSON flake, T60 daemon Hummingbird).
+---
+
 ### Iteration 37 - 2026-04-30
 **What:** Resumed from prior CHECKPOINT (extension batch); T22 e2e GREEN; production v0.1.17 ship — discovered+fixed silent build-script bug (DEBUG_HARNESS strip was no-op'ing on a non-existent Resources/ path); T60/T63 filed; T61 root-caused + fixed surgically; T62 + ROADMAP-#3 collapsed as cascades.
 **Changes:**

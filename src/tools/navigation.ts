@@ -45,7 +45,7 @@ export class NavigationTools {
           },
           required: ['url', 'tabUrl'],
         },
-        requirements: { idempotent: false },
+        requirements: { idempotent: false, requiresApplescript: true },
       },
       {
         name: 'safari_navigate_back',
@@ -57,7 +57,7 @@ export class NavigationTools {
           },
           required: ['tabUrl'],
         },
-        requirements: { idempotent: false },
+        requirements: { idempotent: false, requiresApplescript: true },
       },
       {
         name: 'safari_navigate_forward',
@@ -69,7 +69,7 @@ export class NavigationTools {
           },
           required: ['tabUrl'],
         },
-        requirements: { idempotent: false },
+        requirements: { idempotent: false, requiresApplescript: true },
       },
       {
         name: 'safari_reload',
@@ -86,7 +86,7 @@ export class NavigationTools {
           },
           required: ['tabUrl'],
         },
-        requirements: { idempotent: false },
+        requirements: { idempotent: false, requiresApplescript: true },
       },
       {
         name: 'safari_new_tab',
@@ -105,7 +105,7 @@ export class NavigationTools {
           },
           required: [],
         },
-        requirements: { idempotent: false },
+        requirements: { idempotent: false, requiresApplescript: true },
       },
       {
         name: 'safari_close_tab',
@@ -117,7 +117,7 @@ export class NavigationTools {
           },
           required: ['tabUrl'],
         },
-        requirements: { idempotent: false },
+        requirements: { idempotent: false, requiresApplescript: true },
       },
       {
         name: 'safari_list_tabs',
@@ -128,7 +128,7 @@ export class NavigationTools {
           properties: {},
           required: [],
         },
-        requirements: { idempotent: true },
+        requirements: { idempotent: true, requiresApplescript: true },
       },
     ];
   }

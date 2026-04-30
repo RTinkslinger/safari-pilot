@@ -42,6 +42,19 @@ export interface ToolRequirements {
    */
   requiresAsyncJs?: boolean;
   prefersFastLatency?: boolean;
+  /**
+   * T63 — tool's handler always uses raw AppleScript regardless of engine
+   * availability (e.g. NavigationTools constructed with AppleScriptEngine
+   * directly, bypassing EngineProxy). Setting this makes `selectEngine`
+   * return 'applescript', so the result-metadata stamping in
+   * `executeToolWithSecurity` (server.ts:982,997) reflects what actually
+   * ran. Honesty-only: no correctness impact, since these tools were
+   * already running on AppleScript — the bug was telemetry lying.
+   *
+   * Tools that require extension capability (Shadow DOM, CSP bypass, etc.)
+   * MUST NOT set this — extension correctness wins over telemetry honesty.
+   */
+  requiresApplescript?: boolean;
 }
 
 export interface EngineResult {

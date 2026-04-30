@@ -116,7 +116,7 @@ export class CompoundTools {
           },
           required: ['tabUrl', 'steps'],
         },
-        requirements: { idempotent: false },
+        requirements: { idempotent: false, requiresApplescript: true },
       },
       {
         name: 'safari_monitor_page',
@@ -146,7 +146,7 @@ export class CompoundTools {
           },
           required: ['tabUrl', 'watch'],
         },
-        requirements: { idempotent: true },
+        requirements: { idempotent: true, requiresApplescript: true },
       },
       {
         name: 'safari_paginate_scrape',
@@ -174,7 +174,7 @@ export class CompoundTools {
           },
           required: ['tabUrl', 'extractScript', 'nextSelector'],
         },
-        requirements: { idempotent: false },
+        requirements: { idempotent: false, requiresApplescript: true },
       },
       {
         name: 'safari_media_control',
@@ -201,7 +201,7 @@ export class CompoundTools {
           },
           required: ['tabUrl', 'action'],
         },
-        requirements: { idempotent: false },
+        requirements: { idempotent: false, requiresApplescript: true },
       },
     ];
   }

@@ -89,7 +89,7 @@ Build pipeline: edit → `bash scripts/build-extension.sh` → verify entitlemen
 |---|---|---|
 | ROADMAP-flake | NDJSON parser | line-split flake under parallel test runs (long click JS payloads with embedded newlines break the daemon's line-based JSON parser) |
 | **T60** | `daemon/Sources/SafariPilotdCore/ExtensionHTTPServer.swift` (Hummingbird, port 19475) | HTTP server deadlocks under `extension-reload-during-active-connection` — accepts TCP but never sends responses. TCP daemon-engine path (port 19474) unaffected. `launchctl bootout`/`bootstrap` does NOT clear the bug; needs full Safari quit + relaunch (or system reboot). Reproduced 2026-04-29 during T22 e2e attempts via `launchctl kickstart -k`. Pivoted T22 to bridge-injection so the test no longer triggers it, but the underlying daemon bug remains. |
-| **T63** | `src/server.ts` engine telemetry | `selectEngine()` picks "extension" for `safari_navigate`, but `NavigationTools` is constructed with the raw `AppleScriptEngine` (server.ts:316), so navigate never actually routes through the selected engine. Result metadata `__engine: "extension"` is therefore false advertising for nav tools. No correctness impact (handlers do the right thing); telemetry/benchmark tracking is unreliable for nav. Surfaced during T61 investigation 2026-04-30. |
+| ~~T63~~ | RESOLVED 2026-04-30 | See "Resolved this sprint" below. |
 
 ---
 
@@ -99,6 +99,7 @@ Lookup-only index; full fix-context paragraphs are in `docs/AUDIT-TASKS.md` / `d
 | ID | Code | Docs | One-line |
 |---|---|---|---|
 | T61 + T62 + ROADMAP-#3 | `cee676b` | (this commit) | `buildNavigateScript` now `return "<url>"` so osascript stdout is non-empty — empty stdout from pure-OSA setter was misclassified as CSP_BLOCKED by `parseJsResult`. Single root cause; T62 (post-navigate ownership) and ROADMAP-#3 (back/forward stale URL) both resolved as cascades. phase1-core-navigation: 4 failed → 6/6 GREEN. |
+| T63 | (this branch) | (this commit) | New `requiresApplescript` capability flag on `ToolRequirements`. `selectEngine()` honours it and short-circuits to `'applescript'` AFTER the `requiresExtension` check (correctness > telemetry). Tagged 7 NavigationTools, 4 CompoundTools, and `safari_health_check` — all the tools whose handlers run raw AppleScript independent of engine availability (constructed with `AppleScriptEngine` directly, bypassing `EngineProxy`). Result: `__engine` metadata stamped at server.ts:982,997 now reflects what actually ran. Telemetry-only fix; no correctness impact. New tests: 18 unit (`test/unit/engine-selector/applescript-only.test.ts`) + 5 e2e (`test/e2e/t63-engine-telemetry.test.ts`) covering the primary regression case + capability-collision priority + deferred-ownership branch. |
 | T13 | `0636182` | `dede5fb` | parseJsResult bare-empty CSP — collapsed triple-nested conditional |
 | T15 | `1e56bba` | `f7ed832` | safari_new_tab.idempotent flipped true→false |
 | T16 | `1809b1a` | `9ad595a` | safari_hover description: dropped false "CSS :hover" claim |
@@ -140,7 +141,7 @@ Pre-2026-04-25 sprint resolved entries (SD-01..SD-28, T13..T25 originals): see a
 
 - **21** audit items (T-numbered) open — 0 P0, 4 in extension batch, 0 P2 quality debt (all shipped), 17 P3 missing-feature/cosmetic (T55 → RESOLVED-as-documented 2026-04-29; T55a (frame-aware storage bus) added in its place — net P3 count unchanged).
 - **4** SD open — SD-33a/b/c/d (HealthStore wiring sub-items, split from SD-33 parent 2026-04-26). SD-30 and SD-33 parent resolved.
-- **3** ROADMAP backlog items — NDJSON line-split flake, T60 (daemon Hummingbird HTTP deadlock), T63 (nav-tool engine telemetry mismatch). T61/T62/ROADMAP-#3 all RESOLVED 2026-04-30 by `cee676b` (single root cause: empty AppleScript stdout misclassified as CSP_BLOCKED — fix: `buildNavigateScript` returns the URL).
+- **2** ROADMAP backlog items — NDJSON line-split flake, T60 (daemon Hummingbird HTTP deadlock). T61/T62/ROADMAP-#3 RESOLVED 2026-04-30 by `cee676b`; T63 RESOLVED 2026-04-30 via new `requiresApplescript` capability flag honoured by `selectEngine()`.
 
 Total open: **27**. T59 RESOLVED — `ScreenshotPolicy` wired end-to-end; 15 unit tests + 1 e2e litmus; merged to main 2026-04-26. P2 quality debt remains empty. T55 reduced to docs-only 2026-04-29 (replaced in P3 by T55a).
 
