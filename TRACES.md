@@ -14,6 +14,19 @@
 
 ## Current Work
 
+### Iteration 45 - 2026-05-01
+**What:** T52 + T53 batched script modernization — final easy/medium item closes the P3 sprint.
+**Changes:**
+- `scripts/postinstall.sh` — T52: replaced legacy `launchctl unload`/`load` (deprecated since macOS 10.10) with modern `launchctl bootout "gui/$UID/$LABEL"` + `launchctl bootstrap "gui/$UID" "$PLIST"`. Now consistent with line 130's health-check plist registration which already used `bootstrap`. T53: restructured download paths (curl→wget fallback, tar extraction, ditto/unzip extension extraction) to (a) propagate stderr, (b) report per-step success/failure explicitly, (c) keep failed artifacts for inspection instead of silently `rm -f`'ing them. The `\|\| true` is preserved ONLY where the fallback chain genuinely needs it (e.g. `curl || try wget`).
+- `scripts/update-daemon.sh` — T52: same modernization to `bootout`/`bootstrap`/`kickstart`. Locally rehearsed: daemon binary swap + restart works cleanly with the modern launchctl trio (PID rotates, TCP:19474 listening).
+**Context:**
+- **The audit's "pick one" framing was deliberate.** Mixing `unload/load` with `bootout/bootstrap` isn't a stylistic preference — it's a correctness risk. The two systems track domains differently; e.g. `bootstrap` after a previous `load` can produce "service already loaded" errors that confuse upgrade paths. With the modernization done, both scripts use the same domain semantics throughout.
+- **T53's `2>/dev/null` was the worse half of the bug.** The audit called out `\|\| true` but the actual diagnostic vacuum came from `2>/dev/null` swallowing curl's "404 Not Found", wget's "no such host", tar's "Unexpected EOF". Users got "Could not obtain daemon binary — download manually from https://..." and no clue whether the URL itself was the problem, the network was down, or the tarball was corrupt. Now stderr propagates and each step says what it tried and whether it succeeded.
+- **Verification:** local rehearsal of `update-daemon.sh` succeeded — PID rotated, daemon listening on 19474, no launchctl errors. `bash -n` syntax-clean on both scripts. No regression in existing daemon test suite (141/141 PASS — these are Swift tests, scripts not exercised by them).
+- **P3 sprint tally:** entered this session with 17 P3 items open; closed 13 across batches T48/T49+50+51/T54+56/T57/T45+58/T46+47/T52+53. P3 backlog: 17 → 4. Remaining 4 are all larger items (build a new tool + e2e sub-sprints + frame-aware storage bus prereq).
+- **Backlog:** P3 audit 6 → 4 (T52 + T53 RESOLVED). Total open audit 10 → 8.
+---
+
 ### Iteration 44 - 2026-05-01
 **What:** T46 + T47 batched fix — PdfGenerator continuation leak on timeout + release.yml entitlement verification before GitHub Release upload.
 **Changes:**
