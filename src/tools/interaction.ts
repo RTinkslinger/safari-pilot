@@ -358,7 +358,7 @@ export class InteractionTools {
           },
           required: ['tabUrl', 'autoHandle', 'action'],
         },
-        requirements: { idempotent: false, requiresDialogIntercept: true },
+        requirements: { idempotent: false },
       },
     ];
   }
