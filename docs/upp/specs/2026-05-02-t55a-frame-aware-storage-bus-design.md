@@ -19,7 +19,7 @@ The parity test `test/unit/engine-selector/cap-manifest-parity.test.ts` self-coo
 
 ## v1 scope (maximal — frameId on every reachable tool)
 
-Nine tools gain optional `frameId` param in v1. Default `frameId` omitted = top frame (frameId=0), backwards compatible:
+Ten tools gain optional `frameId` param in v1; one additional tool (`safari_list_frames`) returns `frameId` in its result. Default `frameId` omitted = top frame (frameId=0), backwards compatible:
 
 - `safari_list_frames` — returns `frameId` and `parentFrameId` in each entry (extension path; null on AppleScript path).
 - `safari_eval_in_frame` — frameId precedence over frameSelector when both supplied.
@@ -53,9 +53,9 @@ That's **11 tools** total touched (1 returns frameId; 10 accept frameId param). 
 
 ### Storage-key invariants (load-bearing)
 
-- `sp_cmd_<commandId>`: written by background; read+filtered by every frame; pruned by idle-cleanup. Includes optional `frameId` field. Filter rule: `cmd.tabId === myTabId && (cmd.frameId ?? 0) === myFrameId`.
-- `sp_result_<commandId>`: written by exactly one frame (the one passing both filters); read by background's filtered listener; pruned by idle-cleanup.
-- `sp_getFrameId`: action message (not a storage key). Each content-isolated.js sends it lazily on first `sp_cmd_*` arrival; background reads `sender.frameId`; round-trips back. Frames that never receive a command pay zero registration cost (mitigates 50-iframe registration storm on heavy pages).
+- `sp_cmd_<commandId>`: written by background; read+filtered by every frame; pruned by idle-cleanup. Includes optional `frameId` and **`frameUrl`** fields (frameUrl carries the URL captured at dispatch validation; content-isolated.js compares it against `location.href` and rejects if mismatched, preventing the document-mutation race where a frame navigates between dispatch validation and content-script processing — frameId is stable across navigations within a frame, the document is not). Filter rule: `cmd.tabId === myTabId && (cmd.frameId ?? 0) === myFrameId && (cmd.frameUrl == null || cmd.frameUrl === location.href)`. Mismatch on frameUrl returns `FRAME_NAVIGATED` via sp_result.
+- `sp_result_<commandId>`: written by exactly one frame (the one passing all filters); read by background's filtered listener; pruned by idle-cleanup.
+- `sp_getFrameId`: action message (not a storage key). Each content-isolated.js sends it lazily on first `sp_cmd_*` arrival. Background reads `sender.frameId`; round-trips back. **Honest cost accounting:** every iframe sees every `sp_cmd_*` event via `storage.onChanged`, so the registration cost is *deferred* from page load to the first cross-frame command, not eliminated. On a 50-iframe page the first cross-frame command incurs 50 simultaneous handshakes from background's perspective — all serviced as a burst of `runtime.onMessage` events, each returning `sender.frameId` (a synchronous read). Optimization deferred to v2: frames in `IDLE` that can self-determine they are not the target (e.g. `window.top === window` proves frameId 0; cmd targets `frameId !== 0`) skip the handshake. v1 accepts the burst cost — eliminating it requires distinguishing top from nested without a handshake, which is reliable for frame 0 but not for nested frames.
 
 ### Component layout
 
@@ -90,10 +90,22 @@ ExtensionBridge.swift           handleExecute decodes optional frameId,
 
 src/types.ts                    requiresFramesCrossOrigin: already present
 src/engine-selector.ts          ENGINE_CAPS.extension.framesCrossOrigin: true
+                                  Inline comment must read: "true = the
+                                  extension can inject content scripts
+                                  into typical cross-origin iframes via
+                                  manifest all_frames:true. FRAME_UNREACHABLE
+                                  is returned when injection fails for a
+                                  specific frame (sandbox without
+                                  allow-scripts, page CSP blocking
+                                  extension scripts, COOP/COEP isolation,
+                                  or silent injection failure)."
                                 (parity test self-coordinates)
 
 src/errors.ts                   FRAME_NOT_FOUND, FRAME_NOT_SUPPORTED,
-                                FRAME_NAVIGATED_AWAY (best-effort), FRAME_UNREACHABLE
+                                FRAME_NAVIGATED (pagehide fast-fail +
+                                  document-mutation guard, best-effort
+                                  with FRAME_NOT_FOUND safety net),
+                                FRAME_UNREACHABLE
 
 src/tools/frames.ts             safari_list_frames merges webNavigation
                                   topology into result (frameId,
@@ -145,7 +157,7 @@ src/tools/_frame-routing-helper.ts (NEW)
 
 ### Dispatch sequence (cross-origin iframe call)
 
-1. **Caller** → `safari_list_frames({tabUrl})`. Background runs DOM enumeration JS in top frame, also calls `webNavigation.getAllFrames({tabId})`, merges by index/src match. Returns `[{index, frameId, parentFrameId, src, ...}]`.
+1. **Caller** → `safari_list_frames({tabUrl})`. Extension path: background calls `webNavigation.getAllFrames({tabId})` directly and returns `[{frameId, parentFrameId, url, ...}]`. (NO merge with top-frame DOM enumeration — same-src frames are ambiguous, nested-iframe trees collapse on src match, about:blank/srcdoc frames produce empty src on both sides. webNavigation is authoritative.) If the caller wants iframe-element attributes (width, height, sandbox, name, id), `safari_list_frames` runs a second extension-side eval in the parent doc to fetch those, keyed to webNavigation's frameIds via `iframe.contentWindow === window` matching from inside each child frame's `sp_getFrameId` response. AppleScript path: keeps existing top-frame DOM enumeration, returns frames with `frameId: null` (callers cannot target cross-origin frames without extension regardless).
 2. **Caller picks frameId**, calls `safari_eval_in_frame({tabUrl, frameId, script})`.
 3. **Handler** checks `params.frameId` set + `engine === extension` → ok. Calls `engine.executeJsInFrame(tabUrl, frameId, js)`.
 4. **ExtensionBridge** sends payload over storage bus. **background.handleExecute** validates frameId via `webNavigation.getAllFrames`. Missing → `FRAME_NOT_FOUND`. Present → write `sp_cmd_<commandId>` with frameId field.
@@ -177,11 +189,11 @@ This is implemented as a pure reducer `frameIdHandshakeReducer(state, event)` in
 | Code | When | Hint | Retryable |
 |---|---|---|---|
 | `FRAME_NOT_FOUND` | webNavigation.getAllFrames returns no entry matching the frameId at dispatch time. | Run `safari_list_frames` again — frame may have navigated or unloaded. | no |
-| `FRAME_NAVIGATED_AWAY` | Frame's `pagehide` listener fired `runtime.sendMessage({action: sp_frame_unloading})` between dispatch and result. **Best-effort:** unload-time message delivery is not guaranteed; if it misses, the next call's webNavigation revalidation surfaces FRAME_NOT_FOUND as the safety net. Do not try to harden this race. | Frame navigated mid-command. List frames again. | yes |
+| `FRAME_NAVIGATED` | Frame URL changed between dispatch and content-script processing. Two trigger paths: (1) **best-effort fast-fail:** frame's `pagehide` fires `runtime.sendMessage({action: sp_frame_unloading})` between dispatch and result — unload-time message delivery is not guaranteed but catches most cases; (2) **document-mutation guard:** content-isolated.js compares `cmd.frameUrl` to `location.href` and rejects mismatch — catches the case where a new content-isolated.js loads in the same frameId after navigation and would otherwise execute against a different document. Both paths emit the same code. If both miss, the next call's webNavigation revalidation surfaces FRAME_NOT_FOUND as the final safety net. | Frame navigated mid-command. List frames again. | yes |
 | `FRAME_UNREACHABLE` | 10s frame-targeted timeout fires AND no `sp_getFrameId` handshake was ever received from that frameId. Heuristic catches: sandbox-without-`allow-scripts`, page CSP blocking content scripts, silent injection failures. | Frame may be sandboxed (no `allow-scripts`), CSP-blocked, or content-script injection failed. | no |
 | `FRAME_NOT_SUPPORTED` | Tool called with `frameId` set but selected engine is not Extension. | Cross-origin frame access requires the Safari Pilot extension to be installed and connected. | no |
 
-The 10s frame-targeted timeout is sufficient for v1 eval-only. Re-evaluate before v2 (extraction tools may have legitimately longer-running scripts).
+The 10s frame-targeted timeout serves v1 maximal scope (eval + extraction + shadow). Extraction tools running broad CSS-selector queries against deep cross-origin DOMs may approach this bound; the bound is conservative because frame-targeted scripts run on already-rendered documents (no network/IO inside the script). If a v1 extraction call times out legitimately, raise the bound for that specific tool by adding a per-tool override on `executeJsInFrame`. Do not raise the global bound — the timeout is also the FRAME_UNREACHABLE detection window.
 
 ## Testing strategy
 
@@ -200,7 +212,7 @@ The 10s frame-targeted timeout is sufficient for v1 eval-only. Re-evaluate befor
 
 ### E2E (`test/e2e/`)
 
-All five tests use `test/helpers/fixture-server.ts` — a Node http.createServer bound on 19476 + 19477 in beforeAll/afterAll, serving `test/fixtures/cross-frame/{host,inner}.html`. Two ports = two origins per same-origin policy.
+All e2e tests below use `test/helpers/fixture-server.ts` — a Node http.createServer bound on 19476 + 19477 in beforeAll/afterAll, serving `test/fixtures/cross-frame/{host,inner}.html` and shadow-DOM/concurrent fixtures. Two ports = two origins per same-origin policy.
 
 | Test | Scenario | Litmus |
 |---|---|---|
@@ -211,6 +223,8 @@ All five tests use `test/helpers/fixture-server.ts` — a Node http.createServer
 | `t55a-extension-down-frame-call.test.ts` | Extension reachability disabled → frame-targeted call. Asserts `FrameNotSupportedError` (or EngineUnavailableError). | Remove handler's `if engine !== extension` guard → silently routes to AppleScript → fails (returns SecurityError DOMException instead of typed error). |
 | `t55a-extract-text-cross-origin.test.ts` | Same fixture (host on 19476, inner on 19477). Call `safari_extract_text({frameId})`. Assert returned text matches inner.html's body, NOT host.html. Proves extraction routing works through the shared `_frame-routing-helper`. | Bypass the helper in extraction.ts → top frame answers, returned text is host's body, fails. |
 | `t55a-query-shadow-cross-origin.test.ts` | Inner.html serves a page with a shadow-DOM element. Call `safari_query_shadow({frameId, ...})`. Assert query lands in the iframe's shadow tree. Proves shadow tools route through frameId. | Bypass the helper in shadow.ts → top frame searched, query returns null, fails. |
+| `t55a-concurrent-frame-commands.test.ts` (NEW, defends D6) | Fixture serves host.html embedding two distinct cross-origin iframes (`19477/inner-a.html`, `19477/inner-b.html` — same port still cross-origin since host is `19476`; or use `19477` and `19478` for explicit two-target). `Promise.all([safari_eval_in_frame({frameId: A, script: "return 'A'"}), safari_eval_in_frame({frameId: B, script: "return 'B'"})])`. Assert results in order: 'A', 'B'. Both must succeed; neither result clobbers the other. | Revert to single-slot `sp_cmd`/`sp_result` → second call clobbers first → test fails. This is the litmus that defends commandId-keying (D6). |
+| `t55a-url-change-relay-iframe-filter.test.ts` (NEW, regression litmus) | Host page does an SPA pushState in its top frame; iframe also does an SPA pushState. Both fire `SAFARI_PILOT_URL_CHANGE`. Assert background's `tabCacheMap` reflects the TOP-frame URL only. Proves the existing `sender.frameId !== 0` filter at background.js:624 still holds when `all_frames: true` causes every iframe to fire URL-change events. | Remove the `sender.frameId !== 0` filter → tabCacheMap gets corrupted by iframe URL → fails. |
 
 ### Daemon (`daemon/Tests/`)
 
@@ -227,7 +241,7 @@ All five tests use `test/helpers/fixture-server.ts` — a Node http.createServer
 
 1. **`requiresFramesCrossOrigin` precise definition:** "tool needs content-script execution inside a non-top frame" — not "tool interacts with frames generally."
 2. **`safari_list_frames` engine asymmetry:** when extension unavailable, returns frames via DOM enumeration in top frame BUT `frameId` field is `null`. Document explicitly. Cross-origin frame interaction requires extension regardless.
-3. **`FRAME_NAVIGATED_AWAY` is best-effort.** `pagehide`-time message delivery races teardown. Not guaranteed. The webNavigation revalidation on the next call is the safety net via `FRAME_NOT_FOUND`. Do not try to harden the race.
+3. **`FRAME_NAVIGATED` has two emit paths and one safety net.** Path (1) `pagehide`-time message delivery — best-effort, races teardown, not guaranteed. Path (2) document-mutation guard via `cmd.frameUrl === location.href` check inside content-isolated.js — fires when a new content-isolated.js loads in the same frameId after navigation and would otherwise execute against a different document. Final safety net: webNavigation revalidation on the next call surfaces `FRAME_NOT_FOUND`. Do not try to harden either emit path further; the layered design is the contract.
 4. **Sandboxed iframes** (`<iframe sandbox>` without `allow-scripts`) are inherently unreachable; documented as known limitation.
 5. **commandId-keying upgrades multiple call sites in `background.js`:**
    - writer (line 271) → `set({['sp_cmd_'+commandId]: storageCmd})`
@@ -237,6 +251,7 @@ All five tests use `test/helpers/fixture-server.ts` — a Node http.createServer
    - `safari_extension_debug_dump` tool (verify no hardcoded `sp_cmd`/`sp_result` literal in dump path)
    - test-harness poison-write paths (background.js:700-723) — must update to write keyed slots
    - reconcile flow in ExtensionBridge.swift (T59/SD-33c) — verify no hardcoded key names
+   - **Defended by:** `t55a-concurrent-frame-commands.test.ts` — two simultaneous `safari_eval_in_frame` calls to different frames must both return correct results. Reverting any of the above sites to single-slot semantics breaks the test. Without this test the change has no defended invariant per CLAUDE.md litmus.
 
 ## Migration / rollout
 
@@ -259,7 +274,7 @@ Per CLAUDE.md feedback memory `feedback-extension-version-both-fields`: bump `pa
 
 - [ ] `npm run lint && npm run build` clean.
 - [ ] All 7 new unit tests + existing parity test pass: `npx vitest run test/unit/`.
-- [ ] All 7 e2e tests pass against full production stack: `npx vitest run test/e2e/t55a-*.test.ts`.
+- [ ] All 9 e2e tests pass against full production stack: `npx vitest run test/e2e/t55a-*.test.ts`.
 - [ ] Daemon Swift tests pass: `swift test` from `daemon/`.
 - [ ] Extension rebuilt + re-signed + re-notarized via `bash scripts/build-extension.sh`.
 - [ ] `package.json` version bumped to next patch.
