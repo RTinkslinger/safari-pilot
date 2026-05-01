@@ -64,10 +64,14 @@ echo "update-daemon: Binary swapped at $DAEMON_BIN"
 
 # Kickstart (restart) the daemon if the plist is installed
 if [ -f "$PLIST" ]; then
-  # Reload to pick up new binary
-  launchctl unload "$PLIST" 2>/dev/null || true
-  launchctl load "$PLIST"
-  launchctl kickstart -k "gui/$(id -u)/$LABEL" 2>/dev/null || launchctl start "$LABEL" || true
+  # T52 — modern launchctl style: bootout/bootstrap/kickstart instead of
+  # the legacy unload/load pair. unload/load have been deprecated for
+  # LaunchAgents/Daemons since macOS 10.10. postinstall.sh now uses the
+  # same trio (line 130 already used bootstrap; this script and lines 71-72
+  # of postinstall.sh used the old style — pick one per audit).
+  launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
+  launchctl bootstrap "gui/$(id -u)" "$PLIST"
+  launchctl kickstart -k "gui/$(id -u)/$LABEL" 2>/dev/null || true
   echo "update-daemon: Daemon restarted via launchctl"
 else
   echo "update-daemon: No LaunchAgent plist found — daemon not restarted automatically"

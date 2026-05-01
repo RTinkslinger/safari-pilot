@@ -33,22 +33,41 @@ elif [ -f "$ROOT/daemon/Package.swift" ] && command -v swift &>/dev/null; then
 fi
 
 # Step 3: Download from GitHub Releases if still missing
+# T53 — pre-fix the curl/wget/tar errors were swallowed via `2>/dev/null || true`,
+# so a failed download (network outage, 404 from a renamed asset, transient
+# Cloudflare error) silently produced "Could not obtain daemon binary" with
+# zero diagnostic context. Now stderr propagates, the curl→wget fallback is
+# explicit, and each step's success/failure is reported.
 if [ ! -f "$DAEMON_BIN" ]; then
   DAEMON_URL="https://github.com/RTinkslinger/safari-pilot/releases/latest/download/SafariPilotd-universal.tar.gz"
   DAEMON_TAR="$DAEMON_DIR/SafariPilotd.tar.gz"
   echo "safari-pilot: Downloading daemon binary..."
+
+  DOWNLOAD_OK=0
   if command -v curl &>/dev/null; then
-    curl -fsSL "$DAEMON_URL" -o "$DAEMON_TAR" 2>/dev/null || true
-  elif command -v wget &>/dev/null; then
-    wget -q "$DAEMON_URL" -O "$DAEMON_TAR" 2>/dev/null || true
+    if curl -fsSL "$DAEMON_URL" -o "$DAEMON_TAR"; then
+      DOWNLOAD_OK=1
+    else
+      echo "safari-pilot: curl download failed (will try wget if available)"
+    fi
+  fi
+  if [ "$DOWNLOAD_OK" -eq 0 ] && command -v wget &>/dev/null; then
+    if wget -q "$DAEMON_URL" -O "$DAEMON_TAR"; then
+      DOWNLOAD_OK=1
+    else
+      echo "safari-pilot: wget download failed"
+    fi
   fi
 
-  if [ -f "$DAEMON_TAR" ]; then
-    tar -xzf "$DAEMON_TAR" -C "$DAEMON_DIR/" 2>/dev/null || true
-    rm -f "$DAEMON_TAR"
-    if [ -f "$DAEMON_BIN" ]; then
-      chmod +x "$DAEMON_BIN"
-      echo "safari-pilot: Daemon downloaded successfully"
+  if [ "$DOWNLOAD_OK" -eq 1 ] && [ -f "$DAEMON_TAR" ]; then
+    if tar -xzf "$DAEMON_TAR" -C "$DAEMON_DIR/"; then
+      rm -f "$DAEMON_TAR"
+      if [ -f "$DAEMON_BIN" ]; then
+        chmod +x "$DAEMON_BIN"
+        echo "safari-pilot: Daemon downloaded successfully"
+      fi
+    else
+      echo "safari-pilot: tar extraction failed (corrupt download?) — keeping $DAEMON_TAR for inspection"
     fi
   fi
 fi
@@ -67,9 +86,14 @@ if [ -f "$DAEMON_DIR/SafariPilotd" ]; then
     # Replace placeholders
     sed "s|__DAEMON_PATH__|$DAEMON_DIR/SafariPilotd|g; s|__LOG_PATH__|$HOME/.safari-pilot|g" "$PLIST_SRC" > "$PLIST_DST"
     mkdir -p "$HOME/.safari-pilot"
-    # Register with launchd (unload first in case of upgrade)
-    launchctl unload "$PLIST_DST" 2>/dev/null || true
-    launchctl load "$PLIST_DST" 2>/dev/null || true
+    # T52 — modern launchctl style: bootout/bootstrap instead of legacy
+    # unload/load. The line 130 health-check registration already uses
+    # bootstrap; this paragraph used unload/load. Pick one (per audit) =
+    # bootstrap, since modern is preferred and unload/load are deprecated
+    # for LaunchAgents/Daemons since macOS 10.10.
+    LABEL="com.safari-pilot.daemon"
+    launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
+    launchctl bootstrap "gui/$(id -u)" "$PLIST_DST" 2>/dev/null || true
     echo "safari-pilot: LaunchAgent installed and registered at $PLIST_DST"
   fi
 fi
@@ -81,16 +105,35 @@ EXTENSION_APP="$DAEMON_DIR/Safari Pilot.app"
 if [ ! -d "$EXTENSION_APP" ]; then
   echo "safari-pilot: Downloading signed Safari extension..."
   RELEASE_URL="https://github.com/RTinkslinger/safari-pilot/releases/latest/download/Safari%20Pilot.zip"
+
+  # T53 — same pattern as the daemon download above: explicit fallback,
+  # stderr propagated, status reported per step.
+  EXT_DOWNLOAD_OK=0
   if command -v curl &>/dev/null; then
-    curl -fsSL "$RELEASE_URL" -o "$EXTENSION_ZIP" 2>/dev/null || true
-  elif command -v wget &>/dev/null; then
-    wget -q "$RELEASE_URL" -O "$EXTENSION_ZIP" 2>/dev/null || true
+    if curl -fsSL "$RELEASE_URL" -o "$EXTENSION_ZIP"; then
+      EXT_DOWNLOAD_OK=1
+    else
+      echo "safari-pilot: extension curl download failed (will try wget if available)"
+    fi
+  fi
+  if [ "$EXT_DOWNLOAD_OK" -eq 0 ] && command -v wget &>/dev/null; then
+    if wget -q "$RELEASE_URL" -O "$EXTENSION_ZIP"; then
+      EXT_DOWNLOAD_OK=1
+    else
+      echo "safari-pilot: extension wget download failed"
+    fi
   fi
 
-  if [ -f "$EXTENSION_ZIP" ]; then
-    # Extract the .app from the zip
-    ditto -x -k "$EXTENSION_ZIP" "$DAEMON_DIR/" 2>/dev/null || unzip -qo "$EXTENSION_ZIP" -d "$DAEMON_DIR/" 2>/dev/null || true
-    rm -f "$EXTENSION_ZIP"
+  if [ "$EXT_DOWNLOAD_OK" -eq 1 ] && [ -f "$EXTENSION_ZIP" ]; then
+    # Extract the .app from the zip. Try ditto first (preserves macOS extended
+    # attributes), fall back to unzip. Errors propagate now — silent extraction
+    # failures previously left users with no .app and no clue why.
+    if ditto -x -k "$EXTENSION_ZIP" "$DAEMON_DIR/" 2>/dev/null \
+       || unzip -qo "$EXTENSION_ZIP" -d "$DAEMON_DIR/"; then
+      rm -f "$EXTENSION_ZIP"
+    else
+      echo "safari-pilot: extension extraction failed (corrupt download?) — keeping $EXTENSION_ZIP for inspection"
+    fi
 
     if [ -d "$EXTENSION_APP" ]; then
       echo "safari-pilot: Safari extension downloaded successfully"
