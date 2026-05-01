@@ -137,6 +137,28 @@ test("testRejectsInvalidJSON") {
         "Expected NDJSONError.invalidJSON")
 }
 
+// 5b. T57 — invalidJSON error message must include the underlying
+// JSONSerialization failure reason, not just the offending line. Pre-T57,
+// `try?` swallowed the underlying error so all malformed input collapsed
+// to the same generic "Line is not a valid JSON object" message — making
+// daemon stderr useless for diagnosing parse failures.
+test("testRejectsInvalidJSON_includesUnderlyingReason_T57") {
+    do {
+        _ = try NDJSONParser.parseCommand(line: "{ unquoted: 1 }")
+        throw TestFailure("Expected throw")
+    } catch NDJSONError.invalidJSON(let msg) {
+        // Distinctive token from the post-T57 wrapping. Pre-T57 the
+        // message was just "Line is not a valid JSON object: ...";
+        // post-T57 it includes the JSONSerialization error description
+        // via the new wrapped do/catch block.
+        try assertTrue(
+            msg.lowercased().contains("jsonserialization")
+                || msg.lowercased().contains("failed:"),
+            "T57: invalidJSON message must include underlying parse reason; got: \(msg)"
+        )
+    }
+}
+
 // 6. testRejectsEmptyID
 test("testRejectsEmptyID") {
     let line = #"{"id":"","method":"ping"}"#

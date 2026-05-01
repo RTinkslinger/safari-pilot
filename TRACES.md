@@ -14,6 +14,21 @@
 
 ## Current Work
 
+### Iteration 42 - 2026-05-01
+**What:** T57 RESOLVED — NDJSONProtocol.swift no longer swallows JSONSerialization errors silently. Parse failures now log to stderr with the underlying reason AND the malformed line.
+**Changes:**
+- `daemon/Sources/SafariPilotdCore/NDJSONProtocol.swift` — replaced silent `try? JSONSerialization.jsonObject(...)` with explicit `do/catch` that captures the underlying error description and includes it in the thrown `NDJSONError.invalidJSON` message. Split the "valid JSON" check into two distinct error paths: serialization failure (with reason) vs top-level-not-an-object. Added `Logger.warning` calls at every parse-failure point (UTF-8 encode, JSONSerialization failure, top-level-not-object, decoding failure).
+- `daemon/Tests/SafariPilotdTests/main.swift` — new test `testRejectsInvalidJSON_includesUnderlyingReason_T57` asserts the message contains "JSONSerialization" or "failed:" — distinct tokens from the pre-T57 template. RED-verified, then GREEN.
+- Daemon binary rebuilt via `scripts/update-daemon.sh` (atomic swap, launchctl bootstrap). New PID confirms reload.
+**Context:**
+- **The silent catch hid the protocol's most common failure mode.** When the daemon receives malformed NDJSON from MCP/stdin or from the extension HTTP path, the parser threw `NDJSONError.invalidJSON("Line is not a valid JSON object: <line>")`. Daemon stderr never recorded WHAT made the line invalid — was it a missing comma, an unquoted key, a control character, embedded newline (the ROADMAP-flake)? The audit (T57) flagged this as a debugability gap. Now stderr shows e.g. `[WARNING] NDJSONParser: JSONSerialization failed: The data couldn't be read because it isn't in the correct format. | line=...`
+- **Test fragility consideration:** the new test asserts on `JSONSerialization`/`failed:` tokens. Apple's JSONSerialization error descriptions are stable across macOS versions but could in theory change. Mitigation: the assertion uses an OR condition, and the wrapper-template prefix ("JSONSerialization failed:") is OUR string literal — not Apple's — which guarantees stability regardless of upstream changes. The token "failed:" comes from the wrapper, not from Apple.
+- **Why this also helps ROADMAP-flake (NDJSON line-split):** When the line-split flake reproduces, daemon stderr will now record the exact underlying parse reason for each split fragment. If the cause is "Unexpected character at line 1, position N" or similar, that's diagnostic. Pre-T57 it was opaque.
+- **Daemon test suite:** 140/140 PASS (added 1 new T57 test, all existing pass). Build clean (only pre-existing AnyCodable Sendable warning, untouched).
+- **Verification:** new daemon binary running (different PID than pre-rebuild), TCP:19474 listening, build complete in 180s.
+- **Backlog:** P3 audit 11 → 10 (T57 RESOLVED). Total open audit 15 → 14.
+---
+
 ### Iteration 41 - 2026-05-01
 **What:** T48 RESOLVED — explicit pre-execution guard rejects the session dashboard tab as a `tabUrl` target, regardless of selected engine.
 **Changes:**

@@ -30,12 +30,26 @@ public enum NDJSONParser {
         }
 
         guard let data = trimmed.data(using: .utf8) else {
+            Logger.warning("NDJSONParser: line cannot be UTF-8 encoded; length=\(trimmed.count)")
             throw NDJSONError.invalidJSON("Cannot encode line as UTF-8")
         }
 
-        // First pass: verify it is valid JSON object
-        guard let _ = try? JSONSerialization.jsonObject(with: data, options: []) as? [String: Any] else {
-            throw NDJSONError.invalidJSON("Line is not a valid JSON object: \(trimmed)")
+        // First pass: verify it is a valid JSON object.
+        // T57 — pre-T57 this used `try?` which swallowed the underlying
+        // JSONSerialization error, collapsing every malformed input into
+        // a generic "Line is not a valid JSON object" message and making
+        // daemon stderr useless for diagnosing parse failures. Now we
+        // capture the underlying reason and log it before throwing.
+        let parsed: Any
+        do {
+            parsed = try JSONSerialization.jsonObject(with: data, options: [])
+        } catch {
+            Logger.warning("NDJSONParser: JSONSerialization failed: \(error.localizedDescription) | line=\(trimmed)")
+            throw NDJSONError.invalidJSON("JSONSerialization failed: \(error.localizedDescription) | line=\(trimmed)")
+        }
+        guard parsed is [String: Any] else {
+            Logger.warning("NDJSONParser: line decoded but is not a top-level JSON object; line=\(trimmed)")
+            throw NDJSONError.invalidJSON("Line decoded but is not a top-level JSON object: \(trimmed)")
         }
 
         // Decode into raw dict to validate required fields before full decode
@@ -43,6 +57,7 @@ public enum NDJSONParser {
         do {
             raw = try decoder.decode([String: AnyCodable].self, from: data)
         } catch {
+            Logger.warning("NDJSONParser: JSON decoding failed: \(error.localizedDescription) | line=\(trimmed)")
             throw NDJSONError.invalidJSON("JSON decoding failed: \(error.localizedDescription)")
         }
 
