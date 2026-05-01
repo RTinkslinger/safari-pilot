@@ -171,7 +171,17 @@ dispatcher.extensionBridge.setHealthStore(healthStore)
 
 // 7. Extension socket server — listens on TCP localhost for connections from the
 //    Safari extension handler (which proxies native messages from background.js).
-let socketServer = ExtensionSocketServer(port: 19474, dispatcher: dispatcher)
+// T45 — fail-fast on TCP:19474 bind problems. Pre-T45 the constructor
+// silently fell back to a random ephemeral port (split-brain: clients
+// can't find us). Now we log FATAL and exit so the problem is visible
+// at startup instead of surfacing later as mysterious connection errors.
+let socketServer: ExtensionSocketServer
+do {
+    socketServer = try ExtensionSocketServer(port: 19474, dispatcher: dispatcher)
+} catch {
+    Logger.error("FATAL: TCP_BIND_FAILED port=19474 error=\(error). Another process is using the port; daemon refusing to start with a random fallback.")
+    exit(1)
+}
 socketServer.start()
 
 // 8. Extension HTTP server — listens on HTTP localhost for fetch() polling from
@@ -206,7 +216,15 @@ if #available(macOS 14.0, *) {
             }
         },
         onBindFailure: { error in
+            // T58 — HTTP:19475 is critical for extension communication;
+            // bind failure leaves the daemon unable to talk to Safari.
+            // Pre-T58 this only recorded to healthStore and continued —
+            // resulting in a daemon process that appeared healthy on
+            // TCP:19474 but was useless for any extension-routed tool.
+            // Log FATAL and exit so the failure is visible at startup.
             healthStore.recordHttpBindFailure()
+            Logger.error("FATAL: HTTP_BIND_FAILED port=19475 error=\(error). Extension communication impossible; daemon shutting down rather than running half-broken.")
+            exit(1)
         }
     )
     httpServer.start()

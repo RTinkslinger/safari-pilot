@@ -8,15 +8,20 @@ public final class ExtensionSocketServer: @unchecked Sendable {
     private let queue = DispatchQueue(label: "com.safari-pilot.extension-socket", qos: .userInitiated)
     private var actualPort: UInt16 = 0
 
-    public init(port: UInt16 = 19474, dispatcher: CommandDispatcher) {
+    /// Throws when NWListener cannot bind to the requested port. Pre-T45
+    /// the catch silently fell back to `try! NWListener(using: .tcp)` —
+    /// a random ephemeral port that no client could discover, leaving the
+    /// daemon in a "split-brain" state where it claimed to be running on
+    /// 19474 but was serving traffic somewhere else. Now the failure
+    /// propagates and `main.swift` translates it into a fatal exit so the
+    /// problem is visible at startup instead of via mysterious "extension
+    /// can't reach daemon" symptoms much later.
+    public init(port: UInt16 = 19474, dispatcher: CommandDispatcher) throws {
         let params = NWParameters.tcp
         params.allowLocalEndpointReuse = true
-        do {
-            self.listener = try NWListener(using: params, on: NWEndpoint.Port(rawValue: port)!)
-        } catch {
-            Logger.error("ExtensionSocketServer: failed to create listener on port \(port): \(error)")
-            self.listener = try! NWListener(using: .tcp)
-        }
+        // NWEndpoint.Port(rawValue:) accepts any UInt16, including 0 (= ephemeral).
+        // Force-unwrap is safe: rawValue is in-range by construction.
+        self.listener = try NWListener(using: params, on: NWEndpoint.Port(rawValue: port)!)
         self.dispatcher = dispatcher
     }
 

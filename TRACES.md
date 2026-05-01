@@ -14,6 +14,21 @@
 
 ## Current Work
 
+### Iteration 43 - 2026-05-01
+**What:** T45 + T58 RESOLVED — port-binding failures now fatal-exit instead of fallback-and-pretend. Plus discovered + fixed a T54 cascade in update-daemon.sh that had been silently aborting the script.
+**Changes:**
+- `daemon/Sources/SafariPilotdCore/ExtensionSocketServer.swift` — `init` is now `throws`; removed the `try! NWListener(using: .tcp)` silent random-port fallback. The catch-and-fallback pattern produced a "split-brain" where daemon claimed TCP:19474 but actually served on an ephemeral port no client could find.
+- `daemon/Sources/SafariPilotd/main.swift` — `do/catch` around `ExtensionSocketServer` init (T45): logs `FATAL: TCP_BIND_FAILED` and `exit(1)` on failure. `onBindFailure` callback for `ExtensionHTTPServer` (T58): logs `FATAL: HTTP_BIND_FAILED` and `exit(1)` instead of just recording to healthStore — without HTTP:19475 the daemon can't talk to the extension, so a half-broken state is worse than refusing to start.
+- `daemon/Tests/SafariPilotdTests/ExtensionSocketServerTests.swift` — added `testServerInitIsThrowing_T45_noRandomPortFallback` (regression guard: only compiles when init is `throws`). Updated 6 existing init sites to use `try`.
+- `scripts/update-daemon.sh` — fixed T54-cascade: `pgrep -x SafariPilotd` returns 1 on no-match, and combined with `set -euo pipefail` propagated to abort the script before the atomic binary swap. Pre-T54 the script used `pgrep -f` which always matched the calling shell's argv (which contained "SafariPilotd" via the script path), so pgrep never returned 1. Switched to `{ pgrep -x SafariPilotd || true; } | wc -l | tr -d ' '` — portable BSD-pgrep-compatible (no `-c` flag) and absorbs the no-match exit.
+**Context:**
+- **The session's "missing daemon update" mystery solved.** Earlier in this session (during T57 ship) I noted the staged binary at `bin/SafariPilotd.<timestamp>` wasn't getting moved into `bin/SafariPilotd` — the atomic-swap step appeared to abort. Today's bash -x trace shows the script exited 1 right at `ORPHAN_COUNT=$(pgrep -xc SafariPilotd ...)` because BSD pgrep doesn't have `-c` (yes I tried that flag first; it printed usage and exited error). The actual culprit even before that experiment: pipefail + pgrep's no-match exit. T54's `-x` switch made pgrep exact-match (no false positives from the script's argv) which was correct, but the pipeline now genuinely returned 1 when no orphans existed — which was always the case after `launchctl stop` had just run. Net: every `update-daemon.sh` run since T54 silently aborted before the swap. The running production daemon was therefore stale through T57 + T48 ships. After today's fix, the daemon is on the freshly-built binary.
+- **Why T58 needs to fatal-exit, not retry:** the bind failure means another process owns port 19475. Retrying doesn't help; a different process needs to release the port (or get fatal-exit'd). Fail-fast at startup gives operations a clear signal; running half-broken just defers diagnosis.
+- **Test design choice on T45:** the regression guard is structural (requires `try`), not behavioural (force a real bind failure). Reasoning in the test comment: forcing a bind conflict in tests is fragile under macOS's `allowLocalEndpointReuse=true` — multiple listeners can legitimately share the port. Structural guard captures the audit's intent (no silent fallback) at compile time, which is sufficient given the implementation is a single `try` keyword.
+- **Verification:** 141/141 daemon tests PASS (added 1 T45 test). New daemon binary deployed via fixed update-daemon.sh; PID confirmed fresh. TypeScript `npm run build` clean (no daemon coupling here).
+- **Backlog:** P3 audit 10 → 8 (T45 + T58 RESOLVED). Total open audit 14 → 12.
+---
+
 ### Iteration 42 - 2026-05-01
 **What:** T57 RESOLVED — NDJSONProtocol.swift no longer swallows JSONSerialization errors silently. Parse failures now log to stderr with the underlying reason AND the malformed line.
 **Changes:**
