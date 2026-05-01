@@ -44,10 +44,13 @@ if launchctl list "$LABEL" &>/dev/null 2>&1; then
 fi
 
 # Kill any orphaned SafariPilotd processes (from old test runs, spawned child processes, etc.)
-ORPHAN_COUNT=$(pgrep -f SafariPilotd | wc -l | tr -d ' ')
+# T54 — `-x` matches the exact process name (basename), so we don't kill
+# unrelated commands whose argv contains the string "SafariPilotd"
+# (e.g. `node test/run-SafariPilotd-test.js`, `grep SafariPilotd ...`).
+ORPHAN_COUNT=$(pgrep -x SafariPilotd | wc -l | tr -d ' ')
 if [ "$ORPHAN_COUNT" -gt 0 ]; then
   echo "update-daemon: Killing $ORPHAN_COUNT orphaned SafariPilotd process(es)..."
-  pkill -f SafariPilotd || true
+  pkill -x SafariPilotd || true
   sleep 1
 fi
 

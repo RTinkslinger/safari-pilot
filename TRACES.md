@@ -14,6 +14,20 @@
 
 ## Current Work
 
+### Iteration 40 - 2026-05-01
+**What:** T54 + T56 batched fix — pkill safety + dialog requirement honesty.
+**Changes:**
+- `scripts/update-daemon.sh` — T54: `pgrep -f`/`pkill -f SafariPilotd` → `-x` (exact basename match). Prevents the orphan-cleanup pass from killing unrelated commands whose argv merely contains "SafariPilotd".
+- `src/tools/interaction.ts` — T56: dropped `requiresDialogIntercept: true` from `safari_handle_dialog` requirements.
+- `test/unit/tools/handle-dialog-requirement.test.ts` — 4 new unit tests: flag absence + observable selectEngine routing consequence (does-not-throw + returns applescript/daemon when extension unavailable).
+**Context:**
+- **T54 root concern:** `pkill -f` matches *full command line*. Any process whose argv contained the string "SafariPilotd" got killed during update — including a developer running `grep SafariPilotd src/...` in another terminal, or test harnesses with the string in their path. `-x` matches *exact process name (basename)*, which is what we actually want. The daemon binary's name is `SafariPilotd` exactly, so `pkill -x SafariPilotd` targets only it.
+- **T56 root concern:** `requiresDialogIntercept: true` triggered `selectEngine`'s `requiresExtension` branch (engine-selector.ts:84-89), forcing the tool to throw `EngineUnavailableError` whenever the extension was unavailable. But the handler is a pure JS override of `window.alert/confirm/prompt` — runs on any engine that executes JS, including AppleScript's `do JavaScript`. The flag was a lie: extension wasn't actually required. Flag dropped → tool falls back to AppleScript when extension is unavailable, matching what the handler can actually do.
+- **Test choice:** instead of asserting only the flag's absence (shape-only oracle), the test asserts the *observable consequence* — `selectEngine(handleDialog.requirements, {extension: false})` no longer throws and returns a non-extension engine. This catches regressions where someone re-adds the flag OR introduces a different mechanism that re-routes through extension.
+- **Verification:** 170/170 unit GREEN (was 166, +4 new). No e2e regression risk — change is to engine-routing telemetry + a script.
+- **Backlog:** P3 audit 14 → 12 (T54 + T56 RESOLVED). Total open audit 18 → 16.
+---
+
 ### Iteration 39 - 2026-04-30
 **What:** T49 + T50 + T51 batched fix — three small schema/handler honesty bugs cleaned up.
 **Changes:**
