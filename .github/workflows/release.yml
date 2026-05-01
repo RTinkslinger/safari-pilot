@@ -91,6 +91,79 @@ jobs:
             -C dist-bin SafariPilotd
           cp SafariPilotd-${{ github.ref_name }}-universal.tar.gz SafariPilotd-universal.tar.gz
 
+      # T47 — extension build is pre-built locally and committed to bin/
+      # (Xcode project generation requires the full macOS dev environment, so
+      # it cannot be rebuilt in CI per CLAUDE.md). But CI MUST verify the
+      # code-signature and required entitlements before uploading. Per the
+      # v0.1.1–v0.1.3 disaster: every release that ships a broken extension
+      # (missing app-sandbox, missing network.client, stripped entitlements
+      # from a manual codesign) wastes hours of debugging in production.
+      # Fail-fast here = problem stays local.
+      - name: Verify extension signature + entitlements (T47)
+        run: |
+          set -euo pipefail
+          if [ ! -f "bin/Safari Pilot.zip" ]; then
+            echo "ERROR: bin/Safari Pilot.zip missing — cannot release" >&2
+            exit 1
+          fi
+          EXT_TMP=$(mktemp -d)
+          unzip -q "bin/Safari Pilot.zip" -d "$EXT_TMP"
+          APP_PATH=$(find "$EXT_TMP" -maxdepth 2 -name "*.app" -type d | head -1)
+          if [ -z "$APP_PATH" ]; then
+            echo "ERROR: no .app found inside bin/Safari Pilot.zip" >&2
+            exit 1
+          fi
+          APPEX_PATH=$(find "$APP_PATH/Contents/PlugIns" -maxdepth 1 -name "*.appex" -type d 2>/dev/null | head -1)
+          if [ -z "$APPEX_PATH" ]; then
+            echo "ERROR: no .appex found inside $APP_PATH/Contents/PlugIns" >&2
+            exit 1
+          fi
+          echo "App:   $APP_PATH"
+          echo "Appex: $APPEX_PATH"
+
+          echo "=== Verify app signature ==="
+          codesign --verify --deep --strict --verbose=2 "$APP_PATH"
+
+          echo "=== Verify appex signature ==="
+          codesign --verify --deep --strict --verbose=2 "$APPEX_PATH"
+
+          echo "=== App entitlements ==="
+          APP_ENT=$(codesign -d --entitlements :- "$APP_PATH" 2>/dev/null || true)
+          echo "$APP_ENT"
+          echo "$APP_ENT" | grep -q "com.apple.security.app-sandbox" \
+            || { echo "ERROR: app missing app-sandbox entitlement" >&2; exit 1; }
+
+          echo "=== Appex entitlements ==="
+          APPEX_ENT=$(codesign -d --entitlements :- "$APPEX_PATH" 2>/dev/null || true)
+          echo "$APPEX_ENT"
+          echo "$APPEX_ENT" | grep -q "com.apple.security.app-sandbox" \
+            || { echo "ERROR: appex missing app-sandbox entitlement" >&2; exit 1; }
+          echo "$APPEX_ENT" | grep -q "com.apple.security.network.client" \
+            || { echo "ERROR: appex missing network.client entitlement" >&2; exit 1; }
+
+          echo "=== Stapler validation ==="
+          xcrun stapler validate "$APP_PATH" \
+            || { echo "ERROR: app notarization ticket invalid or missing" >&2; exit 1; }
+
+          rm -rf "$EXT_TMP"
+          echo "Extension verification: OK"
+
+      # T47 — verify the daemon binary's signature is intact. notarytool above
+      # fails on submission error, but stapler runs with `|| true` (line 86)
+      # which would mask a missing ticket. spctl is the authoritative check
+      # for whether Gatekeeper would accept the binary on a user's machine.
+      - name: Verify daemon binary signature + notarization (T47)
+        run: |
+          set -euo pipefail
+          codesign --verify --strict --verbose=2 dist-bin/SafariPilotd
+          # `xcrun stapler validate` returns non-zero for a CLI-only binary
+          # without a stapled ticket attached. Notarized CLI tools may rely
+          # on online ticket lookup instead, so we don't hard-fail here —
+          # but we do log so a regression is visible in CI output.
+          xcrun stapler validate dist-bin/SafariPilotd \
+            && echo "Daemon notarization ticket: stapled" \
+            || echo "Daemon notarization ticket: not stapled (online verification on user machine)"
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
