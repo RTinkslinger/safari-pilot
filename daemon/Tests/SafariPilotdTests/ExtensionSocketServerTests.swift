@@ -7,7 +7,7 @@ func registerExtensionSocketServerTests() {
 
     test("testServerStartsAndReturnsPort") {
         let dispatcher = makeTestDispatcher()
-        let server = ExtensionSocketServer(port: 0, dispatcher: dispatcher)
+        let server = try ExtensionSocketServer(port: 0, dispatcher: dispatcher)
         guard let port = server.start() else {
             throw TestFailure("Server failed to start")
         }
@@ -15,9 +15,37 @@ func registerExtensionSocketServerTests() {
         server.stop()
     }
 
+    // T45 — pre-T45 the init had a `try! NWListener(using: .tcp)` silent
+    // random-port fallback when the requested port couldn't be created.
+    // The audit called this a "split-brain" failure mode: the daemon
+    // claims to be running on 19474 but is actually serving traffic on
+    // a random ephemeral port no client knows about. Post-T45, the init
+    // is throwing (no fallback), so a bind problem propagates to main.swift
+    // which logs FATAL and exits.
+    //
+    // This test is a regression guard against the fallback's reintroduction:
+    // the only way the call site below compiles and passes is if init()
+    // is throwing. Pre-T45, init was non-throwing and the `try` keyword
+    // would produce a "no calls to throwing functions" warning.
+    test("testServerInitIsThrowing_T45_noRandomPortFallback") {
+        let dispatcher = makeTestDispatcher()
+        let server: ExtensionSocketServer
+        do {
+            server = try ExtensionSocketServer(port: 0, dispatcher: dispatcher)
+        } catch {
+            throw TestFailure("port=0 should not throw; got \(error)")
+        }
+        // Sanity: server still starts as before.
+        guard let port = server.start() else {
+            throw TestFailure("Server failed to start after throwing init")
+        }
+        try assertTrue(port > 0, "Post-T45 throwing init still returns a usable port for port=0")
+        server.stop()
+    }
+
     test("testServerDispatchesPingCommand") {
         let dispatcher = makeTestDispatcher()
-        let server = ExtensionSocketServer(port: 0, dispatcher: dispatcher)
+        let server = try ExtensionSocketServer(port: 0, dispatcher: dispatcher)
         guard let port = server.start() else {
             throw TestFailure("Server failed to start")
         }
@@ -33,7 +61,7 @@ func registerExtensionSocketServerTests() {
 
     test("testServerHandlesMultipleSequentialConnections") {
         let dispatcher = makeTestDispatcher()
-        let server = ExtensionSocketServer(port: 0, dispatcher: dispatcher)
+        let server = try ExtensionSocketServer(port: 0, dispatcher: dispatcher)
         guard let port = server.start() else {
             throw TestFailure("Server failed to start")
         }
@@ -48,7 +76,7 @@ func registerExtensionSocketServerTests() {
 
     test("testServerHandlesInvalidJSON") {
         let dispatcher = makeTestDispatcher()
-        let server = ExtensionSocketServer(port: 0, dispatcher: dispatcher)
+        let server = try ExtensionSocketServer(port: 0, dispatcher: dispatcher)
         guard let port = server.start() else {
             throw TestFailure("Server failed to start")
         }
@@ -63,7 +91,7 @@ func registerExtensionSocketServerTests() {
 
     test("testServerReturnsExtensionStatus") {
         let dispatcher = makeTestDispatcher()
-        let server = ExtensionSocketServer(port: 0, dispatcher: dispatcher)
+        let server = try ExtensionSocketServer(port: 0, dispatcher: dispatcher)
         guard let port = server.start() else {
             throw TestFailure("Server failed to start")
         }

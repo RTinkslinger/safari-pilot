@@ -47,7 +47,11 @@ fi
 # T54 — `-x` matches the exact process name (basename), so we don't kill
 # unrelated commands whose argv contains the string "SafariPilotd"
 # (e.g. `node test/run-SafariPilotd-test.js`, `grep SafariPilotd ...`).
-ORPHAN_COUNT=$(pgrep -x SafariPilotd | wc -l | tr -d ' ')
+# `|| true` absorbs pgrep's exit-1-on-no-match, which combined with
+# `set -euo pipefail` would otherwise abort the script before the atomic
+# binary swap below — leaving the daemon running an old binary while the
+# script appeared to "succeed" partway through.
+ORPHAN_COUNT=$( { pgrep -x SafariPilotd 2>/dev/null || true; } | wc -l | tr -d ' ')
 if [ "$ORPHAN_COUNT" -gt 0 ]; then
   echo "update-daemon: Killing $ORPHAN_COUNT orphaned SafariPilotd process(es)..."
   pkill -x SafariPilotd || true
