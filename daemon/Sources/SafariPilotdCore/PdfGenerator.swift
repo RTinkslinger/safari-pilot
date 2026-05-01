@@ -389,6 +389,15 @@ public final class PdfGenerator: NSObject, WKNavigationDelegate, @unchecked Send
             return first
         }
         if !loaded {
+            // T46 — release the navigation continuation that's still suspended
+            // in the cancelled task. `cancelAll()` does NOT auto-resume a
+            // CheckedContinuation; without this, the continuation is orphaned
+            // and Swift's runtime emits "leaked CheckedContinuation" warnings,
+            // accumulating one per timed-out PDF generation. `settleNavigation`
+            // is idempotent (guarded by `navigationSettled`), so this is safe
+            // even if a delegate callback already fired between cancelAll() and
+            // here.
+            settleNavigation(with: .failure(PdfError.timeout))
             throw PdfError.timeout
         }
     }

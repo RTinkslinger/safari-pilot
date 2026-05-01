@@ -14,6 +14,19 @@
 
 ## Current Work
 
+### Iteration 44 - 2026-05-01
+**What:** T46 + T47 batched fix — PdfGenerator continuation leak on timeout + release.yml entitlement verification before GitHub Release upload.
+**Changes:**
+- `daemon/Sources/SafariPilotdCore/PdfGenerator.swift` — T46: in `waitForNavigation`'s timeout branch, call `settleNavigation(with: .failure(.timeout))` before throwing. `cancelAll()` does NOT auto-resume a suspended CheckedContinuation; without this fix, every timeout left an orphaned continuation that Swift's runtime logged as "leaked CheckedContinuation" and tied up memory.
+- `.github/workflows/release.yml` — T47: two new verification steps before "Create GitHub Release". (a) Extension verify: unzip `bin/Safari Pilot.zip`, run `codesign --verify --deep --strict` on the .app + the .appex inside it, assert both have `com.apple.security.app-sandbox`, assert appex also has `com.apple.security.network.client`, validate stapled notarization ticket. (b) Daemon binary verify: `codesign --verify` + `xcrun stapler validate` (warning-not-fatal — CLI binaries may rely on online ticket lookup).
+**Context:**
+- **T46 leak path:** `waitForNavigation` races a navigation task (suspended in `withCheckedThrowingContinuation`) against a timeout task. When the timeout wins, `group.cancelAll()` cancels the navigation task — but Swift's structured concurrency does NOT auto-resume a CheckedContinuation when its hosting Task is cancelled. The continuation stays in the @MainActor instance's `navigationContinuation` slot. Subsequent generations create new continuations; the orphans accumulate. Calling `settleNavigation` is idempotent (guarded by `navigationSettled`), so it's safe even if a delegate callback fired between cancelAll and our explicit settle.
+- **T47 motivation (CLAUDE.md hard rule):** v0.1.1–v0.1.3 disaster shipped extensions with stripped/missing entitlements that made the extension silently invisible to Safari. The audit (T47) called for CI to fail-fast on entitlement regression. Local rehearsal of the new verify-step against the v0.1.17 build confirmed both `app-sandbox` and `network.client` are present on both the app and the .appex. The verify will catch any future regression where someone accidentally manual-codesigns and strips entitlements.
+- **Test design choice:** PdfGenerator's timeout path is hard to unit-test in Swift without WKWebView setup (timing-fragile + AppKit dependency). Daemon test suite 141/141 still passes — covers regression surface for the public `generate()` path. The leak fix is a defensive structural change that doesn't alter observable behavior on the happy path. CI YAML is not unit-tested; verified via local rehearsal of the verify-step.
+- **Verification:** 141/141 daemon tests PASS. Daemon binary rebuilt and deployed via the now-working update-daemon.sh. YAML lint clean.
+- **Backlog:** P3 audit 8 → 6 (T46 + T47 RESOLVED). Total open audit 12 → 10.
+---
+
 ### Iteration 43 - 2026-05-01
 **What:** T45 + T58 RESOLVED — port-binding failures now fatal-exit instead of fallback-and-pretend. Plus discovered + fixed a T54 cascade in update-daemon.sh that had been silently aborting the script.
 **Changes:**
