@@ -37,6 +37,7 @@ import {
   RateLimitedError,
   HumanApprovalRequiredError,
   TabUrlNotRecognizedError,
+  SessionTabProtectedError,
   TabNotOwnedError,
   DomainNotAllowedError,
   KillSwitchActiveError,
@@ -144,6 +145,7 @@ function isSecurityPipelineError(err: unknown): boolean {
     || err instanceof RateLimitedError
     || err instanceof CircuitBreakerOpenError
     || err instanceof TabUrlNotRecognizedError
+    || err instanceof SessionTabProtectedError
     || err instanceof TabNotOwnedError
     || err instanceof DomainNotAllowedError
     || err instanceof HumanApprovalRequiredError
@@ -653,6 +655,15 @@ export class SafariPilotServer {
     let deferredOwnershipCheck = false;
     if (params['tabUrl'] && !SKIP_OWNERSHIP_TOOLS.has(name)) {
       const tabUrl = params['tabUrl'] as string;
+      // T48 — explicit pre-execution guard for the session dashboard tab.
+      // Pre-T48 the session URL was implicitly protected (TabUrlNotRecognizedError
+      // on AppleScript path; deferred-fail-closed on extension path). The latter
+      // only fires AFTER the navigation/click side effect ran in Safari. This
+      // throws BEFORE the handler runs, regardless of selectedEngineName, so
+      // the side effect never happens.
+      if (tabUrl === this.sessionTabUrl) {
+        throw new SessionTabProtectedError();
+      }
       const tabId = this.tabOwnership.findByUrl(tabUrl);
       if (tabId === undefined) {
         // URL not found. If extension engine is selected, defer ownership to post-execution

@@ -14,6 +14,20 @@
 
 ## Current Work
 
+### Iteration 41 - 2026-05-01
+**What:** T48 RESOLVED — explicit pre-execution guard rejects the session dashboard tab as a `tabUrl` target, regardless of selected engine.
+**Changes:**
+- `src/errors.ts` — new `SESSION_TAB_PROTECTED` error code + `SessionTabProtectedError` class with hints pointing the agent to `safari_new_tab`.
+- `src/server.ts` — in `executeToolWithSecurity` step 7d, guard `if (tabUrl === this.sessionTabUrl) throw new SessionTabProtectedError()` BEFORE the ownership lookup. Imported the new error and added it to `isSecurityPipelineError` so it's classified as a guardrail (not a tool-execution failure for kill-switch counting).
+- `test/e2e/t48-session-tab-guard.test.ts` — 3 e2e tests through real MCP/JSON-RPC: precondition (session URL discoverable via list_tabs) + dedicated error tokens ("dashboard" + "refused") + triangulation with non-session unrecognized URL.
+**Context:**
+- **Defense-in-depth motivation:** pre-T48 the session URL had implicit protection — `TabUrlNotRecognizedError` on the AppleScript path (since the session tab is never registered in tabOwnership), and deferred-fail-closed on the extension path (server.ts:911). The latter only fires AFTER the side effect (navigation, click) already ran in Safari. The guard makes the protection explicit AND moves it pre-execution so the side effect never happens regardless of engine routing.
+- **Why T63 doesn't already fully cover this:** T63 made nav tools `requiresApplescript: true`, so they no longer take the deferred-extension path. But interaction tools (`safari_click`, `safari_fill`, etc.) still route through extension when available. For those, a session-URL `tabUrl` would proceed to extension execution, the click would happen, and only the result would be hidden by deferred fail-closed. T48 prevents the click entirely.
+- **Test discriminator design (reviewer-flagged):** first test draft used `expect(errorText.toLowerCase()).toContain('session')` — passed today because `TabUrlNotRecognizedError` echoes the URL which itself contains "session" (path component). Strengthened to require BOTH "dashboard" AND "refused" — distinctive tokens that don't appear in any existing error template OR in the URL itself. Test 3 (non-session unrecognized URL) triangulates: must NOT contain those tokens, so the new guard can't be a blanket rename of the existing error.
+- **Verification:** 170/170 unit + 3/3 T48 e2e GREEN. No regressions.
+- **Backlog:** P3 audit 12 → 11 (T48 RESOLVED). Total open audit 16 → 15.
+---
+
 ### Iteration 40 - 2026-05-01
 **What:** T54 + T56 batched fix — pkill safety + dialog requirement honesty.
 **Changes:**
