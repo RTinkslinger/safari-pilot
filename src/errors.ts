@@ -25,6 +25,7 @@ export const ERROR_CODES = {
   SESSION_RECOVERY_FAILED: 'SESSION_RECOVERY_FAILED',
   SESSION_WINDOW_INIT_FAILED: 'SESSION_WINDOW_INIT_FAILED',
   SCREENSHOT_BLOCKED: 'SCREENSHOT_BLOCKED',
+  SESSION_TAB_PROTECTED: 'SESSION_TAB_PROTECTED',
 } as const;
 // SD-22 (2026-04-25): removed 4 dead codes (ELEMENT_NOT_INTERACTABLE,
 // CROSS_ORIGIN_FRAME, DIALOG_UNEXPECTED, FRAME_NOT_FOUND) — declared but
@@ -140,6 +141,30 @@ export class TabUrlNotRecognizedError extends SafariPilotError {
       'This URL does not match any tab opened by this agent session',
       'If the tab was navigated, the URL may have changed — use the URL from the last navigation response',
       'Only tabs opened via safari_new_tab can be controlled',
+    ];
+  }
+}
+
+/**
+ * T48 — operation refused on the session dashboard tab. The session tab
+ * is opened at startup as the daemon ↔ extension rendezvous and is never
+ * registered in tabOwnership. Pre-T48, the session URL was implicitly
+ * protected — by `TabUrlNotRecognizedError` on the AppleScript path, and
+ * by deferred-fail-closed on the extension path. The latter only fires
+ * AFTER the side effect (navigation, click) has already run in Safari.
+ * This dedicated error fires pre-execution so the side effect never
+ * happens, regardless of which engine the tool is routed to.
+ */
+export class SessionTabProtectedError extends SafariPilotError {
+  readonly code = ERROR_CODES.SESSION_TAB_PROTECTED;
+  readonly retryable = false;
+  readonly hints: string[];
+
+  constructor() {
+    super('Operation refused on session dashboard tab — this tab cannot be controlled by agents.');
+    this.hints = [
+      'The session dashboard tab is internal infrastructure (daemon ↔ extension handshake)',
+      'Open a separate tab via safari_new_tab and target that one instead',
     ];
   }
 }
