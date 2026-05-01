@@ -117,6 +117,21 @@ export class ExtensionEngine extends BaseEngine {
     }
   }
 
+  /**
+   * Stub — Task 7 will replace with real cross-frame dispatch through the
+   * ExtensionBridge (frameId-aware chrome.scripting.executeScript). Throwing
+   * here surfaces the gap immediately if anything tries to route through the
+   * extension engine before the implementation lands.
+   */
+  async executeJsInFrame(
+    _tabUrl: string,
+    _frameId: number,
+    _jsCode: string,
+    _timeout?: number,
+  ): Promise<EngineResult> {
+    throw new Error('ExtensionEngine.executeJsInFrame: Task 7 pending');
+  }
+
   async execute(script: string, timeout?: number): Promise<EngineResult> {
     const start = Date.now();
     try {

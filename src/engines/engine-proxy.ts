@@ -91,6 +91,17 @@ export class EngineProxy implements IEngine {
     return result;
   }
 
+  async executeJsInFrame(
+    tabUrl: string,
+    frameId: number,
+    jsCode: string,
+    timeout?: number,
+  ): Promise<EngineResult> {
+    const result = await this.delegate.executeJsInFrame(tabUrl, frameId, jsCode, timeout);
+    this._lastMeta = result.meta;
+    return result;
+  }
+
   async shutdown(): Promise<void> {
     // Don't shut down the delegate — it's shared
   }
