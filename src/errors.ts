@@ -26,6 +26,10 @@ export const ERROR_CODES = {
   SESSION_WINDOW_INIT_FAILED: 'SESSION_WINDOW_INIT_FAILED',
   SCREENSHOT_BLOCKED: 'SCREENSHOT_BLOCKED',
   SESSION_TAB_PROTECTED: 'SESSION_TAB_PROTECTED',
+  FRAME_NOT_FOUND: 'FRAME_NOT_FOUND',
+  FRAME_NAVIGATED: 'FRAME_NAVIGATED',
+  FRAME_UNREACHABLE: 'FRAME_UNREACHABLE',
+  FRAME_NOT_SUPPORTED: 'FRAME_NOT_SUPPORTED',
 } as const;
 // SD-22 (2026-04-25): removed 4 dead codes (ELEMENT_NOT_INTERACTABLE,
 // CROSS_ORIGIN_FRAME, DIALOG_UNEXPECTED, FRAME_NOT_FOUND) — declared but
@@ -403,6 +407,65 @@ export class ScreenshotBlockedError extends SafariPilotError {
       `Domain "${domain}" is in the screenshot block list`,
       'Screenshots are disabled on sensitive financial domains by policy',
       'Use blockedPatterns in config to customise the block list',
+    ];
+  }
+}
+
+// ─── Frame error classes (T55a) ──────────────────────────────────────────────
+
+export class FrameNotFoundError extends SafariPilotError {
+  readonly code = ERROR_CODES.FRAME_NOT_FOUND;
+  readonly retryable = false;
+  readonly hints: string[];
+
+  constructor(frameId: number) {
+    super(`Frame ${frameId} not found in tab. It may have navigated or unloaded.`);
+    this.hints = [
+      'Run safari_list_frames again — frame may have navigated or unloaded.',
+      'Frame topology can change after SPA navigation; re-listing frames returns the current set.',
+    ];
+  }
+}
+
+export class FrameNavigatedError extends SafariPilotError {
+  readonly code = ERROR_CODES.FRAME_NAVIGATED;
+  readonly retryable = true;
+  readonly hints: string[];
+
+  constructor(frameId: number, expectedUrl: string, actualUrl: string) {
+    super(`Frame ${frameId} navigated mid-command. Expected ${expectedUrl}, found ${actualUrl}.`);
+    this.hints = [
+      'Frame navigated mid-command. List frames again with safari_list_frames.',
+      'Best-effort detection — if pagehide misses, FRAME_NOT_FOUND on the next call is the safety net.',
+    ];
+  }
+}
+
+export class FrameUnreachableError extends SafariPilotError {
+  readonly code = ERROR_CODES.FRAME_UNREACHABLE;
+  readonly retryable = false;
+  readonly hints: string[];
+
+  constructor(frameId: number) {
+    super(`Frame ${frameId} unreachable — content script did not respond within timeout.`);
+    this.hints = [
+      'Frame may be sandboxed (no allow-scripts), CSP-blocked, or content-script injection failed.',
+      'Sandboxed iframes without allow-scripts cannot run extension code.',
+      'Page CSP that blocks extension scripts will surface here as well.',
+    ];
+  }
+}
+
+export class FrameNotSupportedError extends SafariPilotError {
+  readonly code = ERROR_CODES.FRAME_NOT_SUPPORTED;
+  readonly retryable = false;
+  readonly hints: string[];
+
+  constructor() {
+    super('Cross-origin frame access requires the Safari Pilot extension engine.');
+    this.hints = [
+      'Cross-origin frame access requires the Safari Pilot extension to be installed and connected.',
+      'AppleScript and Daemon engines cannot inject content scripts into iframes — the extension is the only path.',
     ];
   }
 }
