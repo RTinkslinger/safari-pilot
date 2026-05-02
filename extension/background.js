@@ -261,6 +261,39 @@ async function executeCommand(cmd) {
     return result;
   }
 
+  // 5A.9: DNR sentinels — bypass storage bus, call browser.declarativeNetRequest
+  // directly via the existing dnr handlers. Used by safari_authenticate to inject
+  // Authorization: Basic <b64> headers (HTTP basic auth parity with Playwright).
+  if (typeof cmd.script === 'string' && cmd.script.startsWith('__SP_DNR_')) {
+    const colonIdx = cmd.script.indexOf(':');
+    const sentinel = colonIdx > 0 ? cmd.script.slice(0, colonIdx) : cmd.script;
+    let parsed = {};
+    if (colonIdx > 0) {
+      try { parsed = JSON.parse(cmd.script.slice(colonIdx + 1)); }
+      catch (e) {
+        const result = { ok: false, error: { name: 'DNR_PARAM_PARSE', message: `Failed to parse DNR params: ${e?.message ?? String(e)}` } };
+        await updatePendingEntry(commandId, { status: 'completed', result });
+        return result;
+      }
+    }
+    let result;
+    try {
+      let dnrResult;
+      if (sentinel === '__SP_DNR_ADD_RULE__') dnrResult = await handleDnrAddRule(parsed);
+      else if (sentinel === '__SP_DNR_REMOVE_RULE__') dnrResult = await handleDnrRemoveRule(parsed);
+      else {
+        const r = { ok: false, error: { name: 'UNKNOWN_DNR_SENTINEL', message: `Unknown DNR sentinel: ${sentinel}` } };
+        await updatePendingEntry(commandId, { status: 'completed', result: r });
+        return r;
+      }
+      result = { ok: true, value: JSON.stringify(dnrResult.value ?? null) };
+    } catch (e) {
+      result = { ok: false, error: { name: 'DNR_API_ERROR', message: e?.message ?? String(e) } };
+    }
+    await updatePendingEntry(commandId, { status: 'completed', result });
+    return result;
+  }
+
   // 5A.8: cookie sentinels — bypass storage bus, call browser.cookies directly.
   // Format: __SP_COOKIE_<OP>__:<json-params>. The JS path cannot see/set
   // httpOnly cookies; this routes through the extension API which can.

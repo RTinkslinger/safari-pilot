@@ -12,6 +12,7 @@ import { InteractionTools } from './tools/interaction.js';
 import { ExtractionTools } from './tools/extraction.js';
 import { NetworkTools } from './tools/network.js';
 import { StorageTools } from './tools/storage.js';
+import { AuthTools } from './tools/auth.js';
 import { ShadowTools } from './tools/shadow.js';
 import { FrameTools } from './tools/frames.js';
 import { PermissionTools } from './tools/permissions.js';
@@ -320,6 +321,7 @@ export class SafariPilotServer {
     const extractionTools = new ExtractionTools(proxy, new ScreenshotPolicy(this.config.screenshotPolicy));
     const networkTools = new NetworkTools(proxy);
     const storageTools = new StorageTools(proxy);
+    const authTools = new AuthTools(proxy);
     const shadowTools = new ShadowTools(proxy);
     const frameTools = new FrameTools(proxy);
     const permissionTools = new PermissionTools(proxy);
@@ -353,6 +355,7 @@ export class SafariPilotServer {
       extractionTools,
       networkTools,
       storageTools,
+      authTools,
       shadowTools,
       frameTools,
       permissionTools,

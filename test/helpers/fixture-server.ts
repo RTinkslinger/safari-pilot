@@ -31,6 +31,26 @@ function makeHandler() {
     // cookie in the browser — the JS API can't. Asserting safari_get_cookies
     // sees this cookie back with httpOnly:true is the litmus for the
     // extension routing actually working end-to-end.
+    // 5A.9 basic-auth fixture: respond 401 with WWW-Authenticate until the
+    // request carries the expected Authorization: Basic <b64(testuser:testpass)>
+    // header. Used by the auth e2e to verify safari_authenticate's DNR
+    // injection actually lands on the wire.
+    if (url === '/auth-protected') {
+      const expected = 'Basic ' + Buffer.from('testuser:testpass', 'utf-8').toString('base64');
+      const header = req.headers['authorization'];
+      if (header === expected) {
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        res.end('<!DOCTYPE html><html><body><h1 id="ok">authenticated</h1></body></html>');
+        return;
+      }
+      res.writeHead(401, {
+        'Content-Type': 'text/html; charset=utf-8',
+        'WWW-Authenticate': 'Basic realm="test"',
+      });
+      res.end('<!DOCTYPE html><html><body><h1 id="denied">401 unauthorized</h1></body></html>');
+      return;
+    }
+
     if (url === '/cookie-fixture') {
       res.writeHead(200, {
         'Content-Type': 'text/html; charset=utf-8',
