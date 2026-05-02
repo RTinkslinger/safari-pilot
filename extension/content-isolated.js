@@ -246,8 +246,10 @@
     const probeFile = new File([signature], 'probe.bin', { type: 'application/octet-stream' });
 
     const mainResponse = await new Promise((resolve) => {
+      let timeoutId;
       const handler = (ev) => {
         if (ev.data && ev.data.op === 'file_upload_probe_test_response') {
+          clearTimeout(timeoutId);
           window.removeEventListener('message', handler);
           resolve(ev.data.payload);
         }
@@ -258,7 +260,7 @@
         commandId: cmd.commandId,
         file: probeFile,
       }, '*');
-      setTimeout(() => {
+      timeoutId = setTimeout(() => {
         window.removeEventListener('message', handler);
         resolve({ ok: false, error: 'MAIN-world response timeout (2s)' });
       }, 2000);
