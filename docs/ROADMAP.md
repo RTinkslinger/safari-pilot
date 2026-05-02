@@ -132,6 +132,70 @@ The entire differentiator. If extension engine doesn't work, Safari Pilot is jus
 
 ---
 
+## Phase 5A: Parity Closure (Clusters 1–7)
+
+After Phase 5 ships extension engine end-to-end (T55a frame-aware storage bus + T60 dormancy fix, both merged 2026-05-02), the next sprint closes every agent-relevant gap and partial across Clusters 1–7 of the Playwright parity matrix. Two acceptable exceptions are documented structural ceilings (WebKit Inspector access for body-rewrite; single-instance Safari for multi-context isolation). Two items are explicitly deferred as agent-irrelevant. By the end of 5A, no agent-relevant capability in Clusters 1–7 sits at ✗ or ◆ in the parity matrix.
+
+**Why a phase, not a backlog dump.** These items hardened in cluster order have stronger compounding value than picking off one P3 a sprint. Locator chaining changes how Cluster 3 tests are written; cookie-via-extension changes how auth flows are tested; HAR replay changes how tests can be sealed. Land them as a unit.
+
+### Group A — Cluster gaps to close
+
+| # | Capability | Cluster | Status today | Closure approach |
+|---|---|---|---|---|
+| 5A.1 | `safari_file_upload` (T41) | 1 | ✗ | macOS Accessibility / CGEvent. Full UPP brainstorm → spec → plan. |
+| 5A.2 | Download API parity | 1 | ◆ | Extend `safari_wait_for_download` with event + save-path control; match Playwright's `page.on('download')` surface. |
+| 5A.3 | Right-click + middle-click | 2 | ✗ | Add `button: 'left'\|'right'\|'middle'` to `safari_click`. |
+| 5A.4 | XPath as first-class locator | 3 | ◆ | Add `xpath` param on every interaction tool alongside `selector`/`role`/`text`/etc. |
+| 5A.5 | Locator chaining (nth · filter) | 3 | ✗ | Add `nth`, `filter` params to ref/locator resolution. Real agent need — currently agents fall back to `safari_evaluate`. |
+| 5A.6 | Multi-element extraction | 5 | ◆ | Native `multi: true` mode on extraction tools — array results, no evaluate workaround. |
+| 5A.7 | HAR record & replay | 6 | ✗ | Atop `safari_list_network_requests`; JSON-serialize captured requests + a `routeFromHAR` matching layer. |
+| 5A.8 | Cookies httpOnly via extension API | 7 | ◆ | Switch from `document.cookie` to `browser.cookies` (already used internally for `cookie_get`/`set`/`remove` background commands). |
+| 5A.9 | HTTP basic / digest auth | 7 | ✗ | Per `docs/research/p3-http-auth-research.md`. |
+
+### Group B — Phase 5 hardening + e2e closure
+
+| # | Capability | Linked tracker | Approach |
+|---|---|---|---|
+| 5A.10 | Recovery / degradation e2e | T42 | Daemon crash recovery, window close recovery, extension disconnect fallback, circuit breaker trip/recovery. Covers init spec criteria #4/5/7. |
+| 5A.11 | Concurrent MCP sessions e2e | SD-32-followup | Assert Session A's keepalive survives Session B's startup. Closes Phase 4.4. |
+| 5A.12 | NDJSON line-split fix | ROADMAP-flake | Long click JS payloads with embedded newlines break the daemon's line-based JSON parser under parallel test load. Frame-based or length-prefixed protocol. |
+| 5A.13 | Cluster 1–7 e2e coverage | T43 (subset) | Every tool referenced in Group A + every Cluster-1–7 tool in the current registry gets one real e2e on a release-mode build. Full T43 (61 tools) stays Phase 6. |
+| 5A.14 | `npm run test:e2e:harness` | T64 followup | Auto-build with `SAFARI_PILOT_TEST_MODE=1` before running harness-dependent tests; restore release build after. |
+
+### Group C — Documented structural ceilings (no work, doc only)
+
+These cannot close without an architectural mode shift (WebDriver-BiDi, multi-month research arc tracked separately as candidate Phase 8). They get explicit annotation in the parity matrix and tracker, not pretend-work.
+
+| # | Item | Cluster | Why structural |
+|---|---|---|---|
+| 5A.X1 | Multi-context isolation | 1 | Safari is single-instance by macOS design. Private windows are the closest mechanism. |
+| 5A.X2 | Route modification body-rewrite (~15% remainder) | 6 | WebKit Inspector Protocol not exposed to extensions. See `docs/research/p3-route-modification-research.md`. |
+| 5A.X3 | Mock responses for non-JS-initiated resources | 6 | Same ceiling as 5A.X2. |
+
+### Group D — Deferred as agent-irrelevant
+
+| # | Item | Cluster | Why deferred |
+|---|---|---|---|
+| 5A.D1 | Touch gestures | 2 | Mobile-emulation testing feature. AI agents almost never need touch — `safari_click` covers desktop Safari interaction. |
+| 5A.D2 | Custom selector engines (`selectors.register()`) | 3 | Test-framework feature for embedding custom DSLs. Agent-irrelevant. |
+
+### Exit criteria (non-negotiable)
+
+- Clusters 1–7 in the Playwright parity matrix show zero ✗ and zero ◆ except the three Group C ceiling rows annotated `(structural — see notes)`.
+- Every Group A capability has e2e coverage on a release-mode (non-TEST_MODE) build.
+- All 9 T55a e2e tests green: `test/e2e/t55a-*.test.ts`.
+- Tracker actionable-open: zero P0/P1; at most two P2.
+- Refreshed parity-matrix PDF (`/Users/Aakash/Claude Projects/Documents/safari-pilot-vs-playwright-parity.pdf`) showing closure.
+- ROADMAP.md "Shipped" table updated with the 5A row.
+
+### Approach
+
+Strict UPP pipeline per item: brainstorm → spec → plan → TDD → verify, per `~/.claude/CLAUDE.md` UPP rules. No batching across items — each Group A item gets its own cycle. Parallelism allowed across Group A and Group B (different surfaces) but not across two Group A items (avoids cross-cutting refactor risk in the locator system).
+
+**Decisions confirmed (2026-05-02):** Accept the three structural ceilings and document them. Defer the two agent-irrelevant items. Pragmatic strictness — exit criteria above are the bar, not "every row green."
+
+---
+
 ## Phase 6: Advanced Capabilities
 
 Only after Phases 1-5 are proven live.

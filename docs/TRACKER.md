@@ -147,6 +147,8 @@ Pre-2026-04-25 sprint resolved entries (SD-01..SD-28, T13..T25 originals): see a
 
 **Actionable open: 5** (T41/T42/T43 features + ROADMAP-flake + SD-32-followup). T64 RESOLVED-AS-DOCUMENTED 2026-05-02 — was a build-mode dependency, not a bug.
 
+**All 5 actionable items + 9 new closures fold into Phase 5A (Parity Closure, Clusters 1–7).** See `docs/ROADMAP.md` § Phase 5A for the full sprint plan. Decisions confirmed 2026-05-02: accept 3 structural ceilings (multi-context isolation, route-modification body-rewrite, mock non-JS resources) + defer 2 agent-irrelevant items (touch gestures, custom selector engines) + pragmatic exit criteria (zero P0/P1, ≤2 P2, Cluster 1–7 parity zero ✗/◆ except annotated ceiling rows).
+
 | Category | Count | IDs |
 |---|---|---|
 | P3 missing features / e2e sub-sprints | 3 | **T41** (build `safari_file_upload`), **T42** (recovery/degradation e2e), **T43** (61-untested-tools e2e — multi-week) |
