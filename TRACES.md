@@ -92,6 +92,40 @@ No source code changed this iteration — pure design artifact. First source-cod
 **Commits:** `fd9041c` (spec v1) `9ebafbc` (spec v2 — architecture switch) `8a670e7` (spec v4 final) `6a974bf` (plan).
 
 ---
+
+### Iteration 51 - 2026-05-03
+**What:** Phase 5A · 5A.1 executing-plans started — Phase 0 GATING scaffolding shipped + Phase 1 first task. 3/21 tasks complete on `feat/file-upload` branch. 5 commits. Tasks 4 (mime.ts), 5 (path-resolve.ts), 6 (handler) next.
+
+**Changes:**
+- `extension/background.js` (~297-343, +48 lines) — `__SP_FILE_UPLOAD_PROBE_TEST__` sentinel branch in `executeCommand`. Routes via storage bus to content-isolated.js with full storage-bus shape (tabId, method:'execute_script', params.script, commandId, deadline, 15s timeout, keepAlive 10s ping, listener-before-write ordering). Mirrors cookie/DNR sentinel pattern (`updatePendingEntry(commandId, { status:'completed', result })`).
+- `extension/content-isolated.js` (~167-284, +74 lines) — `handleFileUploadProbeTest(cmd)` intercepts inside `processStorageCommand` by `cmd.method === 'execute_script' && cmd.params.script.startsWith('__SP_FILE_UPLOAD_PROBE_TEST__')`, mirroring `__SP_TEST_HARNESS__:` pattern. Test A: `fetch('http://127.0.0.1:19475/health')` with try/catch. Test B: build `File([SPFUBYTE], 'probe.bin', 'application/octet-stream')`, postMessage to MAIN, await response with 2s timeout. Result wire format `{ ok: true, value: JSON.stringify(probeResults) }` where probeResults = `{ fetchOk, fetchStatus?, structuredCloneOk, mainResponse, errors[] }`. clearTimeout on success path (code-quality reviewer Important fix).
+- `extension/content-main.js` (~279-327, +50 lines) — `window.addEventListener('message', ...)` for `file_upload_probe_test_request`. Verifies `instanceof File` AND byte-equality of SPFUBYTE signature. Responds `file_upload_probe_test_response` with `payload.ok = true` ONLY if both hold.
+- `test/e2e/5A1-phase0-spike.test.ts` (NEW, 95 lines) — 2 GATING e2e tests verifying Approach 3 architectural assumptions. Uses `${baseHttpUrl}/cookie-fixture?sp_t5A1_{a,b}=${Date.now()}` (NOT `about:blank` — content scripts don't inject on about: scheme under <all_urls>). 1500ms settle delay after safari_new_tab. Fixture lifecycle in beforeAll/afterAll. RED until v0.1.22 ships in Phase 7.
+- `src/errors.ts` (+151 lines) — 10 new ERROR_CODES (`FILE_UPLOAD_PATH_NOT_FOUND/_NOT_READABLE/_NOT_ABSOLUTE/_FILE_TOO_LARGE/_TOO_MANY_FILES/_EMPTY_PATHS/_INVALID_ELEMENT/_ELEMENT_DETACHED/_MULTIPLE_NOT_ALLOWED/_INVALID_PARAMS`) + 10 typed `FileUpload*Error` subclasses extending `SafariPilotError`. Only `FileUploadElementDetachedError` is `retryable=true`. `FileUploadFileTooLargeError.cap = 26_214_400` (25 MiB). All carry typed `readonly` fields (path, suggestion?, size, count, tagName, type, ref?).
+- `test/unit/errors-file-upload.test.ts` (NEW, 80 lines) — 6 unit tests verifying all 10 codes exist, typed property carriers on 4 representative classes, all 10 errors are `instanceof SafariPilotError` with `FILE_UPLOAD_*` prefix. All pass.
+
+**Context:**
+
+Branch lifecycle: created `feat/file-upload` from `main` (per safari-pilot CLAUDE.md branch protocol). 5 commits on branch, none pushed yet.
+
+UPP executing-plans subagent mode: every task dispatched a fresh implementer + spec compliance reviewer + code quality reviewer. Two fix cycles invoked: (1) Task 1 code-quality flagged dangling 2s setTimeout in probe handler (no clearTimeout on success path) → fix landed at `cad67de`. (2) Task 2 code-quality CRITICAL flagged `about:blank` doesn't inject content scripts under `<all_urls>` matches — false-negative gate. Fixed by switching to fixture origin + adding fixture lifecycle + 1500ms settle delay → fix landed at `e6eb3fd`. New RED failure mode `Can't find variable: __SP_FILE_UPLOAD_PROBE_TEST__` is architecturally meaningful — proves content scripts inject, ownership registers, and only the sentinel handler is correctly missing in v0.1.21.
+
+Plan-level errors caught by reviewers (worth flagging back to plan author):
+1. Task 1 micro-manifest snippet had three bugs: used non-existent `cmd.commandId` (it's `cmd.id` at background.js:209), used a minimal storage-bus shape that fails the handshake state machine, returned undefined which `pollLoop` would have passed to `postResult()`. Implementer corrected by mirroring existing sentinel patterns precisely.
+2. Task 2 plan claimed alphabetical sort puts `5A1-phase0-spike` before `5A1-file-upload` — wrong (`f` < `p`). Plan's Phase 7 step 7 enforces gate by running spike file separately, so default vitest ordering doesn't matter for gate correctness. Plan documentation should be corrected.
+3. Task 3 micro-manifest's `super(code, message, retryable, hints)` snippet didn't match `SafariPilotError(message, options?)` signature. Existing pattern: `code`/`retryable`/`hints` as `readonly` class fields. Implementer used the existing pattern.
+
+Code-quality reviewer Important findings deferred to Task 6:
+- `FileUploadPathNotReadableError.hints = []` and `FileUploadInvalidParamsError.hints = []` should have agent-actionable hints. Fold into Task 6.
+- `cap` (26_214_400) and `MAX_FILES` (4) should be exported as named constants from `src/errors.ts` (or a shared constants file) before Task 6's handler is written, to prevent inline duplication.
+- Optional retryability sweep test (one-liner): `expect(err.retryable).toBe(err instanceof FileUploadElementDetachedError)`.
+
+**Next session resumes at Task 4 (`src/tools/mime.ts` — extension lookup helper) per CHECKPOINT.md.**
+
+**Commits:** `9e67332` (Task 1 spike scaffolding) `cad67de` (Task 1 fix: clearTimeout) `8ff3153` (Task 2 RED spike e2e) `e6eb3fd` (Task 2 fix: fixture origin) `a234937` (Task 3 error codes + subclasses).
+
+---
+
 ### Iteration 49 - 2026-05-02
 **What:** Phase 5A · Group A · Chunk 2 item 1 = 5A.7 HAR record & replay shipped + verified GREEN against existing v0.1.21 install. Path B chosen (interceptor enhancement to capture headers + new HAR tools) over path A (TS-only with empty headers). All page-side TS — NO extension rebuild needed. 5 commits, 55 new tests (52 unit + 3 e2e) all green.
 

@@ -1,111 +1,121 @@
 # Checkpoint
-*Written: 2026-05-03 02:35*
+*Written: 2026-05-03 02:35 (updated 02:50)*
 
 ## Current Task
-Phase 5A · Group A · Chunk 2 item 2 = **5A.1 T41 `safari_file_upload`** — brainstorm + spec + plan COMPLETE; awaiting `upp:executing-plans` handoff. Multi-day work targeting v0.1.22 rebuild.
+Phase 5A · 5A.1 `safari_file_upload` — `upp:executing-plans` IN PROGRESS on `feat/file-upload` branch. **3 of 21 tasks complete**: Phase 0 GATING scaffolding (Tasks 1+2) + Phase 1 first task (Task 3 error codes). Next is Task 4 (`src/tools/mime.ts`).
 
 ## Progress
 
 ### Phase 5A · Group A — chunk-by-chunk
-- [x] **5A.3** right-click + middle-click + modifiers — `6ae37db` (TS-only sub-batch)
-- [x] **5A.6** multi-element extraction — `e918ddf` (TS-only sub-batch)
-- [x] **5A.4** xpath as first-class locator — `5de6d74` (TS-only sub-batch)
-- [x] **5A.5** locator chaining (nth · filter) — `2824d53` (TS-only sub-batch)
-- [x] **5A.8** cookies httpOnly via browser.cookies — `979be01` (chunk 1)
-- [x] **5A.2** download saveAs post-process — `bb7f4d4` (TS-only standalone)
-- [x] **5A.9** HTTP basic auth via DNR — `5104487` (chunk 1)
-- [x] **REBUILD CHECKPOINT 1 v0.1.20 + v0.1.21 fix bundle** — `b0b5977`
-- [x] **5A.7** HAR record & replay (chunk 2 item 1) — 5 commits ending `597b1b4` + checkpoint `5d1844d`
-- [x] **5A.1 brainstorm pipeline** — spec `fd9041c`/`9ebafbc`/`8a670e7` + plan `6a974bf`
-- [ ] **5A.1 EXECUTE plan** ← **NEXT** (21 tasks across 9 phases; Phase 0 GATING)
-- [ ] → REBUILD CHECKPOINT 2 (v0.1.22) ships at end of Phase 7
+- [x] **5A.3/4/5/6/8/2/9** Group A chunk 1 + TS-only items shipped (prior sessions)
+- [x] **5A.7** HAR record & replay (chunk 2 item 1)
+- [x] **5A.1 brainstorm + spec + plan** (iter 50)
+- [x] **5A.1 Task 1** Phase 0 spike scaffolding (extension JS) — `9e67332` + `cad67de`
+- [x] **5A.1 Task 2** Phase 0 spike e2e tests (RED until v0.1.22) — `8ff3153` + `e6eb3fd`
+- [x] **5A.1 Task 3** Error codes + 10 FileUploadError subclasses — `a234937`
+- [ ] **5A.1 Task 4** `src/tools/mime.ts` ← **NEXT**
+- [ ] **5A.1 Task 5** `src/path-resolve.ts`
+- [ ] **5A.1 Task 6** `src/tools/file-upload.ts` (largest task, opus recommended)
+- [ ] **5A.1 Tasks 7–10** Daemon Swift (FileStagingStore, stage_file NDJSON, /file-bytes routes, TTL cleanup)
+- [ ] **5A.1 Tasks 11–13** Extension JS (background sentinels, content-isolated bytefetch+DELETE, content-main DataTransfer injection)
+- [ ] **5A.1 Task 14** Fixture endpoints (/upload-fixture, /upload-validate)
+- [ ] **5A.1 Tasks 15–18** E2E suite (core, RHF, edge, concurrency)
+- [ ] **5A.1 Task 19** v0.1.22 release (USER GATE — manual `open "bin/Safari Pilot.app"`)
+- [ ] **5A.1 Tasks 20–21** Smoke + docs
 - [ ] Phase 5A · Group B (5A.10–5A.14)
 
-## Key Decisions (not yet persisted)
+## Key Decisions (already persisted in TRACES.md iter 51)
 
-All decisions for the 5A.1 brainstorm pipeline are captured in the committed spec + plan + their commit messages. Specifically:
-
-- **Architecture**: Approach 3 (out-of-band HTTP byte fetch) chosen over Approach 1 (storage bus base64) per engineering CRITICAL — no empirical evidence storage.local handles multi-MB writes in Safari Web Extensions.
-- **Phase 0 spike** is a GATING test in v0.1.22 — verifies content-script `fetch('http://127.0.0.1:19475/...')` works AND `File` objects survive ISOLATED→MAIN structured-clone via `window.postMessage`. If either fails, ABORT 5A.1 and re-open design (no v0.1.22 ships).
-- **API divergence from Playwright**: empty `paths: []` is rejected (FILE_UPLOAD_EMPTY_PATHS) instead of clearing the input — explicit `clear: true` required. Removes silent-destruction foot-gun for agent-constructed arrays.
-- **No path allowlist** (Playwright/Selenium parity). Symlink resolution logged to `server-trace.ndjson` but not blocked.
-- **Cap**: 25 MB / file × 4 / call.
-- **10 new error codes**, 9-phase plan with 21 tasks total.
-
-TRACES.md NOT updated this session — only documentation artifacts (spec + plan) were committed; no source code changed yet. First source-code iteration starts at executing-plans Phase 1, which is when iteration 50 will be opened.
+All decisions documented in iteration 51 entry. Highlights:
+- Branch `feat/file-upload` created from `main` (CLAUDE.md branch protocol).
+- Subagent mode for executing-plans: every task dispatched implementer + 2 reviewers (spec + quality). 2 fix cycles invoked so far (clearTimeout, about:blank → fixture origin).
+- Plan documentation errors caught by reviewers: 3 micro-manifest snippet bugs corrected by implementers (cmd.commandId vs cmd.id, super(...) signature, alphabetical sort claim). Functional contract preserved.
 
 ## Next Steps
 
-### Resume executing-plans (chunk 2 item 2 = 5A.1)
+### Resume at Task 4 (`src/tools/mime.ts`)
+
+The plan section is at lines 554+ of `docs/upp/plans/2026-05-03-safari-file-upload-plan.md`. Read and dispatch via:
 
 ```
 Skill tool → upp:executing-plans
-args: docs/upp/plans/2026-05-03-safari-file-upload-plan.md
-mode: subagent (recommended) | inline
+args: docs/upp/plans/2026-05-03-safari-file-upload-plan.md (subagent mode)
 ```
 
-The plan is structured for either mode. Subagent mode is the spec's recommendation; the controller dispatches a fresh subagent per task with the three-stage review pipeline (spec compliance, code quality, design — though design gate is N/A here, no DESIGN.md).
+When resuming, the controller should:
+1. Verify branch state (`git status` should show clean working tree on `feat/file-upload`, 5 commits ahead of `main`).
+2. Read TaskList — Tasks 60-77 still pending (Task 4 = #60, Task 5 = #61, etc.). Task 1-3 = #57-59 marked completed.
+3. Continue dispatching from Task 4 onward.
 
-### Hard gates encoded in the plan
+### TASK 6 PREREQUISITES (folded findings from Task 3 reviewer)
+
+Before dispatching Task 6 implementer, ensure these are addressed:
+
+1. **Add named constant exports to `src/errors.ts`** (or new `src/constants.ts`):
+   ```typescript
+   export const FILE_UPLOAD_SIZE_CAP = 26_214_400;  // 25 MiB
+   export const FILE_UPLOAD_MAX_FILES = 4;
+   ```
+   And update `FileUploadFileTooLargeError.cap` to reference the constant. Update `FileUploadTooManyFilesError` message template to interpolate `FILE_UPLOAD_MAX_FILES`. The handler at `src/tools/file-upload.ts` will enforce these caps using the same constants.
+
+2. **Add hints to two empty-hints error classes**:
+   - `FileUploadPathNotReadableError.hints = ['Check file permissions (chmod +r), verify the path is a regular file (not a directory), and confirm it contains no NUL bytes.']`
+   - `FileUploadInvalidParamsError.hints = ['Check the tool input schema — paths must be absolute, mimeOverrides keys must match entries in paths.']`
+
+3. **Optional retryability sweep test** (test #6 in `test/unit/errors-file-upload.test.ts`):
+   ```typescript
+   expect(err.retryable).toBe(err instanceof FileUploadElementDetachedError);
+   ```
+
+### Hard gates encoded in the plan (still apply)
 
 1. **Phase 0 e2e tests run FIRST in Phase 7 step 7** — architectural gate. Both must pass (content-script fetch + File structured-clone) or 5A.1 ABORTS.
 2. **Version bump before rebuild** — `package.json` + `extension/manifest.json` both at 0.1.22 BEFORE `update-daemon.sh` or `build-extension.sh`.
 3. **User installs `.app` manually** — agent never invokes system tools (per `feedback-no-system-manipulation`). Tell the user to `open "bin/Safari Pilot.app"`, wait for confirmation.
-4. **TDD reviewer gate per task** — `upp:test-reviewer-fast` for ≤3 tests, `upp:test-reviewer` for >3.
+4. **TDD reviewer gate per task** — `upp:test-reviewer-fast` for ≤3 tests, `upp:test-reviewer` for >3. (Plan often says fast where full is correct — reviewer to use full when count > 3.)
 
-### Phase 0 spike must run BEFORE 5A.1 e2e
+### Plan documentation errors to correct in a follow-up commit (non-blocking)
 
-Vitest's alphabetical default already orders `test/e2e/5A1-phase0-spike.test.ts` before `test/e2e/5A1-file-upload.test.ts` — no special wiring needed. But the runner in Phase 7 step 7 must be invoked separately to assert the gate before continuing to step 8.
+- Task 1 micro-manifest: `cmd.commandId` should be `cmd.id`. Storage-bus dispatch shape needs `tabId/method/deadline/params`, not minimal `{op,commandId}`.
+- Task 2 alphabetical-order claim: `5A1-file-upload` actually sorts BEFORE `5A1-phase0-spike` (`f` < `p`). Plan's Phase 7 step 7 enforces gate by running spike file separately, so order is moot for correctness.
+- Task 3 `super(code, message, retryable, hints)` snippet: `SafariPilotError(message, options?)` is the actual signature. `code`/`retryable`/`hints` are readonly class fields per existing pattern.
 
 ## Context
 
 ### Branch state
-- on `main`, all commits pushed up to `6a974bf`
-- 14 unpushed commits ahead of origin/main since last push
-- Pre-existing untracked files (leave alone): `daemon/CLAUDE.md`, `daemon/TRACES.md`, `handoffs/`, `.claude/scheduled_tasks.lock`
-- Stale stashes from 2026-04-16 `feat/file-download-handling` branch — DO NOT `git stash pop` in any composed `&&` command
+- on `feat/file-upload`, 5 commits ahead of `main`
+- last commit: `a234937 feat(5A.1 phase-1): 10 FileUpload error codes + typed subclasses`
+- working tree clean
+- pre-existing untracked files (leave alone): `daemon/CLAUDE.md`, `daemon/TRACES.md`, `handoffs/`, `.claude/scheduled_tasks.lock`
+- Stale stashes from 2026-04-16 — DO NOT `git stash pop` in any composed `&&` command
 
-### Test state (going into Phase 0 implementation)
-- **402 unit tests passing** (after 5A.7 add of +52)
-- **27 e2e tests passing** (4 right-click + 4 multi-extract + 4 xpath + 5 locator-chaining + 4 cookies + 3 auth + 3 HAR record/replay)
-- Phase 0 implementation will add: 2 new e2e tests (RED until v0.1.22 install)
-- Full implementation will add: ~42 unit tests + 13 e2e tests
+### Test state going into Task 4
+- **402 + 6 = 408 unit tests passing** (Task 3 added 6)
+- **27 + 2 = 29 e2e tests** (Task 2 added 2 RED-by-design until v0.1.22)
+- All non-spike e2e tests still GREEN against v0.1.21 install
 
 ### Active extension version
 - **v0.1.21** installed and verified
-- Will bump to **v0.1.22** at Phase 7 of the plan
-- v0.1.22 ships ALL of Phase 0 + Phase 1–6 + Phase 8 work in one rebuild
+- Will bump to **v0.1.22** at Phase 7 (Task 19) of the plan
 
 ### 5A.1 spec + plan locations
 - Spec: `docs/upp/specs/2026-05-03-safari-file-upload-design.md` (final commit `8a670e7`)
 - Plan: `docs/upp/plans/2026-05-03-safari-file-upload-plan.md` (commit `6a974bf`, 21 tasks, 3273 lines)
 
-### Memory rules to remember (load-bearing for execution)
-- `feedback-debugging-discipline`: Use `upp:systematic-debugging` for any bug, never ad-hoc.
+### Memory rules (load-bearing for execution)
+- `feedback-debugging-discipline`: use `upp:systematic-debugging` for any bug, never ad-hoc.
 - `feedback-no-system-manipulation`: NEVER invoke system tools to manipulate extension state — only the user's manual `open "bin/Safari Pilot.app"` flow.
-- `reference-extension-enablement-workaround`: Develop > Allow Unsigned Extensions toggle for first-install enable if Safari blocks with click-interference error.
-- `feedback-extension-version-both-fields`: Bump package.json AND extension/manifest.json BEFORE any extension rebuild.
-- `feedback-never-open-app-without-version-bump`: Never `open bin/Safari Pilot.app` after rebuild without bumping first.
-- `feedback-distribution-builds`: Source changes to `extension/*.js` or `daemon/Sources/**/*.swift` must be followed by rebuild + sign + notarize.
+- `feedback-extension-version-both-fields`: bump package.json AND extension/manifest.json BEFORE any extension rebuild.
+- `feedback-never-open-app-without-version-bump`: never `open bin/Safari Pilot.app` after rebuild without bumping first.
+- `feedback-distribution-builds`: source changes to `extension/*.js` or `daemon/Sources/**/*.swift` must be followed by rebuild + sign + notarize.
 - `feedback-e2e-means-e2e`: e2e tests use real processes/protocols/Safari; zero mocks.
-- `feedback-e2e-tests-must-close-tabs`: Every test that opens a tab MUST close it in afterAll. URL markers `?sp_t<N>=`.
-- `feedback-never-switch-user-tabs`: Never activate Safari, switch, or navigate user tabs.
+- `feedback-e2e-tests-must-close-tabs`: every test that opens a tab MUST close it in afterAll. URL markers `?sp_t<N>=`.
+- `feedback-never-switch-user-tabs`: never activate Safari, switch, or navigate user tabs.
 
 ### Architectural risk to track during execution
-The Phase 0 spike is genuinely uncertain. Best estimate: 70% chance both assumptions pass (Safari WebExtensions follow Chromium-like CSP behavior on content scripts; structured clone of File is universal across browsers). Worst case is Approach 3 dies and we either:
-
+The Phase 0 spike is genuinely uncertain. Best estimate: 70% chance both assumptions pass. Worst case (Approach 3 dies):
 1. Move File construction to MAIN world with bytes shipped via fragmented postMessage (workable but adds complexity)
 2. Abandon Approach 3 and accept a smaller cap with Approach 1 storage bus (~5 MB single-file)
 3. Abandon page-side injection entirely and pursue AX-driven NSOpenPanel automation in the daemon (multi-week scope)
 
 If Phase 0 fails, stop the plan; do not attempt a workaround inline. Open a follow-up design pass.
-
-### Brainstorm pipeline summary (for narrative continuity)
-- Discovery: 6 AskUserQuestion rounds across 5 lenses
-- 3 architecture approaches presented; user picked Approach 3 after engineering review forced switch from Approach 1
-- 2 design-pass reviews (eng + product) → spec v1
-- 2 spec-pass reviews on v1 → spec v2 (architecture switch + 13 fixes)
-- 2 spec-pass reviews on v2 → spec v3 (5 small clarifications)
-- 2 spec-pass reviews on v3 → spec v4 final (10 small clarifications)
-- All review verdicts: PASS / SHIP after final round
-- Plan derived from final spec; self-review pass; 21 tasks committed
