@@ -120,7 +120,9 @@ Code-quality reviewer Important findings deferred to Task 6:
 - `cap` (26_214_400) and `MAX_FILES` (4) should be exported as named constants from `src/errors.ts` (or a shared constants file) before Task 6's handler is written, to prevent inline duplication.
 - Optional retryability sweep test (one-liner): `expect(err.retryable).toBe(err instanceof FileUploadElementDetachedError)`.
 
-**Next session resumes at Task 7 (FileStagingStore Swift actor — first daemon-side task) per CHECKPOINT.md.**
+**Next session resumes at Task 15 (first Phase 6 e2e — core file_upload tests, RED until v0.1.22 ships) per CHECKPOINT.md.**
+
+Session continuation: Tasks 7-14 also shipped this iteration (daemon Swift Phase 3, extension JS Phase 4, fixture endpoints Phase 5). 14/21 tasks total complete. All non-rebuild work is done; remaining tasks (15-21) are e2e + release + smoke + docs.
 
 **Commits Phase 0 + Phase 1 + Phase 2:** `9e67332` (Task 1 spike scaffolding) `cad67de` (Task 1 fix: clearTimeout) `8ff3153` (Task 2 RED spike e2e) `e6eb3fd` (Task 2 fix: fixture origin) `a234937` (Task 3 error codes + subclasses) `09c836f` (mid-iter checkpoint) `8a9776f` (Task 4 mime helper) `df79f90` (Task 5 path-resolve) `e736399` (Task 5 fix: portable test paths) `0a0662b` (Task 6 file-upload handler) `90aa71f` (Task 6 fix: DaemonEngine injection — runtime path).
 
