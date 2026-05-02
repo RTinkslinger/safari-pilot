@@ -41,6 +41,11 @@ public final class CommandDispatcher: @unchecked Sendable {
     /// never construct a second instance pointing at the same persistPath.
     public let healthStore: HealthStore
 
+    /// Token-keyed byte staging for safari_file_upload (Phase 5A.1).
+    /// Shared with the HTTP server so GET /file-bytes/<token> can serve bytes
+    /// staged here without a second copy.
+    public let stagingStore: FileStagingStore
+
     // MARK: Init
 
     public init(
@@ -48,13 +53,15 @@ public final class CommandDispatcher: @unchecked Sendable {
         outputSink: @escaping OutputSink,
         executor: ScriptExecutorProtocol,
         extensionBridge: ExtensionBridge = ExtensionBridge(),
-        healthStore: HealthStore
+        healthStore: HealthStore,
+        stagingStore: FileStagingStore = FileStagingStore()
     ) {
         self.lineSource = lineSource
         self.outputSink = outputSink
         self.executor = executor
         self.extensionBridge = extensionBridge
         self.healthStore = healthStore
+        self.stagingStore = stagingStore
     }
 
     // MARK: - Run Loop
@@ -214,6 +221,67 @@ public final class CommandDispatcher: @unchecked Sendable {
             // engineCircuitBreakerState, killSwitchActive).
             let snapshot = extensionBridge.healthSnapshot(store: healthStore)
             return Response.success(id: command.id, value: AnyCodable(snapshot))
+
+        case "stage_file":
+            // Phase 5A · 5A.1 — token-keyed byte staging for safari_file_upload.
+            // TS handler ships bytes via daemon.command('stage_file', {token, mimeType, bytesB64});
+            // extension content-isolated.js fetches via GET /file-bytes/<token> (Task 9).
+            guard let tokenParam = command.params["token"],
+                  let token = tokenParam.value as? String,
+                  token.count == 64,
+                  token.allSatisfy({ $0.isHexDigit }) else {
+                return Response.failure(
+                    id: command.id,
+                    error: StructuredError(
+                        code: "INVALID_TOKEN",
+                        message: "stage_file token must be 64 hex chars",
+                        retryable: false
+                    )
+                )
+            }
+            guard let mimeParam = command.params["mimeType"],
+                  let mimeType = mimeParam.value as? String else {
+                return Response.failure(
+                    id: command.id,
+                    error: StructuredError(
+                        code: "INVALID_PARAMS",
+                        message: "stage_file requires mimeType",
+                        retryable: false
+                    )
+                )
+            }
+            guard let b64Param = command.params["bytesB64"],
+                  let b64String = b64Param.value as? String,
+                  let bytes = Data(base64Encoded: b64String) else {
+                return Response.failure(
+                    id: command.id,
+                    error: StructuredError(
+                        code: "INVALID_BASE64",
+                        message: "stage_file bytesB64 not valid base64",
+                        retryable: false
+                    )
+                )
+            }
+            guard bytes.count <= 25 * 1024 * 1024 else {
+                return Response.failure(
+                    id: command.id,
+                    error: StructuredError(
+                        code: "FILE_TOO_LARGE",
+                        message: "stage_file bytes exceed 25 MiB",
+                        retryable: false
+                    )
+                )
+            }
+            let staged = StagedFile(
+                bytes: bytes,
+                mimeType: mimeType,
+                expiresAt: Date(timeIntervalSinceNow: 60)
+            )
+            await stagingStore.stage(token: token, file: staged)
+            return Response.success(
+                id: command.id,
+                value: AnyCodable(["staged": true, "token": token] as [String: Any])
+            )
 
         case "watch_download":
             return await handleWatchDownload(commandID: command.id, params: command.params)

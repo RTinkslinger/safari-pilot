@@ -1,6 +1,34 @@
 import Foundation
 import SafariPilotdCore
 
+// MARK: - stage_file dispatch fixture helper
+// Mirrors the CommandDispatcherTests pattern (MockExecutor + makeHealthStoreForTest).
+// stagingStore is the actor under test; the other deps are no-op stand-ins.
+fileprivate func makeDispatcherForStageFileTests(store: FileStagingStore) -> CommandDispatcher {
+    return CommandDispatcher(
+        lineSource: { nil },
+        outputSink: { _ in },
+        executor: MockExecutor(),
+        healthStore: makeHealthStoreForTest(),
+        stagingStore: store
+    )
+}
+
+// MARK: - stage_file command JSON builder
+fileprivate func stageFilePayload(id: String, token: String, mimeType: String, bytesB64: String) throws -> String {
+    let payload: [String: Any] = [
+        "id": id,
+        "method": "stage_file",
+        "params": [
+            "token": token,
+            "mimeType": mimeType,
+            "bytesB64": bytesB64,
+        ]
+    ]
+    let data = try JSONSerialization.data(withJSONObject: payload)
+    return String(data: data, encoding: .utf8)!
+}
+
 func registerFileStagingStoreTests() {
 
     test("testStageAndPeekReturnsBytes") {
@@ -87,5 +115,61 @@ func registerFileStagingStoreTests() {
             }
         }
         try assertTrue(allPresent, "all 50 concurrent stages should be retrievable with correct bytes")
+    }
+
+    // MARK: - stage_file NDJSON command dispatch tests (Task 8 / 5A.1)
+
+    test("testStageFileViaDispatcherSucceeds") {
+        let store = FileStagingStore()
+        let dispatcher = makeDispatcherForStageFileTests(store: store)
+        let token = String(repeating: "a", count: 64)
+        let rawBytes = Data([0x89, 0x50, 0x4E, 0x47])
+        let line = try stageFilePayload(
+            id: "test-stage-1",
+            token: token,
+            mimeType: "image/png",
+            bytesB64: rawBytes.base64EncodedString()
+        )
+        let response = syncAwait { await dispatcher.dispatch(line: line) }
+        try assertTrue(response.ok, "stage_file dispatch must succeed; error: \(response.error?.message ?? "none")")
+        let val = response.value?.value as? [String: Any]
+        try assertTrue(val != nil, "response value must be a dict")
+        try assertTrue(val?["staged"] as? Bool == true, "staged must be true")
+        try assertEqual(val?["token"] as? String, token, "token echo-back")
+        let staged = syncAwait { await store.peek(token: token) }
+        try assertTrue(staged != nil, "bytes should be staged in the store")
+        try assertEqual(staged!.bytes, rawBytes, "byte equality")
+        try assertEqual(staged!.mimeType, "image/png", "mimeType preserved")
+    }
+
+    test("testStageFileRejectsBadToken") {
+        let store = FileStagingStore()
+        let dispatcher = makeDispatcherForStageFileTests(store: store)
+        let line = try stageFilePayload(
+            id: "test-stage-2",
+            token: "too-short",
+            mimeType: "x",
+            bytesB64: Data([1]).base64EncodedString()
+        )
+        let response = syncAwait { await dispatcher.dispatch(line: line) }
+        try assertFalse(response.ok, "bad token must produce error")
+        try assertEqual(response.error?.code, "INVALID_TOKEN", "error code must be INVALID_TOKEN")
+    }
+
+    test("testStageFileRejectsOversizedBytes") {
+        let store = FileStagingStore()
+        let dispatcher = makeDispatcherForStageFileTests(store: store)
+        // 26 MB of zeros — exceeds the 25 MiB cap.
+        let oversized = Data(count: 26 * 1024 * 1024)
+        let token = String(repeating: "b", count: 64)
+        let line = try stageFilePayload(
+            id: "test-stage-3",
+            token: token,
+            mimeType: "application/octet-stream",
+            bytesB64: oversized.base64EncodedString()
+        )
+        let response = syncAwait { await dispatcher.dispatch(line: line) }
+        try assertFalse(response.ok, "oversized bytes must produce error")
+        try assertEqual(response.error?.code, "FILE_TOO_LARGE", "error code must be FILE_TOO_LARGE")
     }
 }
