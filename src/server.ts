@@ -1461,13 +1461,22 @@ end tell'`,
     console.error('Safari Pilot: waiting for extension connection...');
     const initStart = Date.now();
     let extensionConnected = false;
-    for (let i = 0; i < 15; i++) {
-      await new Promise(r => setTimeout(r, 1000));
-      const status = await this.checkExtensionStatus();
-      if (status.ext) {
-        extensionConnected = true;
-        this.setEngineAvailability({ ...this.engineAvailability, extension: true });
-        break;
+    // T55a: dev/test override — SAFARI_PILOT_FORCE_NO_EXTENSION=1 forces the
+    // extension to report unavailable for engine selection. ExtensionEngine.isAvailable()
+    // already honors this at the engine layer, but engineAvailability is populated
+    // here from the /status HTTP probe and read by selectEngine without re-checking
+    // isAvailable(). Without this short-circuit, the env var has no runtime effect.
+    if (process.env['SAFARI_PILOT_FORCE_NO_EXTENSION'] === '1') {
+      console.error('Safari Pilot: SAFARI_PILOT_FORCE_NO_EXTENSION=1 — skipping extension wait, marking unavailable');
+    } else {
+      for (let i = 0; i < 15; i++) {
+        await new Promise(r => setTimeout(r, 1000));
+        const status = await this.checkExtensionStatus();
+        if (status.ext) {
+          extensionConnected = true;
+          this.setEngineAvailability({ ...this.engineAvailability, extension: true });
+          break;
+        }
       }
     }
     const initDuration = Date.now() - initStart;
