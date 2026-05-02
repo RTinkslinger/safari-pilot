@@ -67,6 +67,33 @@ Chunk-1 e2e verification debug used systematic-debugging skill (5A.8 srv_visible
 **Commits:** Chunk 1 — `979be01` (5A.8) `bb7f4d4` (5A.2) `5104487` (5A.9) `b0b5977` (v0.1.21 fix bundle: manifest perm + cookie url-filter + 5A.9 e2e arch).
 
 ---
+
+### Iteration 49 - 2026-05-02
+**What:** Phase 5A · Group A · Chunk 2 item 1 = 5A.7 HAR record & replay shipped + verified GREEN against existing v0.1.21 install. Path B chosen (interceptor enhancement to capture headers + new HAR tools) over path A (TS-only with empty headers). All page-side TS — NO extension rebuild needed. 5 commits, 55 new tests (52 unit + 3 e2e) all green.
+
+**Changes:**
+- `src/tools/har.ts` (NEW) — pure transformer module. `entriesToHar(entries, options?)` produces HAR 1.2 log from interceptor buffer; `harToMockRules(har, options?)` produces safari_mock_request-shaped rules from HAR. Both support filter callbacks at the helper level. HAR-validator-friendly: `-1` sentinels for unmeasured timings, `[]` for absent header/cookie/queryString arrays, `_errorMessage` underscore-prefixed custom key for status:0 entries (HAR spec 2.4).
+- `src/tools/network.ts` — interceptor JS extended (3 helper functions in dispatched script) to capture `entry.requestHeaders` (fetch init.headers normalization across Headers/object/array forms; XHR setRequestHeader override) and `entry.responseHeaders` (fetch response.headers iteration; XHR getAllResponseHeaders parse). Two new tool handlers `safari_dump_har` + `safari_route_from_har` registered with full input schemas. route_from_har translates wire-friendly `methods: string[]` / `urlPatterns: string[]` into helper callbacks; reuses handleMockRequest per rule (no batch script).
+- `test/helpers/fixture-server.ts` — `/har-fixture` endpoint returns `{ id, capturedAt: Date.now() }` JSON keyed by `?id=`. The capturedAt is the litmus differentiator for live-vs-replayed responses.
+- `test/unit/tools/har-serialize.test.ts` (15 tests) — entriesToHar contract: HAR 1.2 shape, query parsing with `+` decoding + duplicates + hash stripping, header roundtrip, postData semantics (omitted vs `text:''`), comma-containing values preserved as single entry, status-0 + error → `_errorMessage` (vs in-flight snapshot omits), entry order preserved across same-timestamp inputs, JSON-roundtrip wire proxy.
+- `test/unit/tools/har-route.test.ts` (21 tests) — harToMockRules contract: GET-only default, methodFilter override, 3xx skip-by-default (301/302/307/308), 1xx + 304 boundary cases via `it.each`, includeRedirects/includeErrors opt-ins, urlFilter, first-wins dedup, header collapse last-of-N (NOT last-of-2), Object.keys shape pin for handleMockRequest input compatibility.
+- `test/unit/tools/interceptor-header-capture.test.ts` (3 tests, smoke gate) — script-content regex assertions: `entry.{request,response}Headers` binding pinned to catch typo'd-key + unwired-local-variable regressions. Explicitly NOT a behavioral test (e2e covers behavior).
+- `test/unit/tools/har-tools-dispatch.test.ts` (13 tests) — recording-engine dispatch boundary: dump_har reads `__safariPilotNetwork.entries`, threads creatorVersion + tabUrl; route_from_har dispatches per-rule mock-install scripts containing `__safariPilotMocks` token, honors all wire-form options.
+- `test/e2e/5A7-har-record-replay.test.ts` (3 tests) — full pipeline: 3 fetches → dump_har → assert HAR shape + X-Sp-Test request header + Content-Type + body captured + JSON-decoded mimeType. Then route_from_har → re-fetch alpha → assert capturedAt EQUALS the captured timestamp (litmus: mock fired, not live server). Then passthrough test for non-captured URL.
+
+**Context:**
+
+Approach decision (start of cycle): user chose Path B over Path A. Path A = ship two TS-only HAR tools with empty headers arrays (interceptor capture not enhanced); Path B = enhance interceptor to capture headers + ship HAR tools. Path B is more useful (full HAR fidelity, downstream Playwright routeFromHAR-compatible) and still TS-only — no extension rebuild required since interceptor JS dispatches via engine.executeJsInTab, not extension code path.
+
+UPP TDD: 4 reviewer gates dispatched. RED-1 har-serialize REVISE → fix unverified-version-source claim + Array.isArray triviality on empty defaults + headers structural-equality vs map/find chain → PASS (15 tests). RED-2 har-route PASS first try (with MAJOR + 3 ADVISORY in-cycle: 100/304/307 boundary it.each, last-of-3 header collapse, Object.keys shape pin). RED-3 interceptor smoke gate REVISE → entry-binding regex pins (`entry.{request,response}Headers\s*[\[=]`) to defeat unwired-local-variable failure mode → PASS (3 tests). RED-4 dispatch PASS first try with 2 MAJOR + 1 advisory addressed in-cycle: methods description correction, includeRedirects parity test, creatorVersion thread-through.
+
+Discovery (no new memory promotion needed): the existing safari_intercept_requests + safari_mock_request infrastructure is engine-agnostic page-side TS — no extension routing. CHECKPOINT predicted "likely needs extension changes" was wrong; reading network.ts revealed the foundation was already complete for HAR. Saved an entire rebuild cycle.
+
+Recovery: a `git stash && npm test && git stash pop` chain (intended to capture pre-HAR test count baseline) sideways-popped a stale 2026-04-16 stash from `feat/file-download-handling` branch. Working tree filled with merge conflicts in extension binaries + deleted-deps files. `git reset --hard HEAD` restored — untracked HAR files preserved (untouched by reset), both stashes preserved (stash-pop conflicts default to keeping the entry). No work lost. Lesson: don't compose `&& git stash pop` with conditional commands that might pop an unrelated pre-existing stash.
+
+**Commits:** `ef1ab4f` (GREEN-1 entriesToHar) `43b61e3` (GREEN-2 harToMockRules) `39528f9` (GREEN-3 interceptor headers) `545929b` (GREEN-4 dump_har + route_from_har handlers) `597b1b4` (e2e closure + /har-fixture endpoint).
+
+---
 ---
 
 ### Iteration 46 - 2026-05-02

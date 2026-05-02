@@ -1,52 +1,54 @@
 # Checkpoint
-*Written: 2026-05-02 13:42*
+*Written: 2026-05-02 23:05*
 
 ## Current Task
-Phase 5A · Group A · **Chunk 1 CLOSED, verified GREEN against v0.1.21.** Next up: Chunk 2 = 5A.7 (HAR record & replay) → 5A.1 (T41 file upload) → REBUILD CHECKPOINT 2 (v0.1.22).
+Phase 5A · Group A · **Chunk 2 item 1 (5A.7 HAR record & replay) SHIPPED + verified GREEN against existing v0.1.21 install.** Next up: chunk 2 item 2 = 5A.1 T41 safari_file_upload (multi-day, full UPP brainstorm pipeline). Then REBUILD CHECKPOINT 2 → v0.1.22.
 
 ## Progress
-- [x] **5A.3** right-click + middle-click + modifiers — `6ae37db` (TS-only sub-batch)
-- [x] **5A.6** multi-element extraction — `e918ddf` (TS-only sub-batch)
-- [x] **5A.4** xpath as first-class locator — `5de6d74` (TS-only sub-batch)
-- [x] **5A.5** locator chaining (nth · filter) — `2824d53` (TS-only sub-batch)
+- [x] **5A.3** right-click + middle-click + modifiers — `6ae37db`
+- [x] **5A.6** multi-element extraction — `e918ddf`
+- [x] **5A.4** xpath as first-class locator — `5de6d74`
+- [x] **5A.5** locator chaining (nth · filter) — `2824d53`
 - [x] **5A.8** cookies httpOnly via browser.cookies — `979be01` (chunk 1)
-- [x] **5A.2** download saveAs post-process (TS-only standalone) — `bb7f4d4`
+- [x] **5A.2** download saveAs post-process — `bb7f4d4`
 - [x] **5A.9** HTTP basic auth via DNR — `5104487` (chunk 1)
-- [x] **REBUILD CHECKPOINT 1 v0.1.20** — built, signed, notarized
-- [x] **v0.1.21 fix bundle** — manifest perm + cookie url-filter + 5A.9 e2e arch — `b0b5977`
-- [x] **Chunk 1 e2e VERIFIED**: 4/4 cookies + 3/3 auth GREEN against v0.1.21 install
-- [ ] **5A.7** HAR record & replay ← **NEXT (chunk 2)**
-- [ ] **5A.1** T41 safari_file_upload (multi-day, full UPP brainstorm)
-- [ ] → REBUILD CHECKPOINT 2 (v0.1.22)
+- [x] **REBUILD CHECKPOINT 1 v0.1.20 + v0.1.21 fix bundle** — `b0b5977`
+- [x] **5A.7** HAR record & replay (path B) — `ef1ab4f` `43b61e3` `39528f9` `545929b` `597b1b4` ← **chunk 2 item 1 SHIPPED**
+- [ ] **5A.1** T41 safari_file_upload (multi-day, full UPP brainstorm) ← **NEXT (chunk 2 item 2)**
+- [ ] → REBUILD CHECKPOINT 2 (v0.1.22) — only needed if 5A.1 requires extension/daemon code (likely yes)
 - [ ] Phase 5A · Group B (5A.10–5A.14)
 
 ## Key Decisions (not yet persisted)
-All decisions already persisted — see commits, ROADMAP.md § Phase 5A, this CHECKPOINT, and the v0.1.21 commit message which documents the three discovery learnings.
+All decisions persisted — see commits, ROADMAP.md § Phase 5A, this CHECKPOINT, and TRACES.md iteration 49.
 
 ## Next Steps
 
-### Chunk 2 — 5A.7 HAR record & replay
-1. Read `src/tools/network.ts` (existing `safari_list_network_requests`, `safari_intercept_requests`, `safari_mock_request`) — that's the foundation. HAR adds: serialize captured requests as HAR 1.2 JSON; provide a `routeFromHAR` matching layer.
-2. Investigate Safari Web Extension webRequest API support — what request lifecycle events are available. Likely needs extension changes (sentinels for capture-on/capture-off/dump-har/route-from-har).
-3. UPP TDD per existing patterns:
-   - failing unit test for HAR serialization (one captured request → HAR entry shape per spec 1.2)
-   - reviewer gate
-   - GREEN
-   - failing unit test for `routeFromHAR` matcher (URL+method match → response shape)
-   - reviewer gate
-   - GREEN
-   - e2e tests committed RED awaiting v0.1.22
-4. Also requires extension build → defer to chunk-2 rebuild.
+### Chunk 2 item 2 — 5A.1 T41 safari_file_upload
 
-### Then 5A.1 T41 safari_file_upload
-Multi-day. Full UPP pipeline: brainstorming → writing-plans → executing-plans. Per the original tracker entry T41. Native macOS file picker is the mechanism Safari uses — extension may not be the right tool; might need daemon/AppleScript/AXUIElement work. Decide architecture in brainstorm.
+Tracker entry: T41 safari_file_upload. Multi-day work warranting full UPP pipeline (brainstorming → writing-plans → executing-plans). Per the original tracker entry, the architecture decision is open:
 
-### Rebuild Checkpoint 2 (after 5A.7 + 5A.1 code-side complete)
+1. **Native macOS file picker via AppleScript / AXUIElement**: Safari's `<input type=file>` triggers a native NSOpenPanel; programmatic dismissal + path injection requires AX scripting from the daemon. Most realistic for true compat with all upload sites, but requires daemon/Swift work.
+2. **HTML File API injection from extension**: bypass the picker entirely by setting `input.files` from a Web Extension API, using a host-permission'd file:// read. Simpler but coverage is partial — sites that intercept `<input type=file>` click programmatically may still trigger the picker.
+3. **Hybrid**: extension-side injection as the default (handles 90% of cases); fall back to AX-driven picker for sites where the input element isn't directly reachable.
+
+Decision belongs in the brainstorm. The brainstorm should also cover:
+- File path validation (security: don't allow uploading from arbitrary paths an agent passes; constrain to a sandbox dir or require explicit user-allowed roots)
+- Multi-file uploads (single input vs multiple-attribute)
+- Drag-drop uploads (separate code path; many sites use drag-drop instead of file picker)
+- Test fixture: a multipart-receiving endpoint on fixture-server.ts that echoes uploaded content for assertion
+
+Recommended sequence:
+1. Invoke `upp:brainstorming` to nail the architecture, security model, and scope
+2. `upp:writing-plans` for the implementation plan
+3. `upp:executing-plans` to execute (likely a multi-task plan with daemon Swift + TS handler + extension code)
+
+### Then REBUILD CHECKPOINT 2 (v0.1.22)
+Only if 5A.1 ends up requiring extension or daemon code (very likely):
 - Bump package.json 0.1.21 → 0.1.22
 - `bash scripts/build-extension.sh`
 - User installs (`open "bin/Safari Pilot.app"`)
 - Verify in Safari > Settings > Extensions
-- Run e2e for 5A.7 + 5A.1
+- Run e2e for 5A.1
 
 ### Then Group B (no rebuild needed)
 5A.10 T42, 5A.11 SD-32-followup, 5A.12 ROADMAP-flake, 5A.13 final Cluster 1-7 sweep, 5A.14 npm test:e2e:harness automation.
@@ -54,22 +56,24 @@ Multi-day. Full UPP pipeline: brainstorming → writing-plans → executing-plan
 ## Context
 
 ### Branch state
-- on `main`, all pushed up to `b0b5977`
+- on `main`, all commits pushed up to `597b1b4`
 - Pre-existing untracked: `daemon/CLAUDE.md`, `daemon/TRACES.md`, `handoffs/`, `.claude/scheduled_tasks.lock` — leave them alone
+- Stash list: TWO stale stashes from 2026-04-16 `feat/file-download-handling` branch — irrelevant to current work, preserved for salvage. Do NOT `git stash pop` these in any composed `&&` command (one was accidentally popped this session, recovered cleanly).
 
 ### Test state
-- **305 unit tests** (was 268 at session start, +37 across all of Phase 5A Group A code so far)
-- **24 new e2e tests** total in this Phase 5A · Group A:
+- **402 unit tests** (was 305 at start of chunk 2, +52 from 5A.7: 15 har-serialize + 21 har-route + 3 interceptor-smoke + 13 dispatch + others incidental)
+- **27 new e2e tests** total in this Phase 5A · Group A:
   - 4 right-click (5A.3) ✓
   - 4 multi-extract (5A.6) ✓
   - 4 xpath (5A.4) ✓
   - 5 locator-chaining (5A.5) ✓
   - 4 cookies httpOnly (5A.8) ✓ verified v0.1.21
   - 3 HTTP basic auth (5A.9) ✓ verified v0.1.21
+  - 3 HAR record/replay (5A.7) ✓ verified v0.1.21
 - T65 (phase3-3.1 form-submission flake) still open — confirmed pre-existing
 
 ### Active extension version
-- **v0.1.21** installed and verified. Will bump to v0.1.22 at chunk-2 rebuild.
+- **v0.1.21** installed and verified. Will bump to v0.1.22 at chunk-2 rebuild ONLY if 5A.1 requires it.
 
 ### Memory rules to remember (load-bearing for next session)
 - `feedback-debugging-discipline`: Use upp:systematic-debugging for any bug, never ad-hoc.
@@ -83,17 +87,11 @@ Multi-day. Full UPP pipeline: brainstorming → writing-plans → executing-plan
 - `feedback-never-switch-user-tabs`: Never activate Safari, switch, or navigate user tabs.
 - `reference-pdf-generation-sop`: PDF generation SOP at `~/.claude/rules/pdf-generation.md`.
 
-### Three new discovery learnings worth promoting (not yet in memory)
-1. **`browser.cookies.getAll({})` returns incomplete set in Safari** — empty filter only surfaces HttpOnly cookies. Always pass `url` or `domain`.
-2. **DNR `modifyHeaders` requires `declarativeNetRequestWithHostAccess`** — without it, `updateDynamicRules` accepts the rule but the action silently no-ops.
-3. **Safari modal HTTP auth dialog blocks JS** — top-level navigation to a 401+WWW-Authenticate response leaves the tab in indeterminate state. e2e must use `fetch()` with `credentials:'omit'` to assert wire-level header behavior. (Add to memory before chunk 2 if HAR e2e involves auth-protected resources.)
+### 5A.7 discovery (worth promoting if it recurs)
+**The existing safari_intercept_requests + safari_mock_request infrastructure is engine-agnostic page-side TS, not extension routing.** CHECKPOINT predicted HAR would need extension changes; reading network.ts revealed the foundation was already complete. Saved a rebuild cycle. Lesson: read the source before classifying scope — checkpoint hand-offs can over-estimate dependency chains.
 
-### Sentinel pattern reference for chunk 2
-HAR will follow the same sentinel pattern:
-- T55a `__SP_LIST_FRAMES__` (extension/background.js:241)
-- 5A.8 `__SP_COOKIE_*__` (extension/background.js ~290)
-- 5A.9 `__SP_DNR_*__` (extension/background.js ~280)
-- Future 5A.7: likely `__SP_HAR_RECORD_START__`, `__SP_HAR_DUMP__`, `__SP_HAR_ROUTE_FROM__`, `__SP_HAR_CLEAR__`
+### Sentinel pattern reference
+HAR did NOT need new sentinels because `__safariPilotNetwork` and `__safariPilotMocks` are page-side state, accessed by tag-team TS handlers. For 5A.1 file upload, the architecture decision will determine sentinel needs — extension-injection-based path would add `__SP_FILE_UPLOAD__` sentinel; daemon-AX-based path would need new daemon-side commands.
 
 ### Locked sequence reference
-ROADMAP.md `Phase 5A` section has the full sequence with 3+2 cadence. Chunk 1 closed; chunk 2 starts with 5A.7.
+ROADMAP.md `Phase 5A` section has the full sequence with 3+2 cadence. Chunk 1 closed; chunk 2 item 1 (5A.7) closed; chunk 2 item 2 (5A.1) is next.
