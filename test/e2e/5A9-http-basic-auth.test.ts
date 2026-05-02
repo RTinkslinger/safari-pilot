@@ -26,75 +26,109 @@ describe('5A.9 — HTTP basic auth via DNR (real Safari)', () => {
   let client: McpTestClient;
   let nextId: () => number;
   let fixture: FixtureServer;
-  let tabUrl: string | null = null;
+  let benignTab: string | null = null;
+  let pattern = '';
+
+  // Architecture: do NOT navigate the tab to /auth-protected directly.
+  // Top-level navigation to a 401 + WWW-Authenticate response triggers
+  // Safari's native HTTP auth dialog, which blocks JS, suspends the tab
+  // in an indeterminate URL state, and breaks the extension's tab cache.
+  //
+  // Instead: open ONE benign tab on the same origin (the cookie-fixture,
+  // which is happy to 200 with no auth) and use safari_evaluate to run
+  // fetch('/auth-protected') from inside that page. fetch() does NOT
+  // trigger the modal dialog on 401 — it returns the response as data.
+  // DNR's modifyHeaders rule applies to xmlhttprequest resource type,
+  // so the Authorization header injection works for fetch() too.
+  // Fire fetch, sleep generously off-tool-bus, read result. Two safari_evaluate
+  // calls per assertion — well under the 60/min/domain rate limit even when
+  // 5A.8 has just run on the same origin. safari_evaluate's main-world JS
+  // must return synchronously (Promises hang the storage bus), so the result
+  // travels via window['<slot>'].
+  async function fetchProtected(suffix: string): Promise<{ status: number; body: string }> {
+    const url = `http://127.0.0.1:${fixture.hostPort}/auth-protected?${suffix}=${Date.now()}`;
+    const slot = `__sp5A9_${suffix}`;
+    await callTool(client, 'safari_evaluate', {
+      tabUrl: benignTab!,
+      script: `
+        window['${slot}'] = null;
+        fetch('${url}', { credentials: 'omit', cache: 'no-store' })
+          .then(async function (r) { window['${slot}'] = { status: r.status, body: await r.text() }; })
+          .catch(function (e) { window['${slot}'] = { status: 0, body: 'fetch error: ' + (e && e.message || String(e)) }; });
+        return 'dispatched';
+      `,
+      timeout: 5_000,
+    }, nextId(), 15_000);
+
+    // Local server, no real latency — 3s is generous. Off the tool bus
+    // entirely so we don't burn rate-limiter tokens polling.
+    await new Promise((r) => setTimeout(r, 3000));
+
+    const poll = await callTool(client, 'safari_evaluate', {
+      tabUrl: benignTab!,
+      script: `return window['${slot}'];`,
+      timeout: 5_000,
+    }, nextId(), 15_000);
+    const v = (poll['value'] ?? poll['result']) as null | { status: number; body: string };
+    if (!v || typeof v !== 'object' || !('status' in v)) {
+      throw new Error(`fetchProtected(${suffix}) result not ready after 3s; got: ${JSON.stringify(poll)}`);
+    }
+    return v;
+  }
 
   beforeAll(async () => {
     fixture = await startFixtureServer();
     const s = await getSharedClient();
     client = s.client;
     nextId = s.nextId;
-    // Open a blank-ish tab first so we have a tabUrl handle to thread into
-    // the auth call. The actual protected request happens on the next
-    // navigate AFTER the rule is installed.
-    const target = `http://127.0.0.1:${fixture.hostPort}/?sp_t5A9=${Date.now()}`;
+    pattern = `*://127.0.0.1:${fixture.hostPort}/*`;
+    // Benign tab on the fixture origin — page itself returns 200 with no
+    // auth. fetch() from this page targets /auth-protected.
+    const target = `http://127.0.0.1:${fixture.hostPort}/cookie-fixture?sp_t5A9=${Date.now()}`;
     const r = await callTool(client, 'safari_new_tab', { url: target }, nextId(), 15_000);
-    tabUrl = r['tabUrl'] as string;
+    benignTab = r['tabUrl'] as string;
     await new Promise((r) => setTimeout(r, 1500));
   }, 60_000);
 
   afterAll(async () => {
-    if (tabUrl) {
-      try { await callTool(client, 'safari_clear_authentication', { tabUrl, urlPattern: `*://127.0.0.1:${fixture.hostPort}/*` }, nextId()); } catch { /* best-effort */ }
-      try { await callTool(client, 'safari_close_tab', { tabUrl }, nextId()); } catch { /* best-effort */ }
+    if (benignTab) {
+      try { await callTool(client, 'safari_clear_authentication', { tabUrl: benignTab, urlPattern: pattern }, nextId()); } catch { /* best-effort */ }
+      try { await callTool(client, 'safari_close_tab', { tabUrl: benignTab }, nextId()); } catch { /* best-effort */ }
     }
     if (fixture) await fixture.close();
   }, 30_000);
 
-  it('without authentication: /auth-protected returns 401 #denied', async () => {
-    // Baseline: prove the fixture actually requires auth. Without this,
-    // the post-auth assertion proves nothing — a fixture that always
-    // returned 200 would also "pass".
-    const protectedUrl = `http://127.0.0.1:${fixture.hostPort}/auth-protected`;
-    await callTool(client, 'safari_navigate', { tabUrl: tabUrl!, url: protectedUrl }, nextId(), 15_000);
-    tabUrl = protectedUrl;
-    await new Promise((r) => setTimeout(r, 800));
-    const txt = await callTool(client, 'safari_get_text', { tabUrl, selector: 'h1' }, nextId(), 15_000);
-    expect((txt['text'] as string)).toMatch(/401|denied|unauthorized/i);
+  it('baseline: fetch(/auth-protected) without auth returns 401', async () => {
+    // Prove the fixture actually requires auth. A misconfigured fixture
+    // that returned 200 unconditionally would also "pass" the post-auth
+    // assertion below — this test is the negative control.
+    const r = await fetchProtected('baseline');
+    expect(r.status, `unexpected: ${JSON.stringify(r).slice(0, 200)}`).toBe(401);
   }, 60_000);
 
-  it('after safari_authenticate: /auth-protected returns 200 #ok', async () => {
-    // Install the DNR rule, then re-navigate. The DNR rule injects the
-    // Authorization header on the request, satisfying the fixture.
+  it('after safari_authenticate: fetch(/auth-protected) returns 200 with #ok body', async () => {
+    // Install the DNR rule. Subsequent fetch from the SAME tab carries
+    // Authorization: Basic <b64> automatically — server returns 200 +
+    // "authenticated" in the page body.
     await callTool(client, 'safari_authenticate', {
-      tabUrl: tabUrl!,
+      tabUrl: benignTab!,
       username: 'testuser',
       password: 'testpass',
-      urlPattern: `*://127.0.0.1:${fixture.hostPort}/*`,
+      urlPattern: pattern,
     }, nextId(), 15_000);
 
-    const protectedUrl = `http://127.0.0.1:${fixture.hostPort}/auth-protected?retry=${Date.now()}`;
-    await callTool(client, 'safari_navigate', { tabUrl: tabUrl!, url: protectedUrl }, nextId(), 15_000);
-    tabUrl = protectedUrl;
-    await new Promise((r) => setTimeout(r, 800));
-
-    const txt = await callTool(client, 'safari_get_text', { tabUrl, selector: 'h1' }, nextId(), 15_000);
-    expect((txt['text'] as string)).toMatch(/authenticated/i);
+    const r = await fetchProtected('authed');
+    expect(r.status, `unexpected: ${JSON.stringify(r).slice(0, 200)}`).toBe(200);
+    expect(r.body).toMatch(/authenticated/i);
   }, 60_000);
 
-  it('safari_clear_authentication removes the rule — subsequent request returns 401 again', async () => {
+  it('after safari_clear_authentication: fetch(/auth-protected) returns 401 again', async () => {
     await callTool(client, 'safari_clear_authentication', {
-      tabUrl: tabUrl!,
-      urlPattern: `*://127.0.0.1:${fixture.hostPort}/*`,
+      tabUrl: benignTab!,
+      urlPattern: pattern,
     }, nextId(), 15_000);
 
-    // Re-navigate with a cache-buster so Safari doesn't serve the previous
-    // 200 from cache. The header injection should be GONE → 401 returns.
-    const protectedUrl = `http://127.0.0.1:${fixture.hostPort}/auth-protected?cleared=${Date.now()}`;
-    await callTool(client, 'safari_navigate', { tabUrl: tabUrl!, url: protectedUrl }, nextId(), 15_000);
-    tabUrl = protectedUrl;
-    await new Promise((r) => setTimeout(r, 800));
-
-    const txt = await callTool(client, 'safari_get_text', { tabUrl, selector: 'h1' }, nextId(), 15_000);
-    expect((txt['text'] as string)).toMatch(/401|denied|unauthorized/i);
+    const r = await fetchProtected('cleared');
+    expect(r.status, `unexpected: ${JSON.stringify(r).slice(0, 200)}`).toBe(401);
   }, 60_000);
 });

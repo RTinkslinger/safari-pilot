@@ -77,6 +77,23 @@ describe('5A.8 — cookies dispatch via extension sentinels', () => {
     expect(dispatched).not.toContain('document.cookie');
   });
 
+  it('extension engine: get_cookies passes url filter from tabUrl when no domain specified (Safari requires non-empty filter)', async () => {
+    // Safari quirk: browser.cookies.getAll({}) (empty filter) returns only
+    // a subset of cookies (observed: only HttpOnly entries appear). To get
+    // the full cookie set the page would receive, the request must include
+    // at least one filter — `url: tabUrl` is the natural default and gives
+    // the agent the cookies relevant to the page they're on.
+    const engine = recordingEngine('extension', getAllValue);
+    const tools = new StorageTools(engine);
+    const handler = tools.getHandler('safari_get_cookies')!;
+    await handler({ tabUrl: 'https://example.com/path' });
+
+    const dispatched = engine.scripts[0]!;
+    const params = JSON.parse(dispatched.slice(COOKIE_GET_ALL.length + 1)) as { url?: string; domain?: string };
+    expect(params.url).toBe('https://example.com/path');
+    expect(params.domain).toBeUndefined();
+  });
+
   it('extension engine: get_cookies passes domain filter through sentinel JSON suffix', async () => {
     const engine = recordingEngine('extension', getAllValue);
     const tools = new StorageTools(engine);

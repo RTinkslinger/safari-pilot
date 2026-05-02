@@ -268,8 +268,15 @@ export class StorageTools {
 
     // 5A.8: extension engine routes through browser.cookies.getAll which
     // sees httpOnly cookies. document.cookie path (below) cannot.
+    // Safari quirk: browser.cookies.getAll({}) (empty filter) returns an
+    // incomplete set — only HttpOnly cookies surface in observed runs.
+    // Always pass at least one filter: `url: tabUrl` (page cookies, the
+    // natural agent intent) or `domain` if the caller specified one.
     if (this.engine.name === 'extension') {
-      const sentinel = `__SP_COOKIE_GET_ALL__:${JSON.stringify(domain ? { domain } : {})}`;
+      const filter: Record<string, string> = {};
+      if (domain) filter['domain'] = domain;
+      else if (tabUrl) filter['url'] = tabUrl;
+      const sentinel = `__SP_COOKIE_GET_ALL__:${JSON.stringify(filter)}`;
       const result = await this.engine.executeJsInTab(tabUrl ?? '', sentinel);
       if (!result.ok) throw new Error(result.error?.message ?? 'Get cookies failed');
       const raw = result.value ? JSON.parse(result.value) : [];
