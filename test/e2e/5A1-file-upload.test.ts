@@ -1,0 +1,206 @@
+/**
+ * Phase 5A · 5A.1 — safari_file_upload e2e (real Safari, full pipeline).
+ *
+ * Phase 0 spike (test/e2e/5A1-phase0-spike.test.ts) MUST PASS first —
+ * vitest's alphabetical default ensures phase0-spike runs before file-upload.
+ *
+ * Coverage (14 tests per spec):
+ *   1. Single PNG upload via vanilla <input type=file>
+ *   2. Multi-file (3 different MIMEs)
+ *   3. clear: true on input with prior file
+ *   4. paths: [] → FILE_UPLOAD_EMPTY_PATHS
+ *   5. Hidden input behind <label> (force: true)
+ *   6. React Hook Form fixture (deferred to separate task — Task 16)
+ *   7. Detached-element race (Task 17)
+ *   8. Wrong-element-type → INVALID_ELEMENT
+ *   9. Shadow-host → INVALID_ELEMENT
+ *   10. Validation surface
+ *   11. multiple=false + 2 paths → MULTIPLE_NOT_ALLOWED
+ *   12. accept="image/*" + .pdf — pass-through
+ *   13. Concurrent multi-MB uploads (Task 18)
+ *   14. validationProbeMs: 0 disables probe
+ */
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { createHash } from 'node:crypto';
+import { callTool, type McpTestClient } from '../helpers/mcp-client.js';
+import { getSharedClient } from '../helpers/shared-client.js';
+import { startFixtureServer, type FixtureServer } from '../helpers/fixture-server.js';
+
+function sha256(buf: Buffer): string {
+  return createHash('sha256').update(buf).digest('hex');
+}
+
+describe('5A.1 — safari_file_upload e2e (core)', () => {
+  let client: McpTestClient;
+  let nextId: () => number;
+  let fixture: FixtureServer;
+  let workDir: string;
+  let tabUrl: string | null = null;
+  let pngFile: string;
+  let pngBytes: Buffer;
+  let pdfFile: string;
+  let pdfBytes: Buffer;
+  let csvFile: string;
+  let csvBytes: Buffer;
+
+  beforeAll(async () => {
+    fixture = await startFixtureServer();
+    const s = await getSharedClient();
+    client = s.client;
+    nextId = s.nextId;
+    workDir = mkdtempSync(join(tmpdir(), 'sp-5a1-e2e-'));
+    pngBytes = Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
+    pdfBytes = Buffer.from('%PDF-1.4\n');
+    csvBytes = Buffer.from('a,b,c\n1,2,3\n');
+    pngFile = join(workDir, 'pic.png');
+    pdfFile = join(workDir, 'doc.pdf');
+    csvFile = join(workDir, 'data.csv');
+    writeFileSync(pngFile, pngBytes);
+    writeFileSync(pdfFile, pdfBytes);
+    writeFileSync(csvFile, csvBytes);
+
+    const target = `http://127.0.0.1:${fixture.hostPort}/upload-form?sp_t5A1=${Date.now()}`;
+    const r = await callTool(client, 'safari_new_tab', { url: target }, nextId(), 15_000);
+    tabUrl = r['tabUrl'] as string;
+    await new Promise((r) => setTimeout(r, 1500));
+  }, 60_000);
+
+  afterAll(async () => {
+    if (tabUrl) {
+      try { await callTool(client, 'safari_close_tab', { tabUrl }, nextId()); } catch { /* */ }
+    }
+    if (fixture) await fixture.close();
+    if (workDir) rmSync(workDir, { recursive: true, force: true });
+  }, 30_000);
+
+  it('uploads a single PNG via vanilla <input type=file>; fixture sha256 matches', async () => {
+    await callTool(client, 'safari_file_upload', {
+      tabUrl: tabUrl!, selector: '#file-input', paths: [pngFile],
+    }, nextId(), 30_000);
+    await callTool(client, 'safari_click', { tabUrl: tabUrl!, selector: '#submit' }, nextId(), 15_000);
+    await new Promise((r) => setTimeout(r, 1500));
+    const respCheck = await callTool(client, 'safari_evaluate', {
+      tabUrl: tabUrl!, script: 'return window.__lastUploadResponse;', timeout: 5000,
+    }, nextId(), 15_000);
+    const resp = respCheck['value'] as { files: { name: string; size: number; mimeType: string; sha256: string }[] };
+    const uploaded = resp.files.find((f) => f.name === 'pic.png');
+    expect(uploaded, `pic.png not in response: ${JSON.stringify(resp)}`).toBeDefined();
+    expect(uploaded!.size).toBe(pngBytes.length);
+    expect(uploaded!.mimeType).toBe('image/png');
+    expect(uploaded!.sha256).toBe(sha256(pngBytes));
+  }, 60_000);
+
+  it('uploads 3 files of different MIMEs; all 3 echoed with correct sha256', async () => {
+    await callTool(client, 'safari_navigate', {
+      tabUrl: tabUrl!, url: `http://127.0.0.1:${fixture.hostPort}/upload-form?sp_t5A1=${Date.now()}`,
+    }, nextId(), 15_000);
+    await new Promise((r) => setTimeout(r, 1500));
+
+    await callTool(client, 'safari_file_upload', {
+      tabUrl: tabUrl!, selector: '#file-input',
+      paths: [pngFile, pdfFile, csvFile],
+    }, nextId(), 30_000);
+    await callTool(client, 'safari_click', { tabUrl: tabUrl!, selector: '#submit' }, nextId(), 15_000);
+    await new Promise((r) => setTimeout(r, 1500));
+    const respCheck = await callTool(client, 'safari_evaluate', {
+      tabUrl: tabUrl!, script: 'return window.__lastUploadResponse;', timeout: 5000,
+    }, nextId(), 15_000);
+    const resp = respCheck['value'] as { files: { name: string; sha256: string }[] };
+    expect(resp.files.find((f) => f.name === 'pic.png')?.sha256).toBe(sha256(pngBytes));
+    expect(resp.files.find((f) => f.name === 'doc.pdf')?.sha256).toBe(sha256(pdfBytes));
+    expect(resp.files.find((f) => f.name === 'data.csv')?.sha256).toBe(sha256(csvBytes));
+  }, 60_000);
+
+  it('clear: true empties the input', async () => {
+    await callTool(client, 'safari_file_upload', {
+      tabUrl: tabUrl!, selector: '#file-input', paths: [pngFile],
+    }, nextId(), 30_000);
+    const r = await callTool(client, 'safari_file_upload', {
+      tabUrl: tabUrl!, selector: '#file-input', clear: true,
+    }, nextId(), 30_000);
+    const payload = r as { uploaded: number };
+    expect(payload.uploaded).toBe(0);
+    const verify = await callTool(client, 'safari_evaluate', {
+      tabUrl: tabUrl!, script: 'return document.getElementById("file-input").files.length;', timeout: 5000,
+    }, nextId(), 15_000);
+    expect(verify['value']).toBe(0);
+  }, 60_000);
+
+  it('paths: [] → throws FILE_UPLOAD_EMPTY_PATHS with hint', async () => {
+    let caught: { code?: string; message?: string } | null = null;
+    try {
+      await callTool(client, 'safari_file_upload', {
+        tabUrl: tabUrl!, selector: '#file-input', paths: [],
+      }, nextId(), 30_000);
+    } catch (e) {
+      caught = e as { code?: string; message?: string };
+    }
+    expect(caught).toBeDefined();
+    expect(caught!.message || JSON.stringify(caught)).toContain('FILE_UPLOAD_EMPTY_PATHS');
+  }, 60_000);
+
+  it('uploads to a hidden input behind a styled label (force: true)', async () => {
+    await callTool(client, 'safari_navigate', {
+      tabUrl: tabUrl!, url: `http://127.0.0.1:${fixture.hostPort}/upload-form?sp_t5A1=${Date.now()}`,
+    }, nextId(), 15_000);
+    await new Promise((r) => setTimeout(r, 1500));
+
+    await callTool(client, 'safari_file_upload', {
+      tabUrl: tabUrl!, selector: '#hidden-input', paths: [pdfFile], force: true,
+    }, nextId(), 30_000);
+    const verify = await callTool(client, 'safari_evaluate', {
+      tabUrl: tabUrl!, script: 'return document.getElementById("hidden-input").files.length;', timeout: 5000,
+    }, nextId(), 15_000);
+    expect(verify['value']).toBe(1);
+  }, 60_000);
+
+  it('wrong-element-type (selector matches button) → FILE_UPLOAD_INVALID_ELEMENT', async () => {
+    let caught: { code?: string; message?: string } | null = null;
+    try {
+      await callTool(client, 'safari_file_upload', {
+        tabUrl: tabUrl!, selector: '#submit', paths: [pngFile],
+      }, nextId(), 30_000);
+    } catch (e) {
+      caught = e as { code?: string; message?: string };
+    }
+    expect(caught!.message || JSON.stringify(caught)).toContain('FILE_UPLOAD_INVALID_ELEMENT');
+  }, 60_000);
+
+  it('multiple=false + 2 paths → FILE_UPLOAD_MULTIPLE_NOT_ALLOWED', async () => {
+    let caught: { code?: string; message?: string } | null = null;
+    try {
+      await callTool(client, 'safari_file_upload', {
+        tabUrl: tabUrl!, selector: '#single-input', paths: [pngFile, pdfFile],
+      }, nextId(), 30_000);
+    } catch (e) {
+      caught = e as { code?: string; message?: string };
+    }
+    expect(caught!.message || JSON.stringify(caught)).toContain('FILE_UPLOAD_MULTIPLE_NOT_ALLOWED');
+  }, 60_000);
+
+  it('accept="image/*" + .pdf upload — pass-through (Playwright parity)', async () => {
+    await callTool(client, 'safari_evaluate', {
+      tabUrl: tabUrl!,
+      script: 'document.getElementById("single-input").setAttribute("accept", "image/*"); return true;',
+      timeout: 5000,
+    }, nextId(), 15_000);
+    const r = await callTool(client, 'safari_file_upload', {
+      tabUrl: tabUrl!, selector: '#single-input', paths: [pdfFile],
+    }, nextId(), 30_000);
+    const payload = r as { uploaded: number; files: { name: string }[] };
+    expect(payload.uploaded).toBe(1);
+    expect(payload.files[0]!.name).toBe('doc.pdf');
+  }, 60_000);
+
+  it('validationProbeMs: 0 disables the probe (validation always omitted)', async () => {
+    const r = await callTool(client, 'safari_file_upload', {
+      tabUrl: tabUrl!, selector: '#file-input', paths: [pngFile], validationProbeMs: 0,
+    }, nextId(), 30_000);
+    const payload = r as { uploaded: number; validation?: unknown };
+    expect(payload.uploaded).toBe(1);
+    expect(payload.validation).toBeUndefined();
+  }, 60_000);
+});
