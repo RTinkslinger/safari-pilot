@@ -15,20 +15,134 @@
 (() => {
   'use strict';
 
+  // ─── Inlined pure helpers (canonical sources in extension/lib/) ───────────
+  // Content scripts in MV3 cannot use ESM imports. These are copied verbatim
+  // from extension/lib/{route-command,handshake-machine,storage-keys}.js. If
+  // you change any of these, mirror the change in extension/lib/ + the unit
+  // tests. A concatenation build step is deferred to v2.
+
+  // From extension/lib/route-command.js
+  // Returns: true (process), false (skip), null (handshake pending — queue)
+  function shouldProcess(cmd, myTabId, myFrameId, currentLocationHref) {
+    if (cmd.tabId !== myTabId) return false;
+    if (myFrameId === null) return null;
+    const targetFrameId = cmd.frameId ?? 0;
+    if (targetFrameId !== myFrameId) return false;
+    if (cmd.frameUrl != null && currentLocationHref != null && cmd.frameUrl !== currentLocationHref) {
+      return false;
+    }
+    return true;
+  }
+
+  // From extension/lib/handshake-machine.js
+  const INITIAL_HANDSHAKE_STATE = { phase: 'IDLE', myFrameId: null, queue: [] };
+  function frameIdHandshakeReducer(state, event) {
+    switch (event.type) {
+      case 'sp_cmd_arrived': {
+        if (state.phase === 'IDLE') {
+          return {
+            state: { ...state, phase: 'AWAITING_FRAME_ID', queue: [event.cmd] },
+            effects: [{ type: 'send_sp_getFrameId' }],
+          };
+        }
+        if (state.phase === 'AWAITING_FRAME_ID') {
+          return {
+            state: { ...state, queue: [...state.queue, event.cmd] },
+            effects: [],
+          };
+        }
+        // READY
+        return { state, effects: [{ type: 'process_cmd', cmd: event.cmd }] };
+      }
+      case 'sp_getFrameId_response': {
+        if (state.phase !== 'AWAITING_FRAME_ID') return { state, effects: [] };
+        const drained = state.queue.map((cmd) => ({ type: 'process_cmd', cmd }));
+        return {
+          state: { phase: 'READY', myFrameId: event.frameId, queue: [] },
+          effects: drained,
+        };
+      }
+      case 'sp_getFrameId_error': {
+        if (state.phase !== 'AWAITING_FRAME_ID') return { state, effects: [] };
+        return { state: INITIAL_HANDSHAKE_STATE, effects: [] };
+      }
+      default:
+        return { state, effects: [] };
+    }
+  }
+
+  // From extension/lib/storage-keys.js
+  const SP_CMD_PREFIX = 'sp_cmd_';
+  const SP_RESULT_PREFIX = 'sp_result_';
+  const makeSpResultKey = (commandId) => SP_RESULT_PREFIX + commandId;
+  const pickSpCmdKeys = (obj) => Object.keys(obj).filter((k) => k.startsWith(SP_CMD_PREFIX));
+
+  // ─── State ────────────────────────────────────────────────────────────────
   let nextRequestId = 0;
   const pendingRequests = new Map();
 
-  // ─── Storage Bus: TabId Registration ──────────────────────────────────────
+  // Storage Bus: TabId Registration
   // Safari's tabs.sendMessage returns undefined in alarm-woken event pages.
   // Commands are delivered via browser.storage.local instead.
   // Content scripts need their tabId to filter commands meant for them.
   let myTabId = null;
-  let pendingStorageCmd = null;
+  let handshakeState = INITIAL_HANDSHAKE_STATE;
 
   const processedCommandIds = new Set();
 
+  // ─── Handshake dispatch ───────────────────────────────────────────────────
+  function dispatch(event) {
+    const { state, effects } = frameIdHandshakeReducer(handshakeState, event);
+    handshakeState = state;
+    applyEffects(effects);
+  }
+
+  function applyEffects(effects) {
+    for (const eff of effects) {
+      if (eff.type === 'send_sp_getFrameId') {
+        browser.runtime.sendMessage({ action: 'sp_getFrameId' }).then(
+          (resp) => dispatch({ type: 'sp_getFrameId_response', frameId: resp?.frameId ?? null }),
+          () => dispatch({ type: 'sp_getFrameId_error' }),
+        );
+      } else if (eff.type === 'process_cmd') {
+        processStorageCommand(eff.cmd);
+      }
+    }
+  }
+
   function processStorageCommand(cmd) {
-    if (cmd.tabId !== myTabId) return;
+    const decision = shouldProcess(cmd, myTabId, handshakeState.myFrameId, location.href);
+    if (decision === null) {
+      // Handshake pending — route through dispatch which queues
+      dispatch({ type: 'sp_cmd_arrived', cmd });
+      return;
+    }
+    if (decision === false) {
+      // Distinguish frameUrl mismatch (emit FRAME_NAVIGATED) from other
+      // rejections (different tab, different frame — silently ignore; those
+      // frames' content-isolated.js will handle their own commands).
+      const isOurFrame = cmd.tabId === myTabId && (cmd.frameId ?? 0) === handshakeState.myFrameId;
+      if (isOurFrame && cmd.frameUrl != null && cmd.frameUrl !== location.href && cmd.commandId) {
+        browser.storage.local.set({
+          [makeSpResultKey(cmd.commandId)]: {
+            commandId: cmd.commandId,
+            result: {
+              ok: false,
+              error: {
+                code: 'FRAME_NAVIGATED',
+                message: `Frame URL changed: expected ${cmd.frameUrl}, found ${location.href}`,
+                expected: cmd.frameUrl,
+                actual: location.href,
+              },
+            },
+            timestamp: Date.now(),
+          },
+        }).catch((e) => console.warn('[safari-pilot] FRAME_NAVIGATED sp_result write failed:', e?.message));
+      }
+      return;
+    }
+
+    // decision === true — proceed with processing
     if (cmd.deadline && cmd.deadline < Date.now()) return;
     // Guard against processing the same command twice (init read + onChanged race)
     if (cmd.commandId && processedCommandIds.has(cmd.commandId)) return;
@@ -60,24 +174,24 @@
     });
 
     promise.then(
-      value => {
+      (value) => {
         browser.storage.local.set({
-          sp_result: {
+          [makeSpResultKey(cmd.commandId)]: {
             commandId: cmd.commandId,
             result: { ok: true, value },
             timestamp: Date.now(),
           },
-        }).catch(e => console.warn('[safari-pilot] sp_result write failed:', e.message));
+        }).catch((e) => console.warn('[safari-pilot] sp_result write failed:', e?.message));
       },
-      error => {
+      (error) => {
         browser.storage.local.set({
-          sp_result: {
+          [makeSpResultKey(cmd.commandId)]: {
             commandId: cmd.commandId,
             result: { ok: false, error },
             timestamp: Date.now(),
           },
-        }).catch(e => console.warn('[safari-pilot] sp_result write failed:', e.message));
-      }
+        }).catch((e) => console.warn('[safari-pilot] sp_result write failed:', e?.message));
+      },
     );
   }
 
@@ -87,20 +201,15 @@
     try {
       const response = await browser.runtime.sendMessage({ action: 'sp_getTabId' });
       myTabId = response?.tabId ?? null;
-      // Process any command that arrived before registration completed
-      if (myTabId !== null && pendingStorageCmd) {
-        const cmd = pendingStorageCmd;
-        pendingStorageCmd = null;
-        processStorageCommand(cmd);
-      }
       // Check for commands written to storage BEFORE this content script loaded.
       // storage.onChanged only fires for future changes — commands written while
       // the page was loading (document_idle) are invisible to the listener.
-      // Read the current sp_cmd value and process if it's for this tab.
+      // Scan all sp_cmd_* keys and dispatch each to the handshake state machine.
       if (myTabId !== null) {
-        const stored = await browser.storage.local.get('sp_cmd');
-        if (stored.sp_cmd && stored.sp_cmd.tabId === myTabId) {
-          processStorageCommand(stored.sp_cmd);
+        const stored = await browser.storage.local.get(null);
+        for (const key of pickSpCmdKeys(stored)) {
+          const cmd = stored[key];
+          if (cmd) dispatch({ type: 'sp_cmd_arrived', cmd });
         }
       }
     } catch {
@@ -112,33 +221,39 @@
   // background wasn't running when content script first loaded).
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible' && myTabId === null) {
-      browser.runtime.sendMessage({ action: 'sp_getTabId' }).then(response => {
+      browser.runtime.sendMessage({ action: 'sp_getTabId' }).then((response) => {
         myTabId = response?.tabId ?? null;
-        if (myTabId !== null && pendingStorageCmd) {
-          const cmd = pendingStorageCmd;
-          pendingStorageCmd = null;
-          processStorageCommand(cmd);
-        }
       }).catch(() => {});
     }
   });
 
   // ─── Storage Bus: Command Listener ────────────────────────────────────────
-  // Receives commands written by background.js to storage key 'sp_cmd'.
+  // Receives commands written by background.js to keys matching sp_cmd_*.
   // Forwards to MAIN world via the existing window.postMessage relay.
-  // Writes results to storage key 'sp_result'.
+  // Writes results to storage key 'sp_result_<commandId>'.
   browser.storage.onChanged.addListener((changes, area) => {
-    if (area !== 'local' || !changes.sp_cmd?.newValue) return;
-
-    const cmd = changes.sp_cmd.newValue;
-
-    if (myTabId === null) {
-      // TabId not registered yet — buffer the command and process after registration
-      pendingStorageCmd = cmd;
-      return;
+    if (area !== 'local') return;
+    for (const key of Object.keys(changes)) {
+      if (!key.startsWith(SP_CMD_PREFIX)) continue;
+      const cmd = changes[key].newValue;
+      if (!cmd) continue;
+      dispatch({ type: 'sp_cmd_arrived', cmd });
     }
+  });
 
-    processStorageCommand(cmd);
+  // ─── pagehide: best-effort fast-fail for FRAME_NAVIGATED ──────────────────
+  // Notifies background that this frame is unloading so in-flight commands
+  // targeting this frame can fail fast. Unload-time message delivery is not
+  // guaranteed — the frameUrl mutation guard inside the next
+  // content-isolated.js is the secondary path; webNavigation revalidation on
+  // the next call is the final safety net.
+  window.addEventListener('pagehide', () => {
+    try {
+      browser.runtime.sendMessage({
+        action: 'sp_frame_unloading',
+        frameId: handshakeState.myFrameId,
+      }).catch(() => {});
+    } catch {}
   });
 
   // ─── MAIN World → ISOLATED World ──────────────────────────────────────────
