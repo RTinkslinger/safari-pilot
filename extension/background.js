@@ -342,6 +342,94 @@ async function executeCommand(cmd) {
     return probeResult;
   }
 
+  // 5A.1 file_upload probe sentinel — locator-only, ~1KB payload.
+  // Routes via storage bus to content-isolated.js, which validates
+  // element type without staging any bytes.
+  if (typeof cmd.script === 'string' && cmd.script.startsWith('__SP_FILE_UPLOAD_PROBE__:')) {
+    const cmdKey = 'sp_cmd_' + commandId;
+    const resultKey = 'sp_result_' + commandId;
+    const FILE_UPLOAD_PROBE_TIMEOUT_MS = 30000;
+    const probeStorageCmd = {
+      commandId,
+      tabId: tab.id,
+      method: 'execute_script',
+      params: { script: cmd.script, commandId },
+      timestamp: Date.now(),
+      deadline: Date.now() + FILE_UPLOAD_PROBE_TIMEOUT_MS,
+    };
+    let probeResultResolver;
+    const probeResultPromise = new Promise((resolve) => {
+      probeResultResolver = resolve;
+    });
+    const probeKeepAlive = setInterval(() => {
+      fetch(`${HTTP_URL}/poll`, { signal: AbortSignal.timeout(1000) }).catch(() => {});
+    }, 10000);
+    const probeTimeout = setTimeout(() => {
+      clearInterval(probeKeepAlive);
+      browser.storage.onChanged.removeListener(probeResultListener);
+      probeResultResolver({ ok: false, error: { name: 'FILE_UPLOAD_PROBE_TIMEOUT', message: `probe timeout (${FILE_UPLOAD_PROBE_TIMEOUT_MS}ms)` } });
+    }, FILE_UPLOAD_PROBE_TIMEOUT_MS);
+    function probeResultListener(changes, area) {
+      if (area !== 'local' || !changes[resultKey]?.newValue) return;
+      const reply = changes[resultKey].newValue;
+      if (reply.commandId !== commandId) return;
+      clearInterval(probeKeepAlive);
+      clearTimeout(probeTimeout);
+      browser.storage.onChanged.removeListener(probeResultListener);
+      probeResultResolver(reply.result);
+    }
+    browser.storage.onChanged.addListener(probeResultListener);
+    await browser.storage.local.set({ [cmdKey]: probeStorageCmd });
+    const probeResult = await probeResultPromise;
+    try { await browser.storage.local.remove([cmdKey, resultKey]); } catch { /* ignore */ }
+    await updatePendingEntry(commandId, { status: 'completed', result: probeResult });
+    return probeResult;
+  }
+
+  // 5A.1 file_upload final sentinel — token list + locator + clear + probeOpts.
+  // content-isolated.js fetches bytes from /file-bytes/<token>, builds Files,
+  // postMessages to MAIN for DataTransfer injection, then DELETEs the bytes.
+  if (typeof cmd.script === 'string' && cmd.script.startsWith('__SP_FILE_UPLOAD__:')) {
+    const cmdKey = 'sp_cmd_' + commandId;
+    const resultKey = 'sp_result_' + commandId;
+    const FILE_UPLOAD_TIMEOUT_MS = 30000;
+    const uploadStorageCmd = {
+      commandId,
+      tabId: tab.id,
+      method: 'execute_script',
+      params: { script: cmd.script, commandId },
+      timestamp: Date.now(),
+      deadline: Date.now() + FILE_UPLOAD_TIMEOUT_MS,
+    };
+    let uploadResultResolver;
+    const uploadResultPromise = new Promise((resolve) => {
+      uploadResultResolver = resolve;
+    });
+    const uploadKeepAlive = setInterval(() => {
+      fetch(`${HTTP_URL}/poll`, { signal: AbortSignal.timeout(1000) }).catch(() => {});
+    }, 10000);
+    const uploadTimeout = setTimeout(() => {
+      clearInterval(uploadKeepAlive);
+      browser.storage.onChanged.removeListener(uploadResultListener);
+      uploadResultResolver({ ok: false, error: { name: 'FILE_UPLOAD_TIMEOUT', message: `upload timeout (${FILE_UPLOAD_TIMEOUT_MS}ms)` } });
+    }, FILE_UPLOAD_TIMEOUT_MS);
+    function uploadResultListener(changes, area) {
+      if (area !== 'local' || !changes[resultKey]?.newValue) return;
+      const reply = changes[resultKey].newValue;
+      if (reply.commandId !== commandId) return;
+      clearInterval(uploadKeepAlive);
+      clearTimeout(uploadTimeout);
+      browser.storage.onChanged.removeListener(uploadResultListener);
+      uploadResultResolver(reply.result);
+    }
+    browser.storage.onChanged.addListener(uploadResultListener);
+    await browser.storage.local.set({ [cmdKey]: uploadStorageCmd });
+    const uploadResult = await uploadResultPromise;
+    try { await browser.storage.local.remove([cmdKey, resultKey]); } catch { /* ignore */ }
+    await updatePendingEntry(commandId, { status: 'completed', result: uploadResult });
+    return uploadResult;
+  }
+
   // 5A.8: cookie sentinels — bypass storage bus, call browser.cookies directly.
   // Format: __SP_COOKIE_<OP>__:<json-params>. The JS path cannot see/set
   // httpOnly cookies; this routes through the extension API which can.
