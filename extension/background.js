@@ -261,6 +261,45 @@ async function executeCommand(cmd) {
     return result;
   }
 
+  // 5A.8: cookie sentinels — bypass storage bus, call browser.cookies directly.
+  // Format: __SP_COOKIE_<OP>__:<json-params>. The JS path cannot see/set
+  // httpOnly cookies; this routes through the extension API which can.
+  // Placed AFTER findTargetTab (need a valid tab context for the call site,
+  // even though browser.cookies operates on URL not tab) and BEFORE frame
+  // validation (cookie ops are tab-scoped, not frame-scoped).
+  if (typeof cmd.script === 'string' && cmd.script.startsWith('__SP_COOKIE_')) {
+    const colonIdx = cmd.script.indexOf(':');
+    const sentinel = colonIdx > 0 ? cmd.script.slice(0, colonIdx) : cmd.script;
+    let parsed = {};
+    if (colonIdx > 0) {
+      try { parsed = JSON.parse(cmd.script.slice(colonIdx + 1)); }
+      catch (e) {
+        const result = { ok: false, error: { name: 'COOKIE_PARAM_PARSE', message: `Failed to parse cookie params: ${e?.message ?? String(e)}` } };
+        await updatePendingEntry(commandId, { status: 'completed', result });
+        return result;
+      }
+    }
+    let result;
+    try {
+      let cookieResult;
+      if (sentinel === '__SP_COOKIE_GET_ALL__') cookieResult = await handleCookieGetAll(parsed);
+      else if (sentinel === '__SP_COOKIE_SET__') cookieResult = await handleCookieSet(parsed);
+      else if (sentinel === '__SP_COOKIE_REMOVE__') cookieResult = await handleCookieRemove(parsed);
+      else {
+        const r = { ok: false, error: { name: 'UNKNOWN_COOKIE_SENTINEL', message: `Unknown cookie sentinel: ${sentinel}` } };
+        await updatePendingEntry(commandId, { status: 'completed', result: r });
+        return r;
+      }
+      // Stringify the cookie API's bare value so it travels over the same
+      // result.value-is-a-string contract the storage bus uses for scripts.
+      result = { ok: true, value: JSON.stringify(cookieResult.value ?? null) };
+    } catch (e) {
+      result = { ok: false, error: { name: 'COOKIE_API_ERROR', message: e?.message ?? String(e) } };
+    }
+    await updatePendingEntry(commandId, { status: 'completed', result });
+    return result;
+  }
+
   // T55a: validate frameId at dispatch time. Missing frame → fast-fail
   // before any storage-bus traffic. Re-resolve frame.url so content-isolated.js's
   // mutation guard has the authoritative value when comparing to location.href.

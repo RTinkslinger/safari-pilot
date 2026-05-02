@@ -41,9 +41,10 @@ export class StorageTools {
       {
         name: 'safari_get_cookies',
         description:
-          'Get cookies accessible via document.cookie for the current page. ' +
-          'Returns name, value, domain, path, and security flags. ' +
-          'Note: httpOnly cookies are not accessible via JS — use the extension engine (Phase 3) for full cookie access. ' +
+          'Get cookies for the current page. ' +
+          'Returns name, value, domain, path, and security flags including httpOnly. ' +
+          'Extension engine routes through browser.cookies (sees httpOnly); ' +
+          'AppleScript fallback uses document.cookie (httpOnly invisible). ' +
           'Optionally filter by domain substring.',
         inputSchema: {
           type: 'object',
@@ -58,9 +59,10 @@ export class StorageTools {
       {
         name: 'safari_set_cookie',
         description:
-          'Set a cookie on the current page via document.cookie. ' +
-          'Supports name, value, domain, path, expiry, and security flags. ' +
-          'httpOnly cookies cannot be set via JS — requires extension engine (Phase 3).',
+          'Set a cookie on the current page. ' +
+          'Supports name, value, domain, path, expiry, and security flags including httpOnly. ' +
+          'Extension engine routes through browser.cookies.set (httpOnly honored); ' +
+          'AppleScript fallback uses document.cookie (httpOnly silently dropped).',
         inputSchema: {
           type: 'object',
           properties: {
@@ -75,7 +77,7 @@ export class StorageTools {
             },
             httpOnly: {
               type: 'boolean',
-              description: 'Set httpOnly flag (note: has no effect via document.cookie — requires extension)',
+              description: 'Set httpOnly flag. Honored when extension engine is active; silently dropped on AppleScript fallback (JS cannot set httpOnly).',
               default: false,
             },
             secure: { type: 'boolean', description: 'Set Secure flag', default: false },
@@ -95,7 +97,8 @@ export class StorageTools {
         description:
           'Delete a cookie by name on the current page. ' +
           'Optionally specify domain and path to target the exact cookie. ' +
-          'Works by setting the expiry to the past via document.cookie.',
+          'Extension engine routes through browser.cookies.remove (can delete httpOnly); ' +
+          'AppleScript fallback expires the cookie via document.cookie.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -262,6 +265,18 @@ export class StorageTools {
     const start = Date.now();
     const tabUrl = params['tabUrl'] as string | undefined;
     const domain = params['domain'] as string | undefined;
+
+    // 5A.8: extension engine routes through browser.cookies.getAll which
+    // sees httpOnly cookies. document.cookie path (below) cannot.
+    if (this.engine.name === 'extension') {
+      const sentinel = `__SP_COOKIE_GET_ALL__:${JSON.stringify(domain ? { domain } : {})}`;
+      const result = await this.engine.executeJsInTab(tabUrl ?? '', sentinel);
+      if (!result.ok) throw new Error(result.error?.message ?? 'Get cookies failed');
+      const raw = result.value ? JSON.parse(result.value) : [];
+      const cookies = Array.isArray(raw) ? raw : [];
+      return this.makeResponse({ cookies, count: cookies.length }, Date.now() - start);
+    }
+
     const escapedDomain = domain ? escapeForJsSingleQuote(domain) : '';
 
     const js = `
@@ -311,7 +326,32 @@ export class StorageTools {
     const path = (params['path'] as string | undefined) ?? '/';
     const expires = params['expires'] as string | undefined;
     const secure = params['secure'] === true;
+    const httpOnly = params['httpOnly'] === true;
     const sameSite = (params['sameSite'] as string | undefined) ?? 'lax';
+
+    // 5A.8: extension engine routes through browser.cookies.set, which CAN
+    // set httpOnly. JS document.cookie cannot — falls through below.
+    if (this.engine.name === 'extension') {
+      // browser.cookies.set takes expirationDate as Unix epoch SECONDS (number).
+      // Translate the storage tool's "ISO string OR seconds-from-now" param
+      // at the boundary so background.js stays mechanical.
+      let expirationDate: number | undefined;
+      if (expires) {
+        if (/^\d+$/.test(expires)) expirationDate = Math.floor(Date.now() / 1000) + parseInt(expires, 10);
+        else expirationDate = Math.floor(new Date(expires).getTime() / 1000);
+      }
+      const setParams: Record<string, unknown> = {
+        url: tabUrl, name, value, path, secure, httpOnly,
+        sameSite: sameSite === 'none' ? 'no_restriction' : sameSite === 'strict' ? 'strict' : 'lax',
+      };
+      if (domain) setParams['domain'] = domain;
+      if (expirationDate !== undefined) setParams['expirationDate'] = expirationDate;
+      const sentinel = `__SP_COOKIE_SET__:${JSON.stringify(setParams)}`;
+      const result = await this.engine.executeJsInTab(tabUrl, sentinel);
+      if (!result.ok) throw new Error(result.error?.message ?? 'Set cookie failed');
+      const cookie = result.value ? JSON.parse(result.value) : null;
+      return this.makeResponse({ set: cookie != null, name, cookie }, Date.now() - start);
+    }
 
     const escapedName = escapeForJsSingleQuote(name);
     const escapedValue = escapeForJsSingleQuote(value);
@@ -370,6 +410,18 @@ export class StorageTools {
     const name = params['name'] as string;
     const domain = params['domain'] as string | undefined;
     const path = (params['path'] as string | undefined) ?? '/';
+
+    // 5A.8: extension engine routes through browser.cookies.remove, which
+    // can delete httpOnly cookies the JS path cannot reach.
+    if (this.engine.name === 'extension') {
+      const sentinel = `__SP_COOKIE_REMOVE__:${JSON.stringify({ url: tabUrl, name })}`;
+      const result = await this.engine.executeJsInTab(tabUrl, sentinel);
+      if (!result.ok) throw new Error(result.error?.message ?? 'Delete cookie failed');
+      const removed = result.value ? JSON.parse(result.value) : null;
+      // browser.cookies.remove returns null if the cookie didn't exist;
+      // returns the removed details if it did.
+      return this.makeResponse({ deleted: removed != null, existed: removed != null, name }, Date.now() - start);
+    }
 
     const escapedName = escapeForJsSingleQuote(name);
     const escapedDomain = domain ? escapeForJsSingleQuote(domain) : '';

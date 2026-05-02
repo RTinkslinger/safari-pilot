@@ -25,6 +25,24 @@ export interface FixtureServer {
 function makeHandler() {
   return (req: IncomingMessage, res: ServerResponse): void => {
     const url = (req.url ?? '/').split('?')[0];
+
+    // 5A.8 cookie fixture: serve a page that triggers a Set-Cookie response
+    // header with HttpOnly. This is the only way to install an httpOnly
+    // cookie in the browser — the JS API can't. Asserting safari_get_cookies
+    // sees this cookie back with httpOnly:true is the litmus for the
+    // extension routing actually working end-to-end.
+    if (url === '/cookie-fixture') {
+      res.writeHead(200, {
+        'Content-Type': 'text/html; charset=utf-8',
+        'Set-Cookie': [
+          'srv_session=server-set-secret; Path=/; HttpOnly; SameSite=Lax',
+          'srv_visible=normal-value; Path=/; SameSite=Lax',
+        ],
+      });
+      res.end('<!DOCTYPE html><html><body><h1>5A.8 cookie fixture</h1></body></html>');
+      return;
+    }
+
     const file = url === '/' ? 'host.html' : url.replace(/^\/+/, '');
     try {
       const body = readFileSync(resolve(FIXTURE_DIR, file));
