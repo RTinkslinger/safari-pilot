@@ -195,6 +195,10 @@ registerExtensionHTTPServerTests()
 
 registerTraceTests()
 
+// MARK: - FileStagingStore Tests
+
+registerFileStagingStoreTests()
+
 // MARK: - Results
 
 print("-----------------")
