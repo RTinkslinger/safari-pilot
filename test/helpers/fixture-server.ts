@@ -63,6 +63,29 @@ function makeHandler() {
       return;
     }
 
+    // 5A.7 HAR fixture: returns deterministic JSON keyed by `id` query param,
+    // PLUS a server-time timestamp that changes per request. The test uses the
+    // timestamp to differentiate "served live by the server" from "replayed by
+    // the mock layer": after dump_har + route_from_har, a subsequent fetch to
+    // the same URL must return the CAPTURED timestamp, not a fresh one. The
+    // `id` lets the test capture multiple distinct entries deterministically.
+    if (url === '/har-fixture') {
+      const idMatch = (req.url ?? '').match(/[?&]id=([^&]*)/);
+      const id = idMatch ? decodeURIComponent(idMatch[1] ?? '') : 'unknown';
+      const echoMatch = (req.url ?? '').match(/[?&]echo=([^&]*)/);
+      const echo = echoMatch ? decodeURIComponent(echoMatch[1] ?? '') : null;
+      const now = Date.now();
+      res.writeHead(200, {
+        'Content-Type': 'application/json; charset=utf-8',
+        'X-Har-Id': id,
+        'X-Server-Timestamp': String(now),
+      });
+      const body: Record<string, unknown> = { id, capturedAt: now };
+      if (echo !== null) body['echo'] = echo;
+      res.end(JSON.stringify(body));
+      return;
+    }
+
     const file = url === '/' ? 'host.html' : url.replace(/^\/+/, '');
     try {
       const body = readFileSync(resolve(FIXTURE_DIR, file));
