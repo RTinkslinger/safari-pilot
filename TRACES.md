@@ -14,6 +14,32 @@
 
 ## Current Work
 
+### Iteration 47 - 2026-05-02
+**What:** T60 dormancy resolved + T55a verified GREEN + Phase 5A drafted/locked + 4 Group A TS-only items shipped (5A.3 right-click, 5A.6 multi-extract, 5A.4 xpath, 5A.5 locator chaining). 220 → 268 unit tests; +17 e2e all green on release-mode build.
+
+**Changes:**
+- `extension/background.js`, `src/server.ts` — T60 fix: pollLoop decoupled from `isWakeRunning` lock; new `supersedePollLoop()` aborts wedged fetches via AbortController; init path honors `SAFARI_PILOT_FORCE_NO_EXTENSION` across all paths.
+- `src/tools/interaction.ts` — 5A.3: `safari_click` honors `button` and `modifiers` params (schema declared since v1, handler ignored). Generated JS dispatches mousedown/mouseup + terminal event (click/contextmenu/auxclick) per W3C UI Events. Native link-following gated to left-click only.
+- `src/tools/extraction.ts` — 5A.6: `multi: true` mode on get_text/get_html/get_attribute. Uses `querySelectorAll`, returns `{matches: [...], count}`. Single-element shape preserved when omitted.
+- `src/locator.ts` — 5A.4: `xpath` first-class locator at TOP of priority chain (xpath > testId > role+name > label > placeholder > text). `buildXpathResolutionJs` uses `document.evaluate` with `XPathResult.FIRST_ORDERED_NODE_TYPE`, try/catch for malformed XPath → typed `{found:false}` envelope.
+- `src/locator.ts` — 5A.5: `nth` and `filter.hasText` post-resolution modifiers. Filter applies BEFORE nth (Playwright composition order). Out-of-range nth produces typed `{found:false}` envelope, not throw.
+- `docs/ROADMAP.md` — Phase 5A · Parity Closure (Clusters 1–7) drafted with Group A (9 cluster gaps) + Group B (5 hardening) + Group C (3 documented structural ceilings) + Group D (2 deferred). Sequence locked: TS-only first, then extension batch in 3+2 chunks.
+- `docs/TRACKER.md` — T60/T55a/T64 marked, T65 phase3-3.1 flake filed.
+- `~/.claude/rules/pdf-generation.md` (NEW, GLOBAL) — SOP captured from Airbnb-style parity-matrix PDF generation.
+
+**Context:**
+
+T60 root cause was structural in `extension/background.js`, NOT the previously-suspected Hummingbird HTTP deadlock. `pollLoop` is a forever-loop wrapped in the `isWakeRunning` try/finally; finally never ran in steady state, so when Safari's MV3 event-page suspended a `/poll` fetch into an unresolvable pending state, the lock pinned permanently and every subsequent alarm-driven `initialize()` bailed at the early-return path. Fix: `supersedePollLoop()` runs OUTSIDE the wake-setup lock, aborts the prior pollLoop's AbortController (releasing wedged fetches), starts a fresh pollLoop with new controller. Verified empirically: v0.1.19 install produced `init_proceeding` → `setup_completed` → `pollloop_started` traces followed by sustained POLLs every 5s.
+
+The TS-only sub-batch went through TDD with reviewer rounds: 5A.3 PASS-with-MAJOR-remediated (mousedown/mouseup sequence), 5A.6 PASS-with-MAJOR-remediated (selector flow + extraction expression), 5A.4 REVISE → strengthened priority oracle + 5 new priority tests → PASS, 5A.5 REVISE × 2 → broadened picker regexes (literal index OR normalized identifier) at 4 sites → PASS. Each item shipped with through-the-boundary e2e on release-mode build.
+
+Phase 5A scope: 9 Group A items closing every agent-relevant Cluster 1–7 gap. Three structural ceilings documented (multi-context isolation, route-mod body-rewrite, mock non-JS resources). Two deferred (touch, custom selector engines). Cadence: TS-only first (complete), then extension batch in 3+2 chunks with rebuild+install+e2e after each chunk.
+
+Discovered + filed: T65 phase3-3.1 form-submission flake (pre-existing TAB_NOT_FOUND on httpbin.org submit). Confirmed by stashing 5A.3 changes and reproducing identically.
+
+**Commits:** T60/T55a — `5d504bf 334200f 8b3147d dc1fa55 095b11c`. Phase 5A docs — `d10b1f9 7664d33 23f1acc`. Group A TS-only — `6ae37db` (5A.3) `e918ddf` (5A.6) `5de6d74` (5A.4) `2824d53` (5A.5).
+---
+
 ### Iteration 46 - 2026-05-02
 **What:** T55a — frame-aware storage bus shipped. Cross-origin iframe access via `all_frames: true` + commandId-keyed storage + targeted-only dispatch + lazy `sp_getFrameId` handshake + `frameUrl` mutation guard. `ENGINE_CAPS.extension.framesCrossOrigin` flips from `false` to `true` honestly.
 
