@@ -198,18 +198,23 @@ Strict UPP pipeline per item: brainstorm (where ambiguous) → spec → plan →
 
 ### Locked sequence
 
-```
-GROUP A — ascending scope
+**Sequencing decision update (2026-05-02, after 5A.6 ship):** the original "ascending scope" sequence within Group A would have meant ~5 separate extension rebuild + sign + notarize + Safari install cycles. Re-sorted to batch extension changes: **TS-only items first (in ascending scope), then a single extension batch.** One install cycle for all extension-bound work.
 
-  5A.3   Right-click + middle-click               [½ day]   ← FIRST
-  5A.6   Multi-element extraction native API     [1–2 days]
-  5A.8   Cookies httpOnly via browser.cookies    [1–2 days]
-  5A.4   XPath as first-class locator            [1–2 days]
-  5A.2   Download API parity                     [1–2 days]
-  5A.5   Locator chaining (nth · filter)         [2–3 days]
-  5A.9   HTTP basic / digest auth                [2–3 days]
-  5A.7   HAR record & replay                     [3–4 days]
-  5A.1   T41 safari_file_upload                  [multi-day, full UPP brainstorm]
+```
+GROUP A — TS-only items first, extension batch second
+
+  TS-only sub-batch (no Safari install required)
+  5A.3   Right-click + middle-click               ✓ shipped  6ae37db
+  5A.6   Multi-element extraction native API     ✓ shipped  e918ddf
+  5A.4   XPath as first-class locator            ← NEXT
+  5A.5   Locator chaining (nth · filter)
+
+  Extension sub-batch (single rebuild + sign + notarize + Safari install)
+  5A.8   Cookies httpOnly via browser.cookies
+  5A.2   Download API parity
+  5A.9   HTTP basic / digest auth
+  5A.7   HAR record & replay
+  5A.1   T41 safari_file_upload                  [full UPP brainstorm]
 
 GROUP B — after Group A closes
 
