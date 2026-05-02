@@ -33,16 +33,9 @@ Atomic per-item scope. For each entry below:
 *All shipped this sprint.* T7, SD-31, SD-32 resolved. See "Resolved this sprint" below.
 
 ### Extension-rebuild batch
-Source changes to `extension/*.js` are incomplete without rebuild + sign + notarize + release per the `feedback_distribution_builds` memory. Bundle these as ONE drop, not three releases.
+*All shipped via merge `ccc1724` (T21/T22/T27/T44 + T55 docs-only). See "Resolved this sprint" below for full context.*
 
-| ID | Surface | One-liner |
-|---|---|---|
-| **T21** | `extension/content-isolated.js` | content scripts don't patch `history.pushState`/`replaceState` — SPA URL changes via History API don't update the extension's tab cache |
-| **T22** | `extension/background.js` pollLoop | poll loop returns on error (no infinite loop), but no real retry-on-transient — wakeSequence reactivates on alarm only |
-| **T27** | `extension/background.js` findTargetTab | falls through to active tab when `tabUrl` not found; should return null when `tabUrl` was explicitly provided |
-| **T44** | `extension/background.js` | stale `sp_result` not cleaned up on event-page re-wake after suspension |
-
-Build pipeline: edit → `bash scripts/build-extension.sh` → verify entitlements via `codesign -d --entitlements -` → bump `package.json` version (per "never open app without version bump" memory) → `open "bin/Safari Pilot.app"` → verify in Safari Settings → release.
+Build pipeline (for future extension changes): edit → `bash scripts/build-extension.sh` → verify entitlements via `codesign -d --entitlements -` → bump `package.json` version (per "never open app without version bump" memory) → `open "bin/Safari Pilot.app"` → verify in Safari Settings → release.
 
 ### Quality debt — P2
 *All shipped this sprint.* T34/T37/T38/T39/T40 + T35 + T36 resolved. See "Resolved this sprint" below.
@@ -64,7 +57,7 @@ Build pipeline: edit → `bash scripts/build-extension.sh` → verify entitlemen
 | ~~T52~~ | RESOLVED 2026-05-01 | See "Resolved this sprint" below. |
 | ~~T53~~ | RESOLVED 2026-05-01 | See "Resolved this sprint" below. |
 | ~~T54~~ | RESOLVED 2026-05-01 | See "Resolved this sprint" below. |
-| **T55a** ⚠ VERIFYING | (this branch) | code shipped, e2e verification pending. See "Resolved this sprint" for full context. |
+| ~~T55a~~ ⚠ VERIFYING | RESOLVED 2026-05-02 | code shipped + merged + pushed; 9 e2e tests pending T60-class dormancy fix. See "Resolved this sprint" below. |
 | ~~T56~~ | RESOLVED 2026-05-01 | See "Resolved this sprint" below. |
 | ~~T57~~ | RESOLVED 2026-05-01 | See "Resolved this sprint" below. |
 | ~~T58~~ | RESOLVED 2026-05-01 | See "Resolved this sprint" below. |
@@ -88,7 +81,8 @@ Build pipeline: edit → `bash scripts/build-extension.sh` → verify entitlemen
 | ID | Surface | One-liner |
 |---|---|---|
 | ROADMAP-flake | NDJSON parser | line-split flake under parallel test runs (long click JS payloads with embedded newlines break the daemon's line-based JSON parser) |
-| **T60** | `daemon/Sources/SafariPilotdCore/ExtensionHTTPServer.swift` (Hummingbird, port 19475) | HTTP server deadlocks under `extension-reload-during-active-connection` — accepts TCP but never sends responses. TCP daemon-engine path (port 19474) unaffected. `launchctl bootout`/`bootstrap` does NOT clear the bug; needs full Safari quit + relaunch (or system reboot). Reproduced 2026-04-29 during T22 e2e attempts via `launchctl kickstart -k`. Pivoted T22 to bridge-injection so the test no longer triggers it, but the underlying daemon bug remains. |
+| **T60** ⚠ blocks T55a-e2e | `daemon/Sources/SafariPilotdCore/ExtensionHTTPServer.swift` (Hummingbird, port 19475) | HTTP server deadlocks under `extension-reload-during-active-connection` — accepts TCP but never sends responses. TCP daemon-engine path (port 19474) unaffected. `launchctl bootout`/`bootstrap` does NOT clear the bug; needs full Safari quit + relaunch (or system reboot). Reproduced 2026-04-29 during T22 e2e attempts; reproduced again 2026-05-02 during T55a e2e (extension polling dormancy: `lastPingAge` grows monotonically, `/poll` never lands between alarm-driven `/connect` events; pre-existing `t44-stale-storage-bus-cleanup.test.ts` reproduces same 10s timeout). **Blocking item:** T55a's 9 e2e tests can't verify GREEN until T60 is fixed. |
+| **SD-32-followup** | `test/e2e/` (new) | concurrent MCP sessions e2e — assert Session A's keepalive survives Session B's startup. Closes the unit-test wiring gap at `server.ts:1422` (otherSessions count stored into a private field; only an e2e exercises the full registerWithDaemon → field-write → cleanup-skip flow). Flagged by SD-32 reviewer 2026-04-25; promoted from inline tally prose to row 2026-05-02. Worth filing as the e2e test for any future concurrent-session breakage report. |
 | ~~T63~~ | RESOLVED 2026-04-30 | See "Resolved this sprint" below. |
 
 ---
@@ -98,6 +92,7 @@ Lookup-only index; full fix-context paragraphs are in `docs/AUDIT-TASKS.md` / `d
 
 | ID | Code | Docs | One-line |
 |---|---|---|---|
+| T21 + T22 + T27 + T44 | `ccc1724` (extension-batch merge) | (re-confirmed 2026-05-02 cleanup) | **Extension-rebuild batch shipped.** **T21** (`183d6b1`): content-isolated.js patches `history.pushState`/`replaceState` to relay SPA URL changes via `SAFARI_PILOT_URL_CHANGE` postMessage → background.js updates tabCacheMap. **T22** (`a26bd27`): pollLoop transient-retry ladder with exponential backoff + jitter (5 attempts, 0/250/500/1000/2000ms), yields to alarm after MAX_ATTEMPTS instead of dying. **T27** (`da1e1ae`): findTargetTab fails closed when `tabUrl` was provided but missing in both `tabs.query` and `tabCacheMap` — caller surfaces TAB_URL_NOT_RECOGNIZED. **T44** (`70754a1`): cleanup stale `sp_cmd`/`sp_result` on event-page wake (gcPendingStorage + cleanupStaleStorageBus). All 4 e2e tests in `test/e2e/t{21,22,27,44}-*.test.ts`. Build/sign/notarize pipeline applied. Tracker rows in Open table were stale until 2026-05-02 cleanup. |
 | T55a ⚠ VERIFYING | (this branch) | (this commit) | **Frame-aware storage bus.** `ENGINE_CAPS.extension.framesCrossOrigin` flipped from false to true honestly. Manifest gains `webNavigation` permission + `all_frames: true` on both content_scripts entries. Storage migrates from single-slot `sp_cmd`/`sp_result` to commandId-keyed `sp_cmd_<id>`/`sp_result_<id>`. Lazy `sp_getFrameId` handshake state machine in content-isolated.js (extension/lib/handshake-machine.js). Pure routing helper `shouldProcess` (extension/lib/route-command.js) inlined into content-isolated.js. Shared `routeFrameAware` (src/tools/_frame-routing-helper.ts) is the single source of truth across 6 frame-aware tool handlers (eval_in_frame, get_text, get_html, get_attribute, query_shadow, click_shadow); `safari_list_frames` returns frameId via webNavigation.getAllFrames intercepted in background.js executeCommand by the `__SP_LIST_FRAMES__` sentinel. Frame validation at dispatch (FRAME_NOT_FOUND), document-mutation guard via cmd.frameUrl vs location.href (FRAME_NAVIGATED), 10s frame-targeted timeout (FRAME_UNREACHABLE), capability gating in routeFrameAware (FRAME_NOT_SUPPORTED for non-extension engines). 4 new error classes in src/errors.ts (re-adds FRAME_NOT_FOUND per SD-22 instruction with wired throw sites). 22 new unit tests + 1 existing parity test re-enabled (220 unit tests + 143 daemon Swift = 364 total). 9 e2e tests committed at `46c62f5`. **e2e verification pending T60-class extension dormancy fix** (pre-existing, t44 reproduces same 10s timeout — `lastPingAge` grows monotonically between alarm-driven `/connect` events; `/poll` never lands). Spec: `docs/upp/specs/2026-05-02-t55a-frame-aware-storage-bus-design.md` (`e9cccc4`). Plan: `docs/upp/plans/2026-05-02-t55a-frame-aware-storage-bus-plan.md` (`435c46f`). v0.1.18 extension rebuilt + signed + notarized + stapled (entitlements verified on app + appex). Commits: `3700b94 dd1fd62 77a9908 ace2b98 1fa24d3 e3464f4 c628272 56a72de 0f48134 3e7313e 4be57bf f68880b 740cfd8 85d9c7b 46c62f5 e469e17`. |
 | T61 + T62 + ROADMAP-#3 | `cee676b` | (this commit) | `buildNavigateScript` now `return "<url>"` so osascript stdout is non-empty — empty stdout from pure-OSA setter was misclassified as CSP_BLOCKED by `parseJsResult`. Single root cause; T62 (post-navigate ownership) and ROADMAP-#3 (back/forward stale URL) both resolved as cascades. phase1-core-navigation: 4 failed → 6/6 GREEN. |
 | T63 | (this branch) | (this commit) | New `requiresApplescript` capability flag on `ToolRequirements`. `selectEngine()` honours it and short-circuits to `'applescript'` AFTER the `requiresExtension` check (correctness > telemetry). Tagged 7 NavigationTools, 4 CompoundTools, and `safari_health_check` — all the tools whose handlers run raw AppleScript independent of engine availability (constructed with `AppleScriptEngine` directly, bypassing `EngineProxy`). Result: `__engine` metadata stamped at server.ts:982,997 now reflects what actually ran. Telemetry-only fix; no correctness impact. New tests: 18 unit (`test/unit/engine-selector/applescript-only.test.ts`) + 5 e2e (`test/e2e/t63-engine-telemetry.test.ts`) covering the primary regression case + capability-collision priority + deferred-ownership branch. |
@@ -147,10 +142,21 @@ Pre-2026-04-25 sprint resolved entries (SD-01..SD-28, T13..T25 originals): see a
 
 ## Tally
 
-- **8** audit items (T-numbered) open — 0 P0, 4 in extension batch, 0 P2 quality debt (all shipped), 4 P3 missing-feature/cosmetic (T45/T46/T47/T48/T49/T50/T51/T52/T53/T54/T56/T57/T58 RESOLVED 2026-04-30→2026-05-01; T55 → RESOLVED-as-documented 2026-04-29 with T55a added in its place). **Easy/medium P3 sprint complete.** Remaining P3 are larger: T41 (build new tool), T42/T43 (e2e test sub-sprints), plus T55a (frame-aware storage bus, prereq for cross-origin frames cap).
-- **4** SD open — SD-33a/b/c/d (HealthStore wiring sub-items, split from SD-33 parent 2026-04-26). SD-30 and SD-33 parent resolved.
-- **2** ROADMAP backlog items — NDJSON line-split flake, T60 (daemon Hummingbird HTTP deadlock). T61/T62/ROADMAP-#3 RESOLVED 2026-04-30 by `cee676b`; T63 RESOLVED 2026-04-30 via new `requiresApplescript` capability flag honoured by `selectEngine()`.
+*Re-tallied 2026-05-02 after T55a merge + cleanup. Prior "27" figure was stale — it counted resolved entries.*
 
-Total open: **27**. T59 RESOLVED — `ScreenshotPolicy` wired end-to-end; 15 unit tests + 1 e2e litmus; merged to main 2026-04-26. P2 quality debt remains empty. T55 reduced to docs-only 2026-04-29 (replaced in P3 by T55a).
+**Actionable open: 6** (excluding deferred + verifying-only).
 
-Open follow-up flagged by SD-32 reviewer: an e2e companion test that spawns two concurrent MCP sessions and asserts Session A's keepalive survives Session B's startup would close the unit-test wiring gap (server.ts:1422 stores the otherSessions count into a private field; the unit tests poke the field directly; only an e2e exercises the full registerWithDaemon → field-write → cleanup-skip flow). Worth filing as SD-33 if anyone reports concurrent-session breakage.
+| Category | Count | IDs |
+|---|---|---|
+| P3 missing features / e2e sub-sprints | 3 | **T41** (build `safari_file_upload`), **T42** (recovery/degradation e2e), **T43** (61-untested-tools e2e — multi-week) |
+| ROADMAP backlog | 3 | **T60** (HTTP deadlock — blocks T55a-e2e + T44 reproduces same), **ROADMAP-flake** (NDJSON line-split), **SD-32-followup** (concurrent-MCP-sessions e2e) |
+
+**Verifying-only: 1** — **T55a** (frame-aware storage bus, code shipped + merged + pushed 2026-05-02; 9 e2e tests committed RED, gated on T60 fix). Cross-listed Open + Resolved.
+
+**Deferred (not actionable): 1** — **SD-33d** (`forceReloadExtension` doesn't exist; defer until needed).
+
+**Recently resolved this sprint:** T21+T22+T27+T44 (extension-batch shipped via `ccc1724`, tracker rows were stale until 2026-05-02 cleanup); T45/T46/T47/T48/T49/T50/T51/T52/T53/T54/T56/T57/T58 (P3 sprint, 2026-04-30 → 2026-05-01); T55 (RESOLVED-as-documented 2026-04-29, replaced by T55a in P3); T59 (`ScreenshotPolicy`, 2026-04-26); T61+T62+ROADMAP-#3 (`cee676b`, 2026-04-30); T63 (`requiresApplescript` flag, 2026-04-30); SD-30 + SD-33-parent + SD-33a + SD-33b + SD-33c (HealthStore wiring, 2026-04-26 → 2026-05-01).
+
+**P2 quality debt:** empty.
+
+**The dormancy gap in plain English:** T60 is the single open item blocking T55a's e2e verification. Everything else in T55a is shipped + verified by 220 unit tests + 143 daemon Swift tests + parameterized routing test on all 6 frame-aware tools.
