@@ -42,10 +42,10 @@ Approach 3 sidesteps the entire question. Storage bus carries ~1 KB metadata reg
 | TS handler | `src/tools/file-upload.ts` (NEW) | ~250 | Locator validation; `requireExtension()` gate; path expansion (`~` → `os.homedir()`) + relative rejection; pre-flight probe dispatch; pre-flight `fs.realpath` + `fs.stat` + `fs.readFile`; symlink trace event; MIME resolution; `stage_file` NDJSON; final `__SP_FILE_UPLOAD__` sentinel dispatch; response shaping |
 | MIME helper | `src/tools/mime.ts` (NEW) | ~120 | Pure `mimeFromExtension(filename: string): { mimeType: string; fallback: boolean }` — ~70 common types, default `application/octet-stream` with fallback flag. Documented coverage policy (web-common types only; agent override is the escape hatch for the long tail) |
 | Path util | `src/path-resolve.ts` (NEW) | ~40 | Pure helper: `resolveUploadPath(input)` returns absolute path or typed error; expands `~`, `~/`, rejects relative, computes Levenshtein "did you mean?" hint on ENOENT against the parent directory's siblings |
-| Errors | `src/errors.ts` | +35 | Add **9 new error codes** + `FileUploadError` subclass(es): `FILE_UPLOAD_PATH_NOT_FOUND` (with `suggestion` field), `FILE_UPLOAD_PATH_NOT_READABLE`, `FILE_UPLOAD_PATH_NOT_ABSOLUTE`, `FILE_UPLOAD_FILE_TOO_LARGE`, `FILE_UPLOAD_TOO_MANY_FILES`, `FILE_UPLOAD_EMPTY_PATHS`, `FILE_UPLOAD_INVALID_ELEMENT`, `FILE_UPLOAD_ELEMENT_DETACHED`, `FILE_UPLOAD_MULTIPLE_NOT_ALLOWED`. Implemented in **Phase 1** (TS-only foundations) so handler code in Phase 2 can throw them. |
+| Errors | `src/errors.ts` | +40 | Add **10 new error codes** + `FileUploadError` subclass(es): `FILE_UPLOAD_PATH_NOT_FOUND` (with `suggestion` field), `FILE_UPLOAD_PATH_NOT_READABLE`, `FILE_UPLOAD_PATH_NOT_ABSOLUTE`, `FILE_UPLOAD_FILE_TOO_LARGE`, `FILE_UPLOAD_TOO_MANY_FILES`, `FILE_UPLOAD_EMPTY_PATHS`, `FILE_UPLOAD_INVALID_ELEMENT`, `FILE_UPLOAD_ELEMENT_DETACHED`, `FILE_UPLOAD_MULTIPLE_NOT_ALLOWED`, `FILE_UPLOAD_INVALID_PARAMS`. Implemented in **Phase 1** (TS-only foundations) so handler code in Phase 2 can throw them. |
 | Server wiring | `src/server.ts` | +2 | Register `FileUploadTools` in modules array (same shape as `AuthTools`) |
 | Daemon command | `daemon/Sources/SafariPilotdCore/CommandDispatcher.swift` | ~80 | New `stage_file` NDJSON case (Swift signatures below); validates 25MB cap, decodes base64, stores `Data` in `[token: StagedFile]` map, schedules 60s TTL cleanup |
-| Daemon HTTP route | `daemon/Sources/SafariPilotdCore/ExtensionHTTPServer.swift` | ~40 | Add `GET /file-bytes/<token>` route. Returns raw bytes with `Content-Type: <stored-mime>`. **Token consumption rule:** entry deleted from staging map ONLY after extension's `r.arrayBuffer()` resolves successfully (signaled by a follow-up `DELETE /file-bytes/<token>` from the extension). 404 on miss/expired. Failure of the GET leaves the entry in the map for retry until TTL eviction. |
+| Daemon HTTP route | `daemon/Sources/SafariPilotdCore/ExtensionHTTPServer.swift` | ~40 | Add `GET /file-bytes/<token>` route. Returns raw bytes with `Content-Type: <stored-mime>`. **Token consumption rule:** entry deleted from staging map ONLY after extension's `r.arrayBuffer()` resolves successfully (signaled by a follow-up `DELETE /file-bytes/<token>` from the extension). GET 404 on miss/expired allows extension to surface a typed `FILE_UPLOAD_PATH_NOT_FOUND`-equivalent error. **DELETE 404 is non-fatal**: race window between GET-resolve and DELETE-issue can let the TTL evict; extension treats DELETE 404 as success (daemon already cleaned up). |
 | Daemon TTL cleanup | `daemon/Sources/SafariPilotdCore/CommandDispatcher.swift` | ~30 | Background `Task` running every 30s; scans staging map and evicts entries with `expiresAt < .now`. Started from `SafariPilotd.start()`, not lazy on first stage. Map protected by Swift `actor` for thread safety with Hummingbird async/await. |
 | Extension dispatch | `extension/background.js` | ~50 | New sentinel branches: `__SP_FILE_UPLOAD_PROBE__` (small payload — locator probe via storage bus) and `__SP_FILE_UPLOAD__` (writes `sp_cmd = {op: 'file_upload_stage', ref, tokens: [{token, name, mimeType, mimeFallback?}], probeOpts: {force, timeout, validationProbeMs}}` — no bytes) |
 | Page injection (isolated) | `extension/content-isolated.js` | ~80 | Reads `sp_cmd` for `file_upload_stage`. For each token: `fetch('http://127.0.0.1:19475/file-bytes/' + token).then(r => r.arrayBuffer())` → `new File([buf], name, {type: mimeType})` → on all-resolve, `fetch(url, {method: 'DELETE'})` per token to release daemon memory → `window.postMessage({op: 'file_upload', ref, files: [File...], probeOpts}, '*')` to content-main. On any fetch failure: postMessage with typed error, no DELETE (lets daemon retain bytes for retry until TTL). |
@@ -112,14 +112,14 @@ Token format: `crypto.randomBytes(32).toString('hex')` from TS — 64 hex chars;
   description:
     'Attach files to an <input type=file> element. ' +
     'Does not support drag-and-drop dropzones, custom file pickers, or native OS file dialogs — ' +
-    'only standard file inputs, including those hidden behind a <label>. ' +
+    'only standard file inputs, including those hidden behind a <label> (use force: true for these). ' +
     'Locator: same chain as safari_click / safari_fill (selector / role / text / label / placeholder / xpath / ref). ' +
     'Paths must be absolute or ~-prefixed; relative paths are rejected. ' +
     'Limits: 25 MB per file, 4 files per call. ' +
     'On success: dispatches input + change events on the resolved input element, then probes for client-side validation errors. ' +
-    "Check `response.validation` to detect site-side rejection (wrong file type, oversized per site rules, etc.) — a successful tool call does NOT guarantee the site accepted the file. " +
+    "If `response.validation` is present, it indicates site-side rejection (wrong file type, oversized per site rules, etc.) — a successful tool call does NOT guarantee the site accepted the file. " +
     "To clear the input's existing files, pass clear: true (passing an empty paths array is rejected with FILE_UPLOAD_EMPTY_PATHS). " +
-    'Override MIME type via the parallel mimeOverrides map: `paths: ["~/foo.bin"], mimeOverrides: {"~/foo.bin": "application/x-custom"}`. ' +
+    'Override MIME type via the parallel mimeOverrides map: `paths: ["~/foo.bin"], mimeOverrides: {"~/foo.bin": "application/x-custom"}` (keys must match `paths` entries byte-equal, pre-expansion). ' +
     'Example: safari_file_upload({ tabUrl, label: "Resume", paths: ["~/Downloads/resume.pdf"] })',
   inputSchema: {
     type: 'object',
@@ -143,7 +143,7 @@ Token format: `crypto.randomBytes(32).toString('hex')` from TS — 64 hex chars;
       mimeOverrides: {
         type: 'object',
         additionalProperties: { type: 'string' },
-        description: 'Optional path → MIME type map. Keys must exactly match entries in `paths`. Default is extension lookup → application/octet-stream fallback (signaled per-file in response.files[].mimeFallback).',
+        description: 'Optional path → MIME type map. Keys must byte-equal entries in `paths` AS PROVIDED by the agent (raw, pre-`~`-expansion). Unmatched keys throw FILE_UPLOAD_INVALID_PARAMS — no silent fallback. Default is extension lookup → application/octet-stream (signaled per-file in response.files[].mimeFallback).',
       },
       clear: { type: 'boolean', description: 'Remove all files currently attached to the input. Mutually exclusive with paths.' },
       timeout: { type: 'number', default: 5000, description: 'Auto-wait for the input element resolution (ms). Applies to step 3 probe.' },
@@ -173,10 +173,26 @@ Token format: `crypto.randomBytes(32).toString('hex')` from TS — 64 hex chars;
   ],
   validation?: {                         // populated only when probe found a problem
     message?: string,                    // input.validationMessage (raw browser-localized string)
-    alerts?: string[],                   // textContent of [role=alert] / [aria-invalid=true] within probe scope
-    probedAtMs: number,                  // actual probe delay; agents must NOT trust validation:undefined as "all good" if probedAtMs is short
+    alerts?: string[],                   // textContent of [role=alert] / [aria-invalid=true] / aria-errormessage refs within probe scope
   },
 }
+```
+
+**Note on validation absence**: `validation` is omitted whenever the probe found nothing — but that is a snapshot, not a guarantee. Agents needing certainty about site acceptance after async server-side validation should follow up with `safari_get_text` against the same scope after a longer wait. The probe gives a fast best-effort signal, not a synchronous truth.
+
+```ts
+// Original response example continued — for type readability:
+type FileUploadResponse = {
+  uploaded: number;
+  files: Array<{
+    name: string;
+    size: number;
+    mimeType: string;
+    path: string;
+    mimeFallback?: true;
+  }>;
+  validation?: { message?: string; alerts?: string[] };
+};
 ```
 
 **Removed from earlier draft (per Product M2/M3 review):**
@@ -189,13 +205,14 @@ Probed page-side immediately after `change` event dispatch. The contract:
 
 | Aspect | Decision |
 |---|---|
-| **Scope** | The closest ancestor `<form>` of the resolved input. Within that form, collect all elements matching `[role=alert]`, `[aria-invalid=true]`, or `[aria-errormessage]` references. Falls back to immediate-DOM-parent + sibling search if no `<form>` ancestor exists. This handles MUI/RHF wrapper patterns where the alert is the input's *uncle* rather than literal sibling. |
-| **Timing** | Single probe at `+validationProbeMs` (default 200, configurable 0–2000) after the `change` event. NOT a polling loop; sites with async validation (>2s) won't be captured. Agents must not trust `validation: undefined` as "site accepted" — `probedAtMs` is in the response so callers know how stale the read is. |
+| **Scope** | Closest ancestor `<form>` of the resolved input. Within that form, query for `[role=alert]`, `[aria-invalid="true"]`, and the elements referenced by the input's `aria-errormessage` attribute (which is a space-separated IDREF list per ARIA — `attr.split(/\s+/).map(id => document.getElementById(id))`). **Fallback when no `<form>` ancestor:** `input.parentElement` is the scope; query its descendants for the same selectors. This handles SPA fetch-submit patterns and MUI/RHF wrappers where the alert is the input's uncle, not a literal sibling. |
+| **Timing** | Single probe at `+validationProbeMs` (default 200, configurable 0–2000) after the `change` event. NOT a polling loop; sites with async validation (>validationProbeMs) won't be captured — `validation: undefined` is a snapshot, not a guarantee of site acceptance. |
 | **Locale** | `input.validationMessage` is the browser's localized string (e.g., `"Veuillez sélectionner un fichier."` on French Safari). Returned as raw string; agents must not regex-match content. Treat as forensic evidence only. |
 | **Length cap** | Max 3 alerts. Each alert's `textContent` truncated to 500 chars with `…` suffix on overflow. Prevents a 50KB collapsed-error-tree from ballooning the response. |
 | **Empty result** | If both `validationMessage` is empty AND no alerts found, `validation` is omitted from the response (NOT `validation: {}`). |
+| **Probe disabled** | If `validationProbeMs === 0`, the probe is skipped entirely; `validation` is always omitted from the response. The agent knows what they passed. |
 
-### Error codes (9 new)
+### Error codes (10 new)
 
 | Code | When | Response field + hint |
 |---|---|---|
@@ -203,12 +220,13 @@ Probed page-side immediately after `change` event dispatch. The contract:
 | `FILE_UPLOAD_EMPTY_PATHS` | `paths.length === 0` and `clear !== true` | `hint: 'pass clear: true to clear the input'` |
 | `FILE_UPLOAD_TOO_MANY_FILES` | `paths.length > 4` | `hint: 'v1 limit. To upload more, call multiple times — note that subsequent calls REPLACE the FileList, not append.'` |
 | `FILE_UPLOAD_PATH_NOT_ABSOLUTE` | Relative path passed | `hint: 'use absolute path or ~/...'` |
-| `FILE_UPLOAD_PATH_NOT_FOUND` | `fs.stat` ENOENT | `path`, optional `suggestion: 'did you mean: <levenshtein-closest>?'` (stretch goal — drop if implementation cost > 30 lines) |
+| `FILE_UPLOAD_PATH_NOT_FOUND` | `fs.stat` ENOENT | `path`, optional `suggestion` field (stretch goal — Levenshtein-closest sibling in parent dir; drop if implementation cost > 30 lines), `hint: 'file not found at <path>. If `suggestion` is present, retry with that path.'` |
 | `FILE_UPLOAD_PATH_NOT_READABLE` | EACCES / EISDIR / NUL byte in path | `path` |
 | `FILE_UPLOAD_FILE_TOO_LARGE` | `stat.size > 25 * 1024 * 1024` OR post-read TOCTOU re-check | `path`, `size`, `cap: 26_214_400`, `hint: 'v1 cap is 25 MB. For larger files, upload via a custom site mechanism (e.g., a direct API call from the agent).'` |
 | `FILE_UPLOAD_INVALID_ELEMENT` | Locator resolved but element is not `<input type=file>` | `tagName`, `type`, `hint: 'safari_file_upload only operates on <input type=file>. If the page uses a custom picker, look for the hidden <input> sibling — usually inside the same <label>. Try locating by the label text.'` |
 | `FILE_UPLOAD_ELEMENT_DETACHED` | `document.contains(input) === false` between probe and inject | `ref`, `hint: 'page re-rendered between probe and inject. Retry the call.'` |
 | `FILE_UPLOAD_MULTIPLE_NOT_ALLOWED` | `paths.length > 1` AND resolved input has `multiple === false` | `hint: 'input does not have the multiple attribute. Pass exactly 1 path.'` |
+| `FILE_UPLOAD_INVALID_PARAMS` | `mimeOverrides` contains keys not present in `paths`, OR both `paths` and `clear: true`, OR neither | `hint: '<specific issue: e.g. mimeOverrides keys [k1, k2] are not in paths>'` |
 
 ## Data flow (full path, top-to-bottom)
 
@@ -297,9 +315,11 @@ Probed page-side immediately after `change` event dispatch. The contract:
     ↓
 12. Result flows back via existing sp_result → background.js → daemon /result → MCP response
     ↓
-13. Daemon: tokens released by extension's DELETE on success;
-    unreleased tokens TTL-evicted after 60s (e.g., extension fetch failed
-    or page closed mid-flow).
+13. Daemon: tokens released by extension's DELETE on success.
+    DELETE on already-evicted token returns 404 (race window between
+    GET-resolve and DELETE-issue may let TTL fire); extension treats
+    as success. Unreleased tokens TTL-evicted after 60s (e.g.,
+    extension fetch failed, page closed mid-flow, or DELETE never sent).
 ```
 
 ### Clear-path variant
@@ -316,7 +336,7 @@ Probed page-side immediately after `change` event dispatch. The contract:
 
 2. **Symlink-aided exfiltration.** `fs.readFile` follows symlinks. An agent passes `/tmp/innocent.txt` symlinked to `/etc/passwd`. Mitigation: `fs.realpath()` resolves before read; if resolved path differs from input, log to `server-trace.ndjson` event `file_upload_path_resolved` with `{input, resolved, divergent: true}`. Forensic trail without restriction.
 
-3. **Token-bytes-in-memory exposure.** Daemon holds bytes in memory between `stage_file` and the extension's `/file-bytes/<token>` fetch. Window: typically <100ms; bounded by 60s TTL. 127.0.0.1-bound; Hummingbird does not expose externally. Token is a 32-byte cryptographically-random UUID — unguessable. One-shot consumption (token deleted on first fetch).
+3. **Token-bytes-in-memory exposure.** Daemon holds bytes in memory between `stage_file` and the extension's `/file-bytes/<token>` fetch. Window: typically <100ms; bounded by 60s TTL. 127.0.0.1-bound; Hummingbird does not expose externally. Token is a 32-byte cryptographically-random hex string (`crypto.randomBytes(32).toString('hex')` — 64 hex chars; unguessable). One-shot consumption (token released by extension's explicit `DELETE` after successful read).
 
 4. **Concurrent multi-MB upload memory pressure.** Daemon's staging map is unbounded; a hostile or buggy agent could stage many large files. Mitigation: cap-per-call (4 × 25MB = 100MB) is small; map cleanup runs every 30s; out-of-memory is the system's job. We do NOT add a global staging limit in v1.
 
@@ -337,7 +357,7 @@ Probed page-side immediately after `change` event dispatch. The contract:
 - `resolveUploadPath(input) → {ok, absolute, warnings} | typed error` — testable
 - `validateFileUploadParams(params)` — pure shape validation (mutual exclusion, length bounds)
 
-### E2E tests (13 total)
+### E2E tests (14 total)
 
 | Test | What it pins |
 |---|---|
@@ -350,7 +370,8 @@ Probed page-side immediately after `change` event dispatch. The contract:
 | Detached-element race | Mount input → microtask-replace via React state → upload → asserts `FILE_UPLOAD_ELEMENT_DETACHED` |
 | Wrong-element-type (selector matches `<button>`) | Throws `FILE_UPLOAD_INVALID_ELEMENT` |
 | Shadow-host failure mode | Locator resolves to shadow host → `FILE_UPLOAD_INVALID_ELEMENT` not silent no-op |
-| Validation surface (`/upload-validate` returns 400 + aria-invalid) | `response.validation.message` populated; `response.validation.alerts` includes the textContent within 500-char cap; `validation.probedAtMs === 200` |
+| Validation surface (`/upload-validate` returns 400 + aria-invalid) | `response.validation.message` populated; `response.validation.alerts` includes the textContent within 500-char cap |
+| Validation probe disabled (`validationProbeMs: 0`) | `response.validation` omitted regardless of site-side errors (probe was skipped) |
 | `multiple === false` + 2 paths | Throws `FILE_UPLOAD_MULTIPLE_NOT_ALLOWED` pre-flight |
 | `accept="image/*"` + .pdf upload | Concrete assertion: tool succeeds, response includes file regardless; **Safari does NOT filter via `accept` for programmatically-set FileList** (verified via Playwright behavior + spec). Site-side rejection (if any) appears in `validation` field. |
 | Concurrent multi-MB uploads in same tab | Two simultaneous calls with distinct files (sha256 A and B); each response's `files[].sha256` matches its own input bytes; neither response surfaces the other's bytes (proves commandId-keyed isolation). |
@@ -383,9 +404,9 @@ A second route `/upload-validate` returns 400 with `aria-invalid="true"` on any 
 
 The plan from writing-plans should sequence roughly:
 
-### Phase 0: Architecture spike (GATING — must pass before Phase 4–5 commit)
+### Phase 0: Architecture spike (GATING — must pass before Phase 4 commit)
 
-Two technical assumptions Approach 3 depends on are **not verified in any existing 5A.* code**. Phase 0 is a small disposable test that proves both before we commit to ~770 LOC of implementation. If either fails, architecture re-opens.
+Two technical assumptions Approach 3 depends on are **not verified in any existing 5A.* code**. Phase 0 is a disposable test inside the v0.1.22 plan that proves both before we commit to the bulk of the implementation. If either fails, the v0.1.22 plan is paused, design re-opens, and **no rebuild ships** — user sees no v0.1.22 release until file_upload either lands with a viable architecture or T41 is rescoped.
 
 **Assumption 1: content-script `fetch('http://127.0.0.1:19475/...')` from `content-isolated.js`.**
 The manifest's `connect-src 'self' http://127.0.0.1:19475` (extension/manifest.json:19) governs extension pages (background, popup). Content scripts run under a hybrid CSP that includes the page's CSP plus the extension's whitelist. Safari's enforcement of content-script CSP has historically diverged from Chrome. No content script in the existing codebase fetches the daemon — all daemon calls go through `background.js`.
@@ -393,16 +414,17 @@ The manifest's `connect-src 'self' http://127.0.0.1:19475` (extension/manifest.j
 **Assumption 2: `File` object structured-clone across ISOLATED→MAIN worlds via `window.postMessage`.**
 Storage bus has only ever carried JSON-serializable metadata. None of the 5A.* work transports binary objects across worlds. If `File` reaches MAIN as a stripped clone (e.g., empty Blob, missing name), the entire injection plan dies.
 
-**The spike** — implement minimally in v0.1.22-spike build (or as scaffolding within the v0.1.22 plan):
-- Add `__SP_FILE_UPLOAD_PROBE_TEST__` sentinel branch to `background.js` that triggers content-isolated to (a) `fetch('http://127.0.0.1:19475/health')` and capture the response status, (b) build a small `File` from a hardcoded ArrayBuffer and postMessage to MAIN, where MAIN reports back `{name, size, type, bytesMatchExpected}`.
-- Two e2e tests assert success.
-- If spike fails: open a follow-up design pass; candidate alternatives include moving File construction to MAIN world (with bytes shipped via fragmented postMessage) or abandoning Approach 3.
+**Single-rebuild gate.** v0.1.22 ships ALL of the Phase 0 + Phase 1–8 work in one extension/daemon build. Phase 0 lives as scaffolding inside the v0.1.22 source tree:
 
-Total spike cost: ~80 lines + 2 tests + 1 build cycle.
+- Add `__SP_FILE_UPLOAD_PROBE_TEST__` sentinel branch to `background.js` (mirrors existing `__SP_TEST_HARNESS__:` precedent in content-isolated.js) that triggers content-isolated to (a) `fetch('http://127.0.0.1:19475/health')` and capture the response status, (b) build a small `File` from a hardcoded ArrayBuffer and postMessage to MAIN, where MAIN reports back `{name, size, type, bytesMatchExpected}` via the **existing `sp_result_<commandId>` return path** (MAIN postMessages to ISOLATED → ISOLATED writes `sp_result_<commandId>` → daemon retrieves via existing `/result`). No new return-path infrastructure.
+- Two e2e tests assert success against the v0.1.22 release-mode build.
+- If either fails: pause Phase 4–8, do NOT proceed with the rebuild release; open a follow-up design pass. Candidate alternatives include moving File construction to MAIN world (bytes shipped via fragmented postMessage) or abandoning Approach 3 entirely.
+
+Total spike cost: ~80 lines + 2 e2e tests. Stays in the codebase as a permanent diagnostic so future similar architectural questions don't require a fresh spike.
 
 ### Phase 1: TS-only foundations (no rebuild)
 
-- `src/errors.ts`: 9 new error codes + `FileUploadError` subclasses
+- `src/errors.ts`: 10 new error codes + `FileUploadError` subclasses
 - `src/tools/mime.ts`: pure `mimeFromExtension(filename)` + unit tests
 - `src/path-resolve.ts`: pure `resolveUploadPath(input)` + unit tests (Levenshtein suggestion is stretch — drop if cost > 30 lines)
 - Reviewer gates per pure helper
@@ -463,7 +485,7 @@ Tightening over the prior phrasing prevents a vague "tested 5 sites" entry.
 - ~~Wire encoding?~~ → Approach 3 (out-of-band HTTP fetch from extension).
 - ~~Pre-flight reordering?~~ → Probe sentinel before byte staging.
 - ~~Detached-element race?~~ → `document.contains` check + new error code.
-- ~~Validation surface?~~ → Configurable `validationProbeMs` (default 200, max 2000); scope = closest `<form>` ancestor; raw localized strings; max 3 alerts × 500 chars; agents check `probedAtMs` to gauge staleness.
+- ~~Validation surface?~~ → Configurable `validationProbeMs` (default 200, max 2000); scope = closest `<form>` ancestor (fallback: `input.parentElement` descendants); `aria-errormessage` parsed as space-separated IDREF list; raw localized strings; max 3 alerts × 500 chars. `validation: undefined` is a snapshot, not a guarantee — agents needing certainty should follow up with `safari_get_text` after a longer wait.
 - ~~Polymorphic paths schema?~~ → Replaced `oneOf [string, {path,mimeType}]` with `paths: string[]` + parallel `mimeOverrides?: Record<string,string>` map.
 - ~~Redundant response fields?~~ → Dropped `cleared` (agent already knows) and `warnings` (no agent contract; symlink resolution still goes to `server-trace.ndjson`).
 - ~~`accept` attribute mismatch?~~ → Pass-through (Playwright parity); site-side rejection surfaces via validation field.
