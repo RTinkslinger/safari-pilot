@@ -265,3 +265,78 @@ export function entriesToHar(
     },
   };
 }
+
+export interface MockRule {
+  urlPattern: string;
+  response: {
+    status: number;
+    body: string;
+    headers: Record<string, string>;
+  };
+}
+
+export interface HarToMockOptions {
+  /** Inclusion predicate over the entry URL (full URL, no normalization). */
+  urlFilter?: (url: string) => boolean;
+  /** Inclusion predicate over the request method. Default: GET only. */
+  methodFilter?: (method: string) => boolean;
+  /** Include status:0 entries (network errors). Default: false. */
+  includeErrors?: boolean;
+  /** Include 1xx and 3xx entries. Default: false. */
+  includeRedirects?: boolean;
+}
+
+const DEFAULT_METHOD_FILTER = (m: string): boolean => m === 'GET';
+
+function headersArrayToRecord(headers: HarHeader[]): Record<string, string> {
+  // Object.fromEntries last-wins semantics for duplicate names — matches
+  // Headers.set behavior. HAR allows duplicate names; Record collapses them.
+  const record: Record<string, string> = {};
+  for (const { name, value } of headers) {
+    record[name] = value;
+  }
+  return record;
+}
+
+export function harToMockRules(har: HarLog, options?: HarToMockOptions): MockRule[] {
+  const methodFilter = options?.methodFilter ?? DEFAULT_METHOD_FILTER;
+  const urlFilter = options?.urlFilter;
+  const includeErrors = options?.includeErrors === true;
+  const includeRedirects = options?.includeRedirects === true;
+
+  const seen = new Set<string>();
+  const rules: MockRule[] = [];
+
+  for (const entry of har.log.entries) {
+    const status = entry.response.status;
+    const url = entry.request.url;
+    const method = entry.request.method;
+
+    // Default skip rules: status 0 (network error), 1xx (informational with
+    // no replayable body), 3xx (redirect — mock layer can't honor Location).
+    if (status === 0 && !includeErrors) continue;
+    const isRedirectClass = (status >= 100 && status < 200) || (status >= 300 && status < 400);
+    if (isRedirectClass && !includeRedirects) continue;
+
+    if (!methodFilter(method)) continue;
+    if (urlFilter && !urlFilter(url)) continue;
+
+    // First-wins dedup by urlPattern — matches Playwright's routeFromHAR
+    // first-occurrence semantics. The existing __safariPilotMocks is keyed
+    // by urlPattern alone; emitting duplicates would silently last-wins
+    // overwrite at install time.
+    if (seen.has(url)) continue;
+    seen.add(url);
+
+    rules.push({
+      urlPattern: url,
+      response: {
+        status,
+        body: entry.response.content.text ?? '',
+        headers: headersArrayToRecord(entry.response.headers),
+      },
+    });
+  }
+
+  return rules;
+}
