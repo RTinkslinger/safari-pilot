@@ -240,7 +240,10 @@ if #available(macOS 14.0, *) {
 Task { [stagingStore = dispatcher.stagingStore] in
     while !Task.isCancelled {
         do {
-            try await Task.sleep(for: .seconds(30))
+            // 30s in nanoseconds — older API (avail. macOS 12+) so no extra
+            // availability gate needed inside the file's existing macOS 14
+            // conditional blocks.
+            try await Task.sleep(nanoseconds: 30 * 1_000_000_000)
         } catch {
             break
         }
