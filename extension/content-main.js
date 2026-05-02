@@ -363,13 +363,23 @@
       if (!ev.data.clear) {
         for (const file of ev.data.files) dt.items.add(file);
       }
-      // f. Object.defineProperty assignment — frameworks (React/Vue) observe this
-      // because the input.files setter is intercepted, but defineProperty bypasses
-      // the setter and sets the actual underlying value. The native FileList is
-      // installed; subsequent reads see it.
-      Object.defineProperty(input, 'files', {
-        value: dt.files, writable: false, configurable: true,
-      });
+      // f. Set input.files via direct assignment — the spec-compliant path that
+      // updates the internal [[Files]] slot WebKit's FormData reads from.
+      // Object.defineProperty alone shadows the prototype getter for JS reads
+      // but does NOT update the internal slot, so new FormData(form) at submit
+      // time sees an empty FileList (root cause of the empty multipart parts
+      // observed in Phase 7 e2e). Direct assignment goes through the proper
+      // HTMLInputElement.files setter (designed for DataTransfer-based assignment
+      // since ~2019). defineProperty is kept as a fallback for contexts where
+      // the setter is missing or read-only — frameworks like React/Vue still
+      // observe the change via input/change events fired below.
+      try {
+        input.files = dt.files;
+      } catch (e) {
+        Object.defineProperty(input, 'files', {
+          value: dt.files, writable: false, configurable: true,
+        });
+      }
       // g. Fire input + change events
       input.dispatchEvent(new Event('input', { bubbles: true }));
       input.dispatchEvent(new Event('change', { bubbles: true }));

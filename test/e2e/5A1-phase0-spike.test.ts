@@ -53,7 +53,10 @@ describe('5A.1 / Phase 0 — architecture spike (GATING)', () => {
         script: '__SP_FILE_UPLOAD_PROBE_TEST__',
         timeout: 10_000,
       }, nextId(), 30_000);
-      const probeResults = JSON.parse(r['value'] as string) as {
+      // safari_evaluate's handleEvaluate already JSON.parses the engine result
+      // and inlines the fields. Sentinel scripts (bypassed wrapper) get their
+      // probeResults shape directly on `r` — no `r.value` envelope.
+      const probeResults = r as unknown as {
         fetchOk: boolean;
         fetchStatus?: number;
         structuredCloneOk: boolean;
@@ -85,7 +88,9 @@ describe('5A.1 / Phase 0 — architecture spike (GATING)', () => {
         script: '__SP_FILE_UPLOAD_PROBE_TEST__',
         timeout: 10_000,
       }, nextId(), 30_000);
-      const probeResults = JSON.parse(r['value'] as string) as {
+      // See Assumption 1 test for response-shape note: handleEvaluate's
+      // sentinel-bypass returns probeResults directly on `r`.
+      const probeResults = r as unknown as {
         structuredCloneOk: boolean;
         mainResponse: { ok: boolean; name?: string; size?: number; type?: string; bytesMatchExpected?: boolean; error?: string };
       };

@@ -442,18 +442,22 @@ export class ExtractionTools {
     // non-Promise is a no-op, so synchronous `return <value>` scripts still
     // work. Pair with content-main.js's `await fn()` in execute_script (T6).
     //
-    // Test-bridge passthrough: scripts starting with `__SP_TEST_HARNESS__:`
-    // are intercepted in extension/content-isolated.js (DEBUG_HARNESS-gated).
-    // The bridge guard there checks `script.startsWith(prefix)`, which would
-    // FAIL on the IIFE-wrapped script (because the wrapper's preamble starts
-    // the string). Bypass the wrapping for harness scripts so the raw prefix
-    // reaches the bridge. The prefix is namespaced; no collision with real
-    // scripts in production. In release builds the bridge is stripped, so a
-    // harness-prefixed script (which never appears in production) would just
-    // error in MAIN world's `new Function()`. Same outcome — no behavior
-    // change for any real caller.
-    const isHarness = typeof script === 'string' && script.startsWith('__SP_TEST_HARNESS__:');
-    const js = isHarness ? script : `
+    // Test-bridge passthrough: scripts starting with `__SP_TEST_HARNESS__:` or
+    // `__SP_FILE_UPLOAD_PROBE_TEST__` are intercepted in
+    // extension/content-isolated.js. The bridge guard there checks
+    // `script.startsWith(prefix)`, which would FAIL on the IIFE-wrapped script
+    // (because the wrapper's preamble starts the string). Bypass the wrapping
+    // for sentinel scripts so the raw prefix reaches the bridge. Both prefixes
+    // are namespaced; no collision with real scripts in production.
+    // (5A.1 phase-0 spike sentinel `__SP_FILE_UPLOAD_PROBE_TEST__` reaches
+    // here because the spike e2e test fires it via `safari_evaluate` as a
+    // generic JS-eval channel — without the bypass, the sentinel never
+    // reaches background.js's executeCommand prefix-match.)
+    const isSentinelBypass = typeof script === 'string' && (
+      script.startsWith('__SP_TEST_HARNESS__:') ||
+      script.startsWith('__SP_FILE_UPLOAD_PROBE_TEST__')
+    );
+    const js = isSentinelBypass ? script : `
       return (async () => {
         var __userResult = await (async function() { ${script} })();
         return { value: __userResult, type: typeof __userResult };

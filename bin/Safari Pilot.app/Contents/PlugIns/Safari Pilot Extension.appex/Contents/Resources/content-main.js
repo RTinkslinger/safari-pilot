@@ -276,6 +276,198 @@
     window.addEventListener('popstate', _emit);
   }
 
+  // ─── 5A.1 phase-0: file upload probe — ISOLATED→MAIN File structured-clone test
+  // Receives a probe File from content-isolated.js, verifies it arrived as a real
+  // File instance with the SPFUBYTE signature bytes intact, and responds via
+  // postMessage. This is Test B of the phase-0 spike: if File objects can't
+  // survive structured-clone across the isolation boundary, Approach 3 is dead.
+  window.addEventListener('message', (ev) => {
+    if (!ev.data || ev.data.op !== 'file_upload_probe_test_request') return;
+    const file = ev.data.file;
+    // Verify File object survived structured clone with bytes intact.
+    const payload = { ok: false };
+    try {
+      if (!(file instanceof File)) {
+        payload.error = `not a File instance: ${Object.prototype.toString.call(file)}`;
+      } else {
+        payload.name = file.name;
+        payload.size = file.size;
+        payload.type = file.type;
+        // Read bytes via blob.arrayBuffer() and verify the SPFUBYTE signature.
+        file.arrayBuffer().then((buf) => {
+          const view = new Uint8Array(buf);
+          const expected = [0x53, 0x50, 0x46, 0x55, 0x42, 0x59, 0x54, 0x45];
+          const bytesMatch = view.length === expected.length && expected.every((b, i) => view[i] === b);
+          window.postMessage({
+            op: 'file_upload_probe_test_response',
+            commandId: ev.data.commandId,
+            payload: { ok: bytesMatch, name: file.name, size: file.size, type: file.type, bytesMatchExpected: bytesMatch },
+          }, '*');
+        }).catch((e) => {
+          window.postMessage({
+            op: 'file_upload_probe_test_response',
+            commandId: ev.data.commandId,
+            payload: { ok: false, error: `arrayBuffer failed: ${String(e && e.message || e)}` },
+          }, '*');
+        });
+        return;
+      }
+      window.postMessage({
+        op: 'file_upload_probe_test_response',
+        commandId: ev.data.commandId,
+        payload,
+      }, '*');
+    } catch (e) {
+      window.postMessage({
+        op: 'file_upload_probe_test_response',
+        commandId: ev.data.commandId,
+        payload: { ok: false, error: String(e && e.message || e) },
+      }, '*');
+    }
+  });
+
+  // ─── 5A.1 file_upload INJECT handler — fires DataTransfer + defineProperty + events
+  // in MAIN world (page-side; CSP allows native APIs that ISOLATED cannot access for
+  // the input.files mutation that frameworks observe).
+  window.addEventListener('message', (ev) => {
+    if (!ev.data || ev.data.op !== 'file_upload_inject') return;
+
+    const respond = (payload) => {
+      window.postMessage({ op: 'file_upload_response', commandId: ev.data.commandId, payload }, '*');
+    };
+
+    try {
+      // a. Resolve input via inline minimal locator (selector/xpath/ref).
+      const input = resolveFileUploadInjectLocator(ev.data.locator);
+      if (!input) {
+        respond({ ok: false, errorCode: 'LOCATOR_NOT_FOUND', message: 'locator did not resolve in main world' });
+        return;
+      }
+      // b. Detached-element check
+      if (!document.contains(input)) {
+        respond({ ok: false, errorCode: 'FILE_UPLOAD_ELEMENT_DETACHED' });
+        return;
+      }
+      // c. tagName/type re-check (probe-vs-inject divergence)
+      if (input.tagName !== 'INPUT' || input.type !== 'file') {
+        respond({ ok: false, errorCode: 'FILE_UPLOAD_INVALID_ELEMENT', tagName: input.tagName, type: input.type || '' });
+        return;
+      }
+      // d. multiple-attr re-check
+      if (!ev.data.clear && ev.data.files.length > 1 && input.multiple === false) {
+        respond({ ok: false, errorCode: 'FILE_UPLOAD_MULTIPLE_NOT_ALLOWED' });
+        return;
+      }
+      // e. Build DataTransfer
+      const dt = new DataTransfer();
+      if (!ev.data.clear) {
+        for (const file of ev.data.files) dt.items.add(file);
+      }
+      // f. Set input.files via direct assignment — the spec-compliant path that
+      // updates the internal [[Files]] slot WebKit's FormData reads from.
+      // Object.defineProperty alone shadows the prototype getter for JS reads
+      // but does NOT update the internal slot, so new FormData(form) at submit
+      // time sees an empty FileList (root cause of the empty multipart parts
+      // observed in Phase 7 e2e). Direct assignment goes through the proper
+      // HTMLInputElement.files setter (designed for DataTransfer-based assignment
+      // since ~2019). defineProperty is kept as a fallback for contexts where
+      // the setter is missing or read-only — frameworks like React/Vue still
+      // observe the change via input/change events fired below.
+      try {
+        input.files = dt.files;
+      } catch (e) {
+        Object.defineProperty(input, 'files', {
+          value: dt.files, writable: false, configurable: true,
+        });
+      }
+      // g. Fire input + change events
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      // h. Validation probe at +probeOpts.validationProbeMs
+      const probeMs = (ev.data.probeOpts && typeof ev.data.probeOpts.validationProbeMs === 'number')
+        ? ev.data.probeOpts.validationProbeMs : 0;
+      const finalize = () => {
+        const out = {
+          ok: true,
+          uploaded: ev.data.clear ? 0 : ev.data.files.length,
+          files: (ev.data.clear ? [] : ev.data.files).map((f) => ({
+            name: f.name, size: f.size, mimeType: f.type, path: '',
+          })),
+        };
+        if (probeMs > 0) {
+          const validation = collectFileUploadValidation(input);
+          if (validation) out.validation = validation;
+        }
+        respond(out);
+      };
+      if (probeMs > 0) setTimeout(finalize, probeMs);
+      else finalize();
+    } catch (e) {
+      respond({ ok: false, errorCode: 'INJECT_ERROR', message: String(e && e.message || e) });
+    }
+  });
+
+  // 5A.1 — minimal MAIN-world locator (selector/xpath/ref). Same coverage as
+  // content-isolated.js's resolveFileUploadLocator; production locator chain
+  // (role/text/label/placeholder) requires shared helper not yet in extension JS.
+  function resolveFileUploadInjectLocator(locator) {
+    if (!locator || typeof locator !== 'object') return null;
+    if (typeof locator.selector === 'string') {
+      return document.querySelector(locator.selector);
+    }
+    if (typeof locator.xpath === 'string') {
+      try {
+        return document.evaluate(locator.xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+      } catch { return null; }
+    }
+    if (typeof locator.ref === 'string') {
+      return document.querySelector('[data-sp-ref="' + CSS.escape(locator.ref) + '"]');
+    }
+    return null;
+  }
+
+  // 5A.1 — collect client-side validation surface for the probe.
+  // Scope: closest <form> ancestor; fallback to input.parentElement.
+  // Returns undefined if nothing surfaced (no validation field in the response).
+  function collectFileUploadValidation(input) {
+    const form = input.closest('form');
+    const scope = form || input.parentElement || document.body;
+
+    const message = input.validationMessage || '';
+    const alerts = [];
+
+    // [role=alert]
+    for (const el of scope.querySelectorAll('[role="alert"]')) {
+      if (alerts.length >= 3) break;
+      const text = (el.textContent || '').trim();
+      if (text) alerts.push(text.length > 500 ? text.slice(0, 500) + '…' : text);
+    }
+    // [aria-invalid=true]
+    for (const el of scope.querySelectorAll('[aria-invalid="true"]')) {
+      if (alerts.length >= 3) break;
+      const text = (el.textContent || '').trim();
+      if (text) alerts.push(text.length > 500 ? text.slice(0, 500) + '…' : text);
+    }
+    // aria-errormessage IDREF list
+    const ariaErrAttr = input.getAttribute('aria-errormessage');
+    if (ariaErrAttr) {
+      for (const id of ariaErrAttr.split(/\s+/)) {
+        if (alerts.length >= 3) break;
+        const el = document.getElementById(id);
+        if (el) {
+          const text = (el.textContent || '').trim();
+          if (text) alerts.push(text.length > 500 ? text.slice(0, 500) + '…' : text);
+        }
+      }
+    }
+
+    if (!message && alerts.length === 0) return undefined;
+    const out = {};
+    if (message) out.message = message;
+    if (alerts.length > 0) out.alerts = alerts;
+    return out;
+  }
+
   // ─── Message Channel from ISOLATED World ──────────────────────────────────
   // The ISOLATED world relay forwards background script commands here via
   // window.postMessage. We respond with results on the same channel.
