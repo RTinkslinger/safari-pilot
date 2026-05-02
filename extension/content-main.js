@@ -276,6 +276,56 @@
     window.addEventListener('popstate', _emit);
   }
 
+  // ─── 5A.1 phase-0: file upload probe — ISOLATED→MAIN File structured-clone test
+  // Receives a probe File from content-isolated.js, verifies it arrived as a real
+  // File instance with the SPFUBYTE signature bytes intact, and responds via
+  // postMessage. This is Test B of the phase-0 spike: if File objects can't
+  // survive structured-clone across the isolation boundary, Approach 3 is dead.
+  window.addEventListener('message', (ev) => {
+    if (!ev.data || ev.data.op !== 'file_upload_probe_test_request') return;
+    const file = ev.data.file;
+    // Verify File object survived structured clone with bytes intact.
+    const payload = { ok: false };
+    try {
+      if (!(file instanceof File)) {
+        payload.error = `not a File instance: ${Object.prototype.toString.call(file)}`;
+      } else {
+        payload.name = file.name;
+        payload.size = file.size;
+        payload.type = file.type;
+        // Read bytes via blob.arrayBuffer() and verify the SPFUBYTE signature.
+        file.arrayBuffer().then((buf) => {
+          const view = new Uint8Array(buf);
+          const expected = [0x53, 0x50, 0x46, 0x55, 0x42, 0x59, 0x54, 0x45];
+          const bytesMatch = view.length === expected.length && expected.every((b, i) => view[i] === b);
+          window.postMessage({
+            op: 'file_upload_probe_test_response',
+            commandId: ev.data.commandId,
+            payload: { ok: bytesMatch, name: file.name, size: file.size, type: file.type, bytesMatchExpected: bytesMatch },
+          }, '*');
+        }).catch((e) => {
+          window.postMessage({
+            op: 'file_upload_probe_test_response',
+            commandId: ev.data.commandId,
+            payload: { ok: false, error: `arrayBuffer failed: ${String(e && e.message || e)}` },
+          }, '*');
+        });
+        return;
+      }
+      window.postMessage({
+        op: 'file_upload_probe_test_response',
+        commandId: ev.data.commandId,
+        payload,
+      }, '*');
+    } catch (e) {
+      window.postMessage({
+        op: 'file_upload_probe_test_response',
+        commandId: ev.data.commandId,
+        payload: { ok: false, error: String(e && e.message || e) },
+      }, '*');
+    }
+  });
+
   // ─── Message Channel from ISOLATED World ──────────────────────────────────
   // The ISOLATED world relay forwards background script commands here via
   // window.postMessage. We respond with results on the same channel.

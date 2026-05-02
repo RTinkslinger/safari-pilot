@@ -164,6 +164,19 @@
     }
     /*@DEBUG_HARNESS_END@*/
 
+    // 5A.1 phase-0: file upload probe sentinel — runs in ISOLATED world so
+    // Test A (content-script fetch to 127.0.0.1:19475) and Test B (File
+    // structured-clone ISOLATED→MAIN) execute under real content-script CSP.
+    // Intercepted here (before the MAIN-world postMessage relay) because
+    // Test A only needs browser.storage and fetch — no MAIN world involvement
+    // until the File structured-clone sub-test. The MAIN world handler for
+    // 'file_upload_probe_test_request' is registered in content-main.js.
+    if (cmd.method === 'execute_script' && typeof cmd.params?.script === 'string'
+        && cmd.params.script.startsWith('__SP_FILE_UPLOAD_PROBE_TEST__')) {
+      handleFileUploadProbeTest(cmd);
+      return;
+    }
+
     const requestId = `sp_${++nextRequestId}_${Date.now()}`;
 
     const promise = new Promise((resolve, reject) => {
@@ -207,6 +220,67 @@
         }).catch((e) => console.warn('[safari-pilot] sp_result write failed:', e?.message));
       },
     );
+  }
+
+  // 5A.1 phase-0: file upload probe handler — runs in ISOLATED world.
+  // Verifies two assumptions Approach 3 depends on:
+  //   Test A: content-script fetch to 127.0.0.1:19475/health is permitted
+  //   Test B: File objects survive ISOLATED→MAIN window.postMessage structured-clone
+  // with bytes intact (SPFUBYTE signature: [0x53,0x50,0x46,0x55,0x42,0x59,0x54,0x45]).
+  async function handleFileUploadProbeTest(cmd) {
+    const probeResults = { fetchOk: false, structuredCloneOk: false, errors: [] };
+
+    // Test A: content-script fetch from 127.0.0.1:19475
+    try {
+      const r = await fetch('http://127.0.0.1:19475/health');
+      probeResults.fetchOk = r.ok;
+      probeResults.fetchStatus = r.status;
+    } catch (e) {
+      probeResults.errors.push(`fetch failed: ${String(e && e.message || e)}`);
+    }
+
+    // Test B: build File from a hardcoded ArrayBuffer; postMessage to MAIN;
+    // MAIN reports back via window.postMessage to ISOLATED.
+    // Use a known signature so byte-equality can be verified end-to-end.
+    const signature = new Uint8Array([0x53, 0x50, 0x46, 0x55, 0x42, 0x59, 0x54, 0x45]); // "SPFUBYTE"
+    const probeFile = new File([signature], 'probe.bin', { type: 'application/octet-stream' });
+
+    const mainResponse = await new Promise((resolve) => {
+      const handler = (ev) => {
+        if (ev.data && ev.data.op === 'file_upload_probe_test_response') {
+          window.removeEventListener('message', handler);
+          resolve(ev.data.payload);
+        }
+      };
+      window.addEventListener('message', handler);
+      window.postMessage({
+        op: 'file_upload_probe_test_request',
+        commandId: cmd.commandId,
+        file: probeFile,
+      }, '*');
+      setTimeout(() => {
+        window.removeEventListener('message', handler);
+        resolve({ ok: false, error: 'MAIN-world response timeout (2s)' });
+      }, 2000);
+    });
+
+    probeResults.structuredCloneOk = mainResponse && mainResponse.ok === true;
+    probeResults.mainResponse = mainResponse;
+
+    let result;
+    try {
+      result = { ok: true, value: JSON.stringify(probeResults) };
+    } catch (e) {
+      result = { ok: false, error: { name: 'PROBE_SERIALIZE_ERROR', message: String(e && e.message || e) } };
+    }
+
+    try {
+      await browser.storage.local.set({
+        [makeSpResultKey(cmd.commandId)]: { commandId: cmd.commandId, result, timestamp: Date.now() },
+      });
+    } catch (e) {
+      console.warn('[safari-pilot] file-upload-probe sp_result write failed:', e?.message);
+    }
   }
 
   /*@DEBUG_HARNESS_BEGIN@*/
