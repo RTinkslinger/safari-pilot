@@ -1,6 +1,7 @@
 import type { IEngine } from '../engines/engine.js';
 import { escapeForJsSingleQuote, escapeForTemplateLiteral } from '../escape.js';
 import type { Engine, ToolResponse, ToolRequirements } from '../types.js';
+import { entriesToHar, harToMockRules, type HarLog, type HarToMockOptions, type InterceptEntry } from './har.js';
 
 export interface ToolDefinition {
   name: string;
@@ -29,6 +30,8 @@ export class NetworkTools {
     this.handlers.set('safari_mock_request', this.handleMockRequest.bind(this));
     this.handlers.set('safari_websocket_listen', this.handleWebSocketListen.bind(this));
     this.handlers.set('safari_websocket_filter', this.handleWebSocketFilter.bind(this));
+    this.handlers.set('safari_dump_har', this.handleDumpHar.bind(this));
+    this.handlers.set('safari_route_from_har', this.handleRouteFromHar.bind(this));
   }
 
   // ── Public API ──────────────────────────────────────────────────────────────
@@ -228,6 +231,68 @@ export class NetworkTools {
           required: ['tabUrl'],
         },
         requirements: { idempotent: true },
+      },
+      {
+        name: 'safari_dump_har',
+        description:
+          'Export the current intercept buffer (window.__safariPilotNetwork.entries from safari_intercept_requests) ' +
+          'as a HAR 1.2 log. Returns { har, entryCount }. The HAR is consumable by any HAR-aware tool ' +
+          '(Playwright routeFromHAR, browser devtools, k6, etc.) and by safari_route_from_har for in-Safari replay. ' +
+          'Requires safari_intercept_requests to have run first; otherwise returns an empty HAR (entryCount: 0).',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            tabUrl: { type: 'string', description: 'Current URL of the tab whose intercept buffer to dump' },
+            creatorVersion: {
+              type: 'string',
+              description: 'Override the HAR log.creator.version (default: Safari Pilot package version)',
+            },
+          },
+          required: ['tabUrl'],
+        },
+        requirements: { idempotent: true },
+      },
+      {
+        name: 'safari_route_from_har',
+        description:
+          'Install in-page mocks from a HAR 1.2 log so subsequent fetch/XHR requests matching captured URLs ' +
+          'return the captured responses. Each surviving rule installs into window.__safariPilotMocks via the same ' +
+          'path safari_mock_request uses. Defaults: GET-only (most replay flows are read-only), 3xx redirects and ' +
+          'status-0 errors skipped (unreplayable). Returns { installed, rules }.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            tabUrl: { type: 'string', description: 'Current URL of the tab to install mocks into' },
+            har: {
+              type: 'object',
+              description: 'HAR 1.2 log object as produced by safari_dump_har or any HAR-compliant exporter',
+            },
+            methods: {
+              type: 'array',
+              items: { type: 'string' },
+              description: 'HTTP methods whose entries to replay. Default: ["GET"] only. ' +
+                'Pass e.g. ["GET","POST"] to also replay POST captures (caveat: same-URL different-method ' +
+                'captures collide on the URL-keyed mock store; first-occurrence wins).',
+            },
+            urlPatterns: {
+              type: 'array',
+              items: { type: 'string' },
+              description: 'Substring filters; only captured URLs containing at least one of these strings will be installed. Omit to include all captured URLs.',
+            },
+            includeErrors: {
+              type: 'boolean',
+              description: 'Include status:0 (network-error) entries. Default: false.',
+              default: false,
+            },
+            includeRedirects: {
+              type: 'boolean',
+              description: 'Include 1xx interim and 3xx redirect entries. Default: false. Mock layer cannot honor Location semantics, so opting in produces non-redirecting mock responses.',
+              default: false,
+            },
+          },
+          required: ['tabUrl', 'har'],
+        },
+        requirements: { idempotent: false },
       },
     ];
   }
@@ -829,6 +894,64 @@ export class NetworkTools {
     if (!result.ok) throw new Error(result.error?.message ?? 'WebSocket filter failed');
 
     return this.makeResponse(result.value ? JSON.parse(result.value) : {}, Date.now() - start);
+  }
+
+  private async handleDumpHar(params: Record<string, unknown>): Promise<ToolResponse> {
+    const start = Date.now();
+    const tabUrl = params['tabUrl'] as string;
+    const creatorVersion = params['creatorVersion'] as string | undefined;
+
+    // Read the in-page interceptor buffer. If safari_intercept_requests has
+    // not run, __safariPilotNetwork is undefined → return empty array.
+    const js = `
+      return window.__safariPilotNetwork && window.__safariPilotNetwork.entries
+        ? window.__safariPilotNetwork.entries.slice()
+        : [];
+    `;
+    const result = await this.engine.executeJsInTab(tabUrl, js);
+    if (!result.ok) throw new Error(result.error?.message ?? 'Dump HAR failed');
+
+    const raw = result.value ? JSON.parse(result.value) : null;
+    const entries: InterceptEntry[] = Array.isArray(raw) ? (raw as InterceptEntry[]) : [];
+    const har = entriesToHar(entries, creatorVersion ? { creatorVersion } : undefined);
+
+    return this.makeResponse({ har, entryCount: entries.length }, Date.now() - start);
+  }
+
+  private async handleRouteFromHar(params: Record<string, unknown>): Promise<ToolResponse> {
+    const start = Date.now();
+    const tabUrl = params['tabUrl'] as string;
+    const har = params['har'] as HarLog;
+    const methods = params['methods'] as string[] | undefined;
+    const urlPatterns = params['urlPatterns'] as string[] | undefined;
+    const includeErrors = params['includeErrors'] === true;
+    const includeRedirects = params['includeRedirects'] === true;
+
+    // The MCP wire is JSON; callbacks aren't transferable. Translate the
+    // string[] form into the callback shape harToMockRules expects, leaving
+    // each option undefined so the helper applies its own defaults
+    // (methodFilter: GET-only, urlFilter: include all).
+    const harOptions: HarToMockOptions = { includeErrors, includeRedirects };
+    if (methods) harOptions.methodFilter = (m: string): boolean => methods.includes(m);
+    if (urlPatterns) {
+      harOptions.urlFilter = (u: string): boolean => urlPatterns.some((p) => u.includes(p));
+    }
+
+    const rules = harToMockRules(har, harOptions);
+
+    // Install each rule via the existing mock-request handler — same dispatch
+    // path, same in-page state (__safariPilotMocks). Per-rule round-trip is
+    // simpler than building a batch script and adequate for typical HAR
+    // sizes; optimize to batch if profiling identifies a hotspot.
+    for (const rule of rules) {
+      await this.handleMockRequest({
+        tabUrl,
+        urlPattern: rule.urlPattern,
+        response: rule.response,
+      });
+    }
+
+    return this.makeResponse({ installed: rules.length, rules }, Date.now() - start);
   }
 
   // ── Private helpers ─────────────────────────────────────────────────────────
