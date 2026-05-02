@@ -38,6 +38,35 @@ Phase 5A scope: 9 Group A items closing every agent-relevant Cluster 1–7 gap. 
 Discovered + filed: T65 phase3-3.1 form-submission flake (pre-existing TAB_NOT_FOUND on httpbin.org submit). Confirmed by stashing 5A.3 changes and reproducing identically.
 
 **Commits:** T60/T55a — `5d504bf 334200f 8b3147d dc1fa55 095b11c`. Phase 5A docs — `d10b1f9 7664d33 23f1acc`. Group A TS-only — `6ae37db` (5A.3) `e918ddf` (5A.6) `5de6d74` (5A.4) `2824d53` (5A.5).
+
+---
+
+### Iteration 48 - 2026-05-02
+**What:** Phase 5A · Group A · Chunk 1 shipped + verified GREEN against v0.1.21 install. 5A.8 cookies httpOnly via browser.cookies + 5A.2 download saveAs (TS-only, split out of original chunk-1) + 5A.9 HTTP basic auth via DNR header injection. Two extension rebuilds (v0.1.20, v0.1.21) — second was a fix bundle for three discovery learnings.
+
+**Changes:**
+- `src/tools/storage.ts` + `extension/background.js` (~290) — 5A.8: `__SP_COOKIE_GET_ALL__/SET/REMOVE` sentinels route through `browser.cookies` API which sees httpOnly. document.cookie path preserved as AppleScript fallback.
+- `src/tools/downloads.ts` + `src/errors.ts` — 5A.2: `applySaveAs(metadata, saveAs?)` pure helper copies completed download to user path; mkdir-p parents; preserves source. New typed `DownloadSourceMissingError`. Threaded `saveAs` through 4 `makeSuccessResponse` call sites.
+- `src/tools/auth.ts` (NEW) + `src/server.ts` + `extension/background.js` (~280) — 5A.9: `safari_authenticate` / `safari_clear_authentication` route `__SP_DNR_ADD_RULE__/REMOVE_RULE__` sentinels to existing `handleDnrAddRule/Remove` handlers. Stable rule id from `urlPattern` hash so re-issue replaces and clear targets by pattern (no opaque token). EXTENSION_REQUIRED before dispatch for non-extension engines.
+- `extension/manifest.json` (v0.1.21) — added `declarativeNetRequestWithHostAccess` permission. Without it, `modifyHeaders` rule registration succeeds but action silently no-ops at the network layer.
+- `src/tools/storage.ts` (v0.1.21 fix) — `handleGetCookies` extension path always passes `url: tabUrl` (or `domain` if specified) filter. Empty filter `{}` returns incomplete cookie set in Safari (only HttpOnly surfaces).
+- `test/helpers/fixture-server.ts` — `/cookie-fixture` route emits Set-Cookie array with HttpOnly + non-HttpOnly entries; `/auth-protected` route returns 401 unless Authorization: Basic dGVzdHVzZXI6dGVzdHBhc3M=.
+- `test/e2e/5A8-cookies-httponly.test.ts` (4 tests, all green v0.1.21).
+- `test/e2e/5A9-http-basic-auth.test.ts` (3 tests, full architecture rewrite: top-level navigation to 401+WWW-Authenticate triggers Safari modal dialog → switched to fetch() with credentials:'omit' from a benign tab; DNR's modifyHeaders applies to xmlhttprequest resourceType. Fire-and-poll pattern via window slot to handle safari_evaluate's sync-only return contract).
+
+**Context:**
+
+Three discovery learnings (worth promoting to memory): (1) `browser.cookies.getAll({})` empty filter returns only HttpOnly cookies in Safari — root-cause-confirmed via document.cookie probe (srv_visible IS in store, fetch via empty filter just doesn't return it). (2) DNR `modifyHeaders` requires `declarativeNetRequestWithHostAccess` permission — `updateDynamicRules` accepts and stores the rule but action silently no-ops without the perm. (3) Top-level navigation to a 401+WWW-Authenticate response triggers Safari's modal HTTP auth dialog which blocks JS and leaves the tab in indeterminate URL state — extension tab cache lookup then misses. e2e MUST use fetch() with credentials:'omit' so the response comes back as data without prompting the dialog.
+
+The 5A.2 split (Option A): originally classified as part of chunk 1, but discovered during impl that saveAs is pure TS post-process — no extension change. Shipped standalone, kept chunk 1 at two build-required items (5A.8 + 5A.9). Saved one rebuild cycle.
+
+UPP TDD reviewer rounds: 5A.8 PASS first round (with 2 MAJOR opportunistic fixes — separator triangulation + httpOnly:false mutation guard). 5A.2 REVISE → typed-error oracle (instanceof SafariPilotError + ERROR_CODES.DOWNLOAD_SOURCE_MISSING) → PASS. 5A.9 REVISE × 2 → first round added stable-id local-derivation oracle + authType test + daemon-engine EXTENSION_REQUIRED parity → second round strengthened authType oracle to assert dispatched rule body equivalence with default → PASS.
+
+Chunk-1 e2e verification debug used systematic-debugging skill (5A.8 srv_visible missing + 5A.9 navigation-cache miss). Issue A root cause via curl + safari_evaluate document.cookie probe (false hypothesis on Node Set-Cookie array, true root cause was Safari's empty-filter behavior). Issue B root cause via reading findTargetTab + understanding Safari's modal auth dialog interaction with top-level navigation. v0.1.21 fix bundle bundled all three corrections into one rebuild.
+
+**Commits:** Chunk 1 — `979be01` (5A.8) `bb7f4d4` (5A.2) `5104487` (5A.9) `b0b5977` (v0.1.21 fix bundle: manifest perm + cookie url-filter + 5A.9 e2e arch).
+
+---
 ---
 
 ### Iteration 46 - 2026-05-02
