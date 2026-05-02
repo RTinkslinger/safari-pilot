@@ -122,6 +122,7 @@ export class InteractionTools {
       label: { type: 'string', description: 'Associated label text to match' },
       testId: { type: 'string', description: 'data-testid attribute value (exact match)' },
       placeholder: { type: 'string', description: 'Placeholder attribute to match' },
+      xpath: { type: 'string', description: "XPath expression (e.g. '//button[@id=\"submit\"]'). Takes priority over every other locator key — the most explicit target wins." },
       exact: { type: 'boolean', description: 'Use exact matching instead of substring', default: false },
       force: { type: 'boolean', description: 'Skip auto-wait actionability checks', default: false },
     };

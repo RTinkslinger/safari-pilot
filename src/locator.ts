@@ -17,6 +17,8 @@ export interface LocatorDescriptor {
   label?: string;
   testId?: string;
   placeholder?: string;
+  /** 5A.4: XPath expression. When set, takes priority over every other key. */
+  xpath?: string;
   exact?: boolean; // default false (substring, case-insensitive)
 }
 
@@ -91,6 +93,7 @@ const LOCATOR_KEYS: ReadonlyArray<keyof LocatorDescriptor> = [
   'label',
   'testId',
   'placeholder',
+  'xpath',
 ];
 
 /**
@@ -116,6 +119,7 @@ export function extractLocatorFromParams(
   if (typeof params.label === 'string') desc.label = params.label;
   if (typeof params.testId === 'string') desc.testId = params.testId;
   if (typeof params.placeholder === 'string') desc.placeholder = params.placeholder;
+  if (typeof params.xpath === 'string') desc.xpath = params.xpath;
   if (typeof params.exact === 'boolean') desc.exact = params.exact;
   return desc;
 }
@@ -140,6 +144,40 @@ function escapeForJs(s: string): string {
 //
 // Each returns the body of the resolution logic as a JS string. The caller
 // wraps it in the common IIFE + scoping + stamping + result envelope.
+
+/**
+ * 5A.4: XPath resolution. Uses the W3C DOM XPath API
+ * (`document.evaluate`) with `XPathResult.FIRST_ORDERED_NODE_TYPE` —
+ * "single match in document order," matching the locator contract that
+ * every other resolution body honors. Wraps in try/catch so a malformed
+ * xpath surfaces as `found: false` (consistent with the empty-match
+ * envelope) instead of propagating a SyntaxError through the engine.
+ */
+function buildXpathResolutionJs(xpath: string): string {
+  return `
+    var xpathExpr = '${escapeForJs(xpath)}';
+    try {
+      var xpathResult = document.evaluate(
+        xpathExpr,
+        root,
+        null,
+        XPathResult.FIRST_ORDERED_NODE_TYPE,
+        null
+      );
+      var node = xpathResult.singleNodeValue;
+      if (node && node.nodeType === 1) {
+        matched.push(node);
+      }
+    } catch (e) {
+      return JSON.stringify({
+        found: false,
+        locator: locatorDesc,
+        candidateCount: 0,
+        hint: 'Malformed XPath: ' + (e && e.message ? e.message : String(e))
+      });
+    }
+  `;
+}
 
 function buildRoleResolutionJs(
   role: string,
@@ -335,11 +373,16 @@ export function generateLocatorJs(
   const exact = locator.exact ?? false;
 
   // Determine which resolution strategy to use — priority order matches spec:
-  // testId > role+name > label > placeholder > text
+  // xpath (5A.4) > testId > role+name > label > placeholder > text. xpath sits
+  // at the top because it is the most explicit pointer (the agent literally
+  // names the node).
   let resolutionBody: string;
   let locatorType: string;
 
-  if (locator.testId !== undefined) {
+  if (locator.xpath !== undefined) {
+    resolutionBody = buildXpathResolutionJs(locator.xpath);
+    locatorType = 'xpath';
+  } else if (locator.testId !== undefined) {
     resolutionBody = buildTestIdResolutionJs(locator.testId);
     locatorType = 'testId';
   } else if (locator.role !== undefined) {
@@ -355,8 +398,8 @@ export function generateLocatorJs(
     resolutionBody = buildTextResolutionJs(locator.text, exact);
     locatorType = 'text';
   } else {
-    // No locator key — return immediate failure
-    return `return JSON.stringify({ found: false, locator: {}, candidateCount: 0, hint: 'No locator key provided (need role, text, label, testId, or placeholder)' });`;
+    // No locator key — return immediate failure. Hint mentions xpath per 5A.4.
+    return `return JSON.stringify({ found: false, locator: {}, candidateCount: 0, hint: 'No locator key provided (need role, text, label, testId, placeholder, or xpath)' });`;
   }
 
   // Build the locator descriptor JSON for error messages
