@@ -118,18 +118,61 @@ export class ExtensionEngine extends BaseEngine {
   }
 
   /**
-   * Stub — Task 7 will replace with real cross-frame dispatch through the
-   * ExtensionBridge (frameId-aware chrome.scripting.executeScript). Throwing
-   * here surfaces the gap immediately if anything tries to route through the
-   * extension engine before the implementation lands.
+   * Execute JavaScript inside a specific cross-origin iframe (T55a).
+   *
+   * Mirrors executeJsInTab but adds frameId to the storage-bus payload.
+   * background.js validates frameId via webNavigation.getAllFrames at dispatch,
+   * resolves frameUrl from that authoritative source, and writes both into
+   * sp_cmd_<commandId>. content-isolated.js's filter rule (route-command.js)
+   * reads frameId; the frameUrl mismatch guard catches document-mutation races.
+   *
+   * frameUrl is intentionally NOT sent from here — the resolution happens in
+   * background.js after validation, so we don't pre-fill a value that may be
+   * stale by the time the cmd is written.
    */
-  async executeJsInFrame(
-    _tabUrl: string,
-    _frameId: number,
-    _jsCode: string,
-    _timeout?: number,
-  ): Promise<EngineResult> {
-    throw new Error('ExtensionEngine.executeJsInFrame: Task 7 pending');
+  async executeJsInFrame(tabUrl: string, frameId: number, jsCode: string, timeout?: number): Promise<EngineResult> {
+    const start = Date.now();
+    try {
+      const payload = JSON.stringify({ script: jsCode, tabUrl, frameId });
+      const daemonResult = await this.daemon.execute(
+        `${INTERNAL_PREFIX} extension_execute ${payload}`,
+        Math.max(timeout ?? EXTENSION_TIMEOUT_MS, EXTENSION_TIMEOUT_MS),
+      );
+      const elapsed_ms = Date.now() - start;
+
+      if (!daemonResult.ok) {
+        return { ...daemonResult, elapsed_ms };
+      }
+
+      // Same _meta unwrapping pattern as executeJsInTab — ExtensionBridge wraps
+      // success values with {value, _meta} for tab identity metadata.
+      try {
+        const parsed = JSON.parse(daemonResult.value ?? '');
+        if (typeof parsed === 'object' && parsed !== null && '_meta' in parsed) {
+          const innerValue = parsed.value;
+          const meta = parsed._meta as { tabId?: number; tabUrl?: string };
+          return {
+            ok: true,
+            value: typeof innerValue === 'string'
+              ? innerValue
+              : innerValue === null || innerValue === undefined
+                ? undefined
+                : JSON.stringify(innerValue),
+            elapsed_ms,
+            meta,
+          };
+        }
+      } catch { /* not JSON or not a _meta wrapper — fall through */ }
+
+      return { ...daemonResult, elapsed_ms };
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      return {
+        ok: false,
+        error: { code: 'EXTENSION_ERROR', message, retryable: true },
+        elapsed_ms: Date.now() - start,
+      };
+    }
   }
 
   async execute(script: string, timeout?: number): Promise<EngineResult> {
