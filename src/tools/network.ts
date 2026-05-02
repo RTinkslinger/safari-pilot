@@ -388,6 +388,55 @@ export class NetworkTools {
         return { status: 'already_installed', buffered: window.__safariPilotNetwork.entries.length };
       }
 
+      // Helper: normalize fetch's init.headers (Headers / plain object / [name,value][])
+      // into a plain {name: value} record and assign to entry.requestHeaders.
+      // Path B: required for HAR record/replay so entriesToHar can roundtrip headers.
+      function __sp_captureRequestHeaders(entry, init) {
+        if (!init || !init.headers) return;
+        var reqHeaders = {};
+        if (typeof init.headers.forEach === 'function') {
+          // Headers instance — forEach signature is (value, name, parent)
+          init.headers.forEach(function(value, name) { reqHeaders[name] = value; });
+        } else if (Array.isArray(init.headers)) {
+          for (var i = 0; i < init.headers.length; i++) {
+            var pair = init.headers[i];
+            if (pair && pair.length >= 2) reqHeaders[pair[0]] = String(pair[1]);
+          }
+        } else {
+          var keys = Object.keys(init.headers);
+          for (var k = 0; k < keys.length; k++) {
+            reqHeaders[keys[k]] = String(init.headers[keys[k]]);
+          }
+        }
+        entry.requestHeaders = reqHeaders;
+      }
+
+      // Helper: capture response.headers (Headers instance) into a plain record.
+      function __sp_captureResponseHeaders(entry, response) {
+        if (!response || !response.headers || typeof response.headers.forEach !== 'function') return;
+        var respHeaders = {};
+        response.headers.forEach(function(value, name) { respHeaders[name] = value; });
+        entry.responseHeaders = respHeaders;
+      }
+
+      // Helper: parse XHR's getAllResponseHeaders() CRLF-delimited string into a record.
+      function __sp_parseXhrResponseHeaders(xhr) {
+        var raw = '';
+        try { raw = xhr.getAllResponseHeaders() || ''; } catch (e) { return {}; }
+        var out = {};
+        var lines = raw.split(/\\r?\\n/);
+        for (var i = 0; i < lines.length; i++) {
+          var line = lines[i];
+          if (!line) continue;
+          var idx = line.indexOf(':');
+          if (idx <= 0) continue;
+          var name = line.slice(0, idx).trim();
+          var value = line.slice(idx + 1).trim();
+          if (name) out[name] = value;
+        }
+        return out;
+      }
+
       // Patch window.fetch
       var origFetch = window.fetch;
       window.fetch = function(input, init) {
@@ -404,11 +453,13 @@ export class NetworkTools {
             duration: 0,
             requestBody: captureBody && init && init.body ? String(init.body).slice(0, 4096) : undefined,
           };
+          __sp_captureRequestHeaders(entry, init);
           var startTime = performance.now();
 
           return origFetch.apply(this, arguments).then(function(response) {
             entry.status = response.status;
             entry.duration = performance.now() - startTime;
+            __sp_captureResponseHeaders(entry, response);
             if (captureBody) {
               return response.clone().text().then(function(body) {
                 entry.responseBody = body.slice(0, 4096);
@@ -441,11 +492,22 @@ export class NetworkTools {
       // Patch XMLHttpRequest
       var origOpen = XMLHttpRequest.prototype.open;
       var origSend = XMLHttpRequest.prototype.send;
+      var origSetRequestHeader = XMLHttpRequest.prototype.setRequestHeader;
 
       XMLHttpRequest.prototype.open = function(method, xhrUrl) {
         this.__safariMethod = method.toUpperCase();
         this.__safariUrl = String(xhrUrl);
+        // Reset captured headers on open() — same XHR object can be reused
+        this.__safariReqHeaders = {};
         return origOpen.apply(this, arguments);
+      };
+
+      // Override setRequestHeader to record headers into a per-XHR map BEFORE
+      // the request fires (XHR exposes no post-send way to read request headers).
+      XMLHttpRequest.prototype.setRequestHeader = function(name, value) {
+        if (!this.__safariReqHeaders) this.__safariReqHeaders = {};
+        this.__safariReqHeaders[name] = String(value);
+        return origSetRequestHeader.apply(this, arguments);
       };
 
       XMLHttpRequest.prototype.send = function(body) {
@@ -463,11 +525,13 @@ export class NetworkTools {
             duration: 0,
             requestBody: captureBody && body ? String(body).slice(0, 4096) : undefined,
           };
+          entry.requestHeaders = self.__safariReqHeaders || {};
           var startTime = performance.now();
 
           this.addEventListener('loadend', function() {
             entry.status = self.status;
             entry.duration = performance.now() - startTime;
+            entry.responseHeaders = __sp_parseXhrResponseHeaders(self);
             if (captureBody) {
               entry.responseBody = (self.responseText || '').slice(0, 4096);
             }
