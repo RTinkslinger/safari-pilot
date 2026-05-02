@@ -120,9 +120,25 @@ Code-quality reviewer Important findings deferred to Task 6:
 - `cap` (26_214_400) and `MAX_FILES` (4) should be exported as named constants from `src/errors.ts` (or a shared constants file) before Task 6's handler is written, to prevent inline duplication.
 - Optional retryability sweep test (one-liner): `expect(err.retryable).toBe(err instanceof FileUploadElementDetachedError)`.
 
-**Next session resumes at Task 4 (`src/tools/mime.ts` — extension lookup helper) per CHECKPOINT.md.**
+**Next session resumes at Task 7 (FileStagingStore Swift actor — first daemon-side task) per CHECKPOINT.md.**
 
-**Commits:** `9e67332` (Task 1 spike scaffolding) `cad67de` (Task 1 fix: clearTimeout) `8ff3153` (Task 2 RED spike e2e) `e6eb3fd` (Task 2 fix: fixture origin) `a234937` (Task 3 error codes + subclasses).
+**Commits Phase 0 + Phase 1 + Phase 2:** `9e67332` (Task 1 spike scaffolding) `cad67de` (Task 1 fix: clearTimeout) `8ff3153` (Task 2 RED spike e2e) `e6eb3fd` (Task 2 fix: fixture origin) `a234937` (Task 3 error codes + subclasses) `09c836f` (mid-iter checkpoint) `8a9776f` (Task 4 mime helper) `df79f90` (Task 5 path-resolve) `e736399` (Task 5 fix: portable test paths) `0a0662b` (Task 6 file-upload handler) `90aa71f` (Task 6 fix: DaemonEngine injection — runtime path).
+
+**Tasks 4-6 details:**
+- Task 4 (mime.ts): 8 tests pass, 68-entry MIME table, paste-and-verify mechanics. Two minor reviewer notes deferred (`text/rust` → `text/x-rust` for table consistency; missing `mp3` test). All non-blocking.
+- Task 5 (path-resolve.ts): 13 tests pass. Plan-bug fixed BEFORE applying: plan said `input.includes(' ')` (rejects spaces) labeled as "NUL byte rejection" — wrong. macOS paths legitimately contain spaces. Fixed to `input.includes('\x00')`. Code-quality reviewer caught a portability issue (hardcoded `/Users/Aakash/...` test paths) → fixed via `fileURLToPath(import.meta.url)` + project-root-derived paths. Tightened symlink warning oracle to assert both input + resolved path appear in the warning string.
+- Task 6 (file-upload.ts handler): 18 dispatch tests pass, full pipeline (engine gate → mutual exclusion → mimeOverrides validation → probe sentinel → pre-flight reads + stage_file → final sentinel → response shape). Two plan-doc bugs caught: (1) `ERROR_CODES.ENGINE_REQUIRED` doesn't exist — only `EXTENSION_REQUIRED` (test updated), (2) `IEngine.execute()` only accepts string, not the plan's `{cmd: 'stage_file', ...}` object. Initial fix used `engine.execute(JSON.stringify(...))` for typecheck — but flagged as runtime-broken (would have evaluated the JSON string as JS in a tab, never reaching the daemon). Architecture fix: inject `DaemonEngine` into `FileUploadTools` constructor; handler now calls `daemon.command('stage_file', {token, mimeType, bytesB64})` — direct NDJSON dispatch via the existing `DaemonEngine.command()` method at `src/engines/daemon.ts:100`. server.ts updated to pass `daemonEngine` (already in scope at line 274) to the constructor.
+
+**Plan documentation errors caught (compounded list across all tasks):**
+1. Task 1 micro-manifest snippet: `cmd.commandId` should be `cmd.id`. Storage-bus dispatch shape needs full `tabId/method/deadline/params`.
+2. Task 2 alphabetical-order claim: `5A1-file-upload` actually sorts BEFORE `5A1-phase0-spike`. Plan's Phase 7 step 7 enforces gate by running spike file separately.
+3. Task 2 used `about:blank` — content scripts don't inject on `about:` scheme under `<all_urls>`. Fixed to fixture origin.
+4. Task 3 `super(code, message, retryable, hints)` snippet: `SafariPilotError(message, options?)` is the actual signature. `code`/`retryable`/`hints` are readonly class fields per existing pattern.
+5. Task 5 NUL/space confusion: plan's snippet rejected spaces while labeling it NUL-byte rejection. macOS paths use spaces.
+6. Task 6 `ERROR_CODES.ENGINE_REQUIRED` doesn't exist — actual code is `EXTENSION_REQUIRED`.
+7. Task 6 `engine.execute(object)` not in `IEngine` contract — `IEngine.execute(script: string)`. Architectural fix: `DaemonEngine.command()` injection.
+
+These plan errors all caught at TS-only foundation phase, BEFORE the daemon side ships. Good early-failure pattern. The plan author should be informed for Tasks 7+ to avoid repeated correction overhead.
 
 ---
 
