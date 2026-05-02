@@ -374,6 +374,25 @@ export class InteractionTools {
     const timeout = typeof params['timeout'] === 'number' ? params['timeout'] : 5000;
     const force = params['force'] === true;
 
+    // 5A.3: button + modifiers honored. Schema declares both (lines ~142-143);
+    // pre-fix the handler ignored them and dispatched every click as primary
+    // (button=0) with no modifier flags — same "schema lies" class as T49/T50/T51.
+    const buttonName = (params['button'] as string) ?? 'left';
+    const buttonNum = buttonName === 'right' ? 2 : buttonName === 'middle' ? 1 : 0;
+    const mods = Array.isArray(params['modifiers']) ? (params['modifiers'] as string[]) : [];
+    const ctrlKey = mods.includes('ctrl');
+    const shiftKey = mods.includes('shift');
+    const altKey = mods.includes('alt');
+    const metaKey = mods.includes('meta');
+    // Per W3C UI Events:
+    //   primary (button=0): mousedown → mouseup → click
+    //   right   (button=2): mousedown → mouseup → contextmenu  (no 'click')
+    //   middle  (button=1): mousedown → mouseup → auxclick     (no 'click')
+    const terminalEvent = buttonNum === 0 ? 'click' : buttonNum === 2 ? 'contextmenu' : 'auxclick';
+    // Native link-following only fires for primary click. Right opens context;
+    // middle is "open in new tab" which our automation cannot replicate via JS.
+    const followLinks = buttonNum === 0 ? 'true' : 'false';
+
     const selector = await this.resolveElement(tabUrl, params);
     const escapedSelector = escapeForJsSingleQuote(selector);
 
@@ -382,17 +401,26 @@ export class InteractionTools {
       if (!el) throw Object.assign(new Error('Element not found: ${escapedSelector}'), { name: 'ELEMENT_NOT_FOUND' });
 
       var rect = el.getBoundingClientRect();
-      var opts = { bubbles: true, cancelable: true, view: window, clientX: rect.x + rect.width/2, clientY: rect.y + rect.height/2 };
+      var opts = {
+        bubbles: true, cancelable: true, view: window,
+        clientX: rect.x + rect.width/2, clientY: rect.y + rect.height/2,
+        button: ${buttonNum},
+        buttons: ${1 << buttonNum},
+        ctrlKey: ${ctrlKey},
+        shiftKey: ${shiftKey},
+        altKey: ${altKey},
+        metaKey: ${metaKey},
+      };
       el.dispatchEvent(new MouseEvent('mousedown', opts));
       el.dispatchEvent(new MouseEvent('mouseup', opts));
-      el.dispatchEvent(new MouseEvent('click', opts));
+      el.dispatchEvent(new MouseEvent('${terminalEvent}', opts));
 
       var linkEl = el.tagName === 'A' ? el : el.closest('a');
       var navigatedTo = null;
 
       // dispatchEvent fires JS handlers but does NOT trigger Safari's native
-      // link-following behavior. For anchor elements, explicitly navigate.
-      if (linkEl && linkEl.href && !linkEl.hasAttribute('download')) {
+      // link-following behavior. For anchor elements + primary click, explicitly navigate.
+      if (${followLinks} && linkEl && linkEl.href && !linkEl.hasAttribute('download')) {
         var target = linkEl.getAttribute('target');
         if (!target || target === '_self') {
           navigatedTo = linkEl.href;
