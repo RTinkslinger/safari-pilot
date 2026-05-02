@@ -25,6 +25,7 @@ import { CompoundTools } from './tools/compound.js';
 import { DownloadTools } from './tools/downloads.js';
 import { PdfTools } from './tools/pdf.js';
 import { ExtensionDiagnosticsTools } from './tools/extension-diagnostics.js';
+import { FileUploadTools } from './tools/file-upload.js';
 import { KillSwitch } from './security/kill-switch.js';
 import { TabOwnership } from './security/tab-ownership.js';
 import { AuditLog } from './security/audit-log.js';
@@ -322,6 +323,7 @@ export class SafariPilotServer {
     const networkTools = new NetworkTools(proxy);
     const storageTools = new StorageTools(proxy);
     const authTools = new AuthTools(proxy);
+    const fileUploadTools = new FileUploadTools(proxy);
     const shadowTools = new ShadowTools(proxy);
     const frameTools = new FrameTools(proxy);
     const permissionTools = new PermissionTools(proxy);
@@ -356,6 +358,7 @@ export class SafariPilotServer {
       networkTools,
       storageTools,
       authTools,
+      fileUploadTools as unknown as ToolModule,
       shadowTools,
       frameTools,
       permissionTools,
