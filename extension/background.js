@@ -219,6 +219,34 @@ async function executeCommand(cmd) {
     return result;
   }
 
+  // T55a: list_frames sentinel — bypass storage bus, call webNavigation directly.
+  // safari_list_frames sends '__SP_LIST_FRAMES__' as the script string when
+  // engine.name === 'extension'. Returns frame topology with stable frameIds.
+  // Placed AFTER findTargetTab (need valid tab.id) and BEFORE frameId validation
+  // (list_frames itself doesn't target a frame — it queries the topology).
+  if (cmd.script === '__SP_LIST_FRAMES__') {
+    let frames;
+    try {
+      frames = await browser.webNavigation.getAllFrames({ tabId: tab.id });
+    } catch (e) {
+      const result = { ok: false, error: { name: 'WEBNAVIGATION_ERROR', message: `webNavigation.getAllFrames failed: ${e?.message ?? String(e)}` } };
+      await updatePendingEntry(commandId, { status: 'completed', result });
+      return result;
+    }
+    const value = JSON.stringify({
+      count: frames.length,
+      frames: frames.map((f) => ({
+        frameId: f.frameId,
+        parentFrameId: f.parentFrameId,
+        url: f.url,
+        errorOccurred: f.errorOccurred ?? false,
+      })),
+    });
+    const result = { ok: true, value };
+    await updatePendingEntry(commandId, { status: 'completed', result });
+    return result;
+  }
+
   // T55a: validate frameId at dispatch time. Missing frame → fast-fail
   // before any storage-bus traffic. Re-resolve frame.url so content-isolated.js's
   // mutation guard has the authoritative value when comparing to location.href.

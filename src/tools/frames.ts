@@ -2,6 +2,7 @@ import type { ToolResponse, ToolRequirements } from '../types.js';
 import type { IEngine } from '../engines/engine.js';
 import type { Engine } from '../types.js';
 import { escapeForJsSingleQuote, escapeForTemplateLiteral } from '../escape.js';
+import { routeFrameAware } from './_frame-routing-helper.js';
 
 export interface ToolDefinition {
   name: string;
@@ -33,8 +34,8 @@ export class FrameTools {
       {
         name: 'safari_list_frames',
         description:
-          'List all iframes on the current page. Returns each frame\'s src URL, name attribute, ' +
-          'id attribute, and dimensions (width/height).',
+          'List all iframes on the current page. Returns each frame\'s frameId+parentFrameId+url ' +
+          '(extension engine) or src+name+id+dimensions with frameId=null (AppleScript engine).',
         inputSchema: {
           type: 'object',
           properties: {
@@ -47,18 +48,21 @@ export class FrameTools {
       {
         name: 'safari_eval_in_frame',
         description:
-          'Execute arbitrary JavaScript inside a specific iframe\'s context. Accesses the iframe\'s ' +
-          'contentWindow to run the script. Cross-origin frames require the extension engine.',
+          'Execute arbitrary JavaScript inside a specific iframe\'s context. ' +
+          'Cross-origin frames require the extension engine and frameId (from safari_list_frames). ' +
+          'Same-origin frames can use frameSelector. When both frameId and frameSelector are ' +
+          'provided, frameId takes precedence.',
         inputSchema: {
           type: 'object',
           properties: {
             tabUrl: { type: 'string', description: 'Current URL of the tab' },
-            frameSelector: { type: 'string', description: 'CSS selector for the target iframe' },
+            frameSelector: { type: 'string', description: 'CSS selector for the target iframe (same-origin only)' },
+            frameId: { type: 'number', description: 'Numeric frameId from safari_list_frames (required for cross-origin frames)' },
             script: { type: 'string', description: 'JavaScript code to execute inside the frame' },
           },
-          required: ['tabUrl', 'frameSelector', 'script'],
+          required: ['tabUrl', 'script'],
         },
-        requirements: { idempotent: false },
+        requirements: { idempotent: false, requiresFramesCrossOrigin: true },
       },
     ];
   }
@@ -73,6 +77,20 @@ export class FrameTools {
     const start = Date.now();
     const tabUrl = params['tabUrl'] as string;
 
+    // Extension path: use webNavigation.getAllFrames via the __SP_LIST_FRAMES__
+    // sentinel. background.js intercepts this in executeCommand and returns the
+    // frame topology directly — no DOM enumeration, no merge.
+    if (this.engine.name === 'extension') {
+      const result = await this.engine.executeJsInTab(tabUrl, '__SP_LIST_FRAMES__');
+      if (!result.ok) throw new Error(result.error?.message ?? 'List frames failed');
+      return this.makeResponse(
+        result.value ? JSON.parse(result.value) : { count: 0, frames: [] },
+        Date.now() - start,
+      );
+    }
+
+    // AppleScript path: existing top-frame DOM enumeration; frameId is null
+    // because no API exists from the AppleScript engine to resolve frameIds.
     const js = `
       var frames = Array.from(document.querySelectorAll('iframe'));
       return {
@@ -81,6 +99,8 @@ export class FrameTools {
           var rect = f.getBoundingClientRect();
           return {
             index: idx,
+            frameId: null,
+            parentFrameId: null,
             src: f.src || null,
             name: f.name || null,
             id: f.id || null,
@@ -101,8 +121,25 @@ export class FrameTools {
   private async handleEvalInFrame(params: Record<string, unknown>): Promise<ToolResponse> {
     const start = Date.now();
     const tabUrl = params['tabUrl'] as string;
-    const frameSelector = params['frameSelector'] as string;
+    const frameId = params['frameId'] as number | undefined;
+    const frameSelector = params['frameSelector'] as string | undefined;
     const script = params['script'] as string;
+
+    // Cross-origin path: frameId set + extension engine. routeFrameAware
+    // enforces engine === 'extension' and dispatches to executeJsInFrame.
+    if (frameId != null && frameId !== 0) {
+      const result = await routeFrameAware(this.engine, { tabUrl, frameId }, script);
+      if (!result.ok) throw new Error(result.error?.message ?? 'Frame eval failed');
+      return this.makeResponse(
+        result.value ? JSON.parse(result.value) : { ok: false, error: 'No result' },
+        Date.now() - start,
+      );
+    }
+
+    // Same-origin path: existing contentWindow.Function dispatch via top-frame eval.
+    if (!frameSelector) {
+      throw new Error('safari_eval_in_frame requires either frameId (cross-origin) or frameSelector (same-origin)');
+    }
 
     const escapedSelector = escapeForJsSingleQuote(frameSelector);
     // Escape the user script for embedding inside a JS string template

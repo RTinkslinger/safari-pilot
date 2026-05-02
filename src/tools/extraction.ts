@@ -21,6 +21,7 @@ import { hasLocatorParams, extractLocatorFromParams, generateLocatorJs } from '.
 import type { IEngine } from '../engines/engine.js';
 import type { Engine, ToolResponse, ToolRequirements } from '../types.js';
 import { ScreenshotPolicy } from '../security/screenshot-policy.js';
+import { routeFrameAware } from './_frame-routing-helper.js';
 
 export interface ToolDefinition {
   name: string;
@@ -106,10 +107,11 @@ export class ExtractionTools {
             placeholder: { type: 'string', description: 'placeholder attribute value' },
             exact: { type: 'boolean', description: 'Use exact matching instead of substring', default: false },
             maxLength: { type: 'number', description: 'Maximum characters to return', default: 50000 },
+            frameId: { type: 'number', description: 'Optional: target a specific iframe by frameId from safari_list_frames (cross-origin requires extension engine)' },
           },
           required: ['tabUrl'],
         },
-        requirements: { idempotent: true },
+        requirements: { idempotent: true, requiresFramesCrossOrigin: true },
       },
       {
         name: 'safari_get_html',
@@ -132,10 +134,11 @@ export class ExtractionTools {
               description: 'true = outerHTML (includes the element itself), false = innerHTML (just contents)',
               default: true,
             },
+            frameId: { type: 'number', description: 'Optional: target a specific iframe by frameId from safari_list_frames (cross-origin requires extension engine)' },
           },
           required: ['tabUrl'],
         },
-        requirements: { idempotent: true },
+        requirements: { idempotent: true, requiresFramesCrossOrigin: true },
       },
       {
         name: 'safari_get_attribute',
@@ -154,10 +157,11 @@ export class ExtractionTools {
             placeholder: { type: 'string', description: 'placeholder attribute value' },
             exact: { type: 'boolean', description: 'Use exact matching instead of substring', default: false },
             attribute: { type: 'string', description: 'Attribute name: href, src, data-id, aria-label, etc.' },
+            frameId: { type: 'number', description: 'Optional: target a specific iframe by frameId from safari_list_frames (cross-origin requires extension engine)' },
           },
           required: ['tabUrl', 'attribute'],
         },
-        requirements: { idempotent: true },
+        requirements: { idempotent: true, requiresFramesCrossOrigin: true },
       },
       {
         name: 'safari_evaluate',
@@ -257,6 +261,7 @@ export class ExtractionTools {
   private async handleGetText(params: Record<string, unknown>): Promise<ToolResponse> {
     const start = Date.now();
     const tabUrl = params['tabUrl'] as string;
+    const frameId = params['frameId'] as number | undefined;
     const maxLength = typeof params['maxLength'] === 'number' ? params['maxLength'] : 50000;
 
     // Resolve targeting: ref → locator → selector
@@ -268,7 +273,7 @@ export class ExtractionTools {
     if (!selector && hasLocatorParams(params)) {
       const locator = extractLocatorFromParams(params)!;
       const locatorJs = generateLocatorJs(locator);
-      const locatorResult = await this.engine.executeJsInTab(tabUrl, locatorJs);
+      const locatorResult = await routeFrameAware(this.engine, { tabUrl, frameId }, locatorJs);
       if (locatorResult.ok && locatorResult.value) {
         const parsed = JSON.parse(locatorResult.value);
         if (parsed.found && parsed.selector) {
@@ -288,7 +293,7 @@ export class ExtractionTools {
       return { text: text.slice(0, max), length: text.length, truncated: text.length > max };
     `;
 
-    const result = await this.engine.executeJsInTab(tabUrl, js);
+    const result = await routeFrameAware(this.engine, { tabUrl, frameId }, js);
     if (!result.ok) throw new Error(result.error?.message ?? 'Get text failed');
 
     return this.makeResponse(result.value ? JSON.parse(result.value) : {}, Date.now() - start);
@@ -297,6 +302,7 @@ export class ExtractionTools {
   private async handleGetHtml(params: Record<string, unknown>): Promise<ToolResponse> {
     const start = Date.now();
     const tabUrl = params['tabUrl'] as string;
+    const frameId = params['frameId'] as number | undefined;
     const outer = params['outer'] !== false;
 
     // Resolve targeting: ref → locator → selector
@@ -308,7 +314,7 @@ export class ExtractionTools {
     if (!selector && hasLocatorParams(params)) {
       const locator = extractLocatorFromParams(params)!;
       const locatorJs = generateLocatorJs(locator);
-      const locatorResult = await this.engine.executeJsInTab(tabUrl, locatorJs);
+      const locatorResult = await routeFrameAware(this.engine, { tabUrl, frameId }, locatorJs);
       if (locatorResult.ok && locatorResult.value) {
         const parsed = JSON.parse(locatorResult.value);
         if (parsed.found && parsed.selector) {
@@ -327,7 +333,7 @@ export class ExtractionTools {
       return { html: html, length: html.length };
     `;
 
-    const result = await this.engine.executeJsInTab(tabUrl, js);
+    const result = await routeFrameAware(this.engine, { tabUrl, frameId }, js);
     if (!result.ok) throw new Error(result.error?.message ?? 'Get HTML failed');
 
     return this.makeResponse(result.value ? JSON.parse(result.value) : {}, Date.now() - start);
@@ -336,6 +342,7 @@ export class ExtractionTools {
   private async handleGetAttribute(params: Record<string, unknown>): Promise<ToolResponse> {
     const start = Date.now();
     const tabUrl = params['tabUrl'] as string;
+    const frameId = params['frameId'] as number | undefined;
     const attribute = params['attribute'] as string;
 
     // Resolve targeting: ref → locator → selector
@@ -347,7 +354,7 @@ export class ExtractionTools {
     if (!selector && hasLocatorParams(params)) {
       const locator = extractLocatorFromParams(params)!;
       const locatorJs = generateLocatorJs(locator);
-      const locatorResult = await this.engine.executeJsInTab(tabUrl, locatorJs);
+      const locatorResult = await routeFrameAware(this.engine, { tabUrl, frameId }, locatorJs);
       if (locatorResult.ok && locatorResult.value) {
         const parsed = JSON.parse(locatorResult.value);
         if (parsed.found && parsed.selector) {
@@ -372,7 +379,7 @@ export class ExtractionTools {
       };
     `;
 
-    const result = await this.engine.executeJsInTab(tabUrl, js);
+    const result = await routeFrameAware(this.engine, { tabUrl, frameId }, js);
     if (!result.ok) throw new Error(result.error?.message ?? 'Get attribute failed');
 
     return this.makeResponse(result.value ? JSON.parse(result.value) : {}, Date.now() - start);
