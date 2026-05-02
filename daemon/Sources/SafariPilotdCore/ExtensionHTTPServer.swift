@@ -29,6 +29,8 @@ public final class ExtensionHTTPServer: @unchecked Sendable {
     public let port: UInt16
     private let bridge: ExtensionBridge
     private let healthStore: HealthStore
+    /// Phase 5A.1 — staged file bytes served to the extension via GET /file-bytes/:token.
+    public let stagingStore: FileStagingStore
     private let onReady: (@Sendable () async -> Void)?
     private let onBindFailure: (@Sendable (Error) -> Void)?
 
@@ -58,6 +60,7 @@ public final class ExtensionHTTPServer: @unchecked Sendable {
         port: UInt16 = 19475,
         bridge: ExtensionBridge,
         healthStore: HealthStore,
+        stagingStore: FileStagingStore = FileStagingStore(),
         onReady: (@Sendable () async -> Void)? = nil,
         onBindFailure: (@Sendable (Error) -> Void)? = nil,
         timeSource: TimeSource = SystemTimeSource()
@@ -65,6 +68,7 @@ public final class ExtensionHTTPServer: @unchecked Sendable {
         self.port = port
         self.bridge = bridge
         self.healthStore = healthStore
+        self.stagingStore = stagingStore
         self.onReady = onReady
         self.onBindFailure = onBindFailure
         self.timeSource = timeSource
@@ -144,7 +148,7 @@ public final class ExtensionHTTPServer: @unchecked Sendable {
             CORSMiddleware(
                 allowOrigin: .all,
                 allowHeaders: [.accept, .contentType, .origin],
-                allowMethods: [.get, .post, .options]
+                allowMethods: [.get, .post, .delete, .options]
             )
         }
 
@@ -193,6 +197,38 @@ public final class ExtensionHTTPServer: @unchecked Sendable {
                 "ok": true,
                 "activeSessions": self.healthStore.activeSessionCount,
             ])
+        }
+
+        // Phase 5A · 5A.1 — file-bytes token routes (safari_file_upload feature)
+        // GET  /file-bytes/:token — peek staged bytes; returns 200+body or 404
+        // DELETE /file-bytes/:token — release staged bytes; always returns 204
+        router.get("file-bytes/:token") { [self] _, context -> HBResponse in
+            self.touchLastRequestTime()
+            guard let token = context.parameters.get("token"),
+                  token.count == 64 else {
+                return HBResponse(status: .notFound, headers: HTTPFields(), body: .init())
+            }
+            guard let staged = await self.stagingStore.peek(token: token) else {
+                return HBResponse(status: .notFound, headers: HTTPFields(), body: .init())
+            }
+            var headers = HTTPFields()
+            headers[.contentType] = staged.mimeType
+            return HBResponse(
+                status: .ok,
+                headers: headers,
+                body: .init(byteBuffer: ByteBuffer(data: staged.bytes))
+            )
+        }
+
+        router.delete("file-bytes/:token") { [self] _, context -> HBResponse in
+            self.touchLastRequestTime()
+            guard let token = context.parameters.get("token"),
+                  token.count == 64 else {
+                return HBResponse(status: .notFound, headers: HTTPFields(), body: .init())
+            }
+            await self.stagingStore.release(token: token)
+            // 204 regardless of whether token existed — extension treats 404 as success too.
+            return HBResponse(status: .noContent, headers: HTTPFields(), body: .init())
         }
 
         return router

@@ -191,6 +191,7 @@ if #available(macOS 14.0, *) {
         port: 19475,
         bridge: dispatcher.extensionBridge,
         healthStore: healthStore,
+        stagingStore: dispatcher.stagingStore,
         onReady: {
             // Self-test: verify HTTP server is actually serving
             // Uses POST /connect (instant) instead of GET /poll (5s long-hold)

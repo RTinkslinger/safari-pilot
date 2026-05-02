@@ -172,4 +172,40 @@ func registerFileStagingStoreTests() {
         try assertFalse(response.ok, "oversized bytes must produce error")
         try assertEqual(response.error?.code, "FILE_TOO_LARGE", "error code must be FILE_TOO_LARGE")
     }
+
+    // MARK: - Route primitive verification (Task 9 / 5A.1 — GET/DELETE /file-bytes/:token)
+    // The HTTP routes delegate to store.peek and store.release. These tests verify
+    // those primitives behave exactly as the route handlers expect.
+    // HTTP-level tests are deferred to Task 19 e2e (real Safari round-trip).
+
+    test("testGetPeeksAndDeleteReleases") {
+        let store = FileStagingStore()
+        let token = String(repeating: "b", count: 64)
+        let bytes = Data([0xAA, 0xBB, 0xCC])
+        syncAwait {
+            await store.stage(
+                token: token,
+                file: StagedFile(
+                    bytes: bytes,
+                    mimeType: "application/octet-stream",
+                    expiresAt: Date(timeIntervalSinceNow: 60)
+                )
+            )
+        }
+
+        // GET path: peek returns staged bytes without removing them
+        let peeked = syncAwait { await store.peek(token: token) }
+        try assertTrue(peeked != nil, "GET path: peek returns staged bytes")
+        try assertEqual(peeked!.bytes, bytes, "peek byte equality")
+        try assertEqual(peeked!.mimeType, "application/octet-stream", "peek mimeType")
+
+        // After DELETE, peek must return nil
+        syncAwait { await store.release(token: token) }
+        let afterDelete = syncAwait { await store.peek(token: token) }
+        try assertTrue(afterDelete == nil, "DELETE path: release removes the entry")
+
+        // Idempotent DELETE on missing token must not crash (HTTP returns 204 regardless)
+        syncAwait { await store.release(token: "never-existed-\(UUID().uuidString)") }
+        // No assertion — must not crash.
+    }
 }
