@@ -1079,7 +1079,18 @@ export class SafariPilotServer {
   }
 
   setEngineAvailability(availability: { daemon: boolean; extension: boolean }): void {
-    this.engineAvailability = availability;
+    // T55a Test-24 follow-up: SAFARI_PILOT_FORCE_NO_EXTENSION=1 is the
+    // single chokepoint that pins extension:false regardless of the live
+    // /status probe. Pre-fix the env var was honored only at init (server.ts:1469);
+    // ensureExtensionConnected (1389-1396), the pre-call health gate (1238-1240),
+    // and the in-tool re-check (1413-1415) all flipped extension back to true
+    // by reading checkExtensionStatus directly, defeating the override the
+    // moment Safari and the extension came back online — exactly what t55a-extension-down
+    // tests as the failure mode.
+    const force = process.env['SAFARI_PILOT_FORCE_NO_EXTENSION'] === '1';
+    this.engineAvailability = force
+      ? { ...availability, extension: false }
+      : availability;
   }
 
   getSessionId(): string {

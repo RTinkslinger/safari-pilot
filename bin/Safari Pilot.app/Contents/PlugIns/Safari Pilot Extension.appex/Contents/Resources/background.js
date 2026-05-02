@@ -12,8 +12,16 @@ const EXTENSION_VERSION = '0.1.6';
 
 // ─── State ───────────────────────────────────────────────────────────────────
 let listenersAttached = false;
-let isWakeRunning = false;  // serializes concurrent wake triggers
+let isWakeRunning = false;  // serializes concurrent wake-SETUP triggers
 let wakePending = false;
+// T60: pollLoop is decoupled from the wake-setup lock. It runs as a
+// fire-and-forget singleton with its own AbortController so a fresh alarm
+// wake can forcibly kill a prior pollLoop whose fetch is stuck on a
+// suspended event-page (the T60 dormancy mode: alarm_fire trace events
+// continue but no /connect or /poll reach the daemon because the prior
+// initialize() is awaiting a fetch promise that will never resolve, and
+// its `finally` never runs to clear isWakeRunning).
+let pollLoopController = null;
 
 // ─── Tab Cache ──────────────────────────────────────────────────────────────
 // Safari's browser.tabs.query({}) returns [] when called from alarm-triggered
@@ -88,11 +96,17 @@ async function httpPost(path, body) {
   return res.json();
 }
 
-async function httpPoll() {
+async function httpPoll(externalAbortSignal) {
   
-  const res = await fetch(`${HTTP_URL}/poll`, {
-    signal: AbortSignal.timeout(10000),
-  });
+  // T60: combine the per-fetch 10s timeout with the externally provided
+  // abort signal (from pollLoopController) so the next alarm wake can
+  // forcibly cancel a fetch promise that Safari's event-page suspension
+  // has left in an unresolvable state.
+  const timeoutSignal = AbortSignal.timeout(10000);
+  const signal = externalAbortSignal
+    ? AbortSignal.any([externalAbortSignal, timeoutSignal])
+    : timeoutSignal;
+  const res = await fetch(`${HTTP_URL}/poll`, { signal });
   if (res.status === 204) return null;
   return res.json();
 }
@@ -542,7 +556,7 @@ async function connectAndReconcile() {
 // the alarm-rearm path: T22's e2e test discriminates the retry-vs-alarm
 // recovery paths specifically by asserting on `pollloop_recovered` with
 // `attempts > 0`. An alarm-rearm always restarts pollLoop with attempts=0.
-async function pollLoop() {
+async function pollLoop(abortSignal) {
   // 0 + 250 + 500 + 1000 + 2000 = 3750 ms total wait; with ~1 s daemon cold
   // start the post-fix recovery comfortably fits inside the test's 10 s
   // budget. Dropping a tail tier vs. the original 6-tier plan was a
@@ -550,9 +564,12 @@ async function pollLoop() {
   const BACKOFF_MS = [0, 250, 500, 1000, 2000];
   const MAX_ATTEMPTS = 5;
   let attempts = 0;
-  while (true) {
+  // T60: honor the abort signal threaded from pollLoopController so a fresh
+  // alarm wake can forcibly stop a prior pollLoop instance — even one whose
+  // fetch is wedged from event-page suspension recovery.
+  while (!(abortSignal && abortSignal.aborted)) {
     try {
-      const data = await httpPoll();
+      const data = await httpPoll(abortSignal);
       if (attempts > 0) {
         emitTrace('__pollloop__', 'pollloop_recovered', { attempts });
         attempts = 0;
@@ -564,8 +581,12 @@ async function pollLoop() {
         }
       }
     } catch (err) {
-      // AbortError = clean cancel from another path (e.g. test teardown).
-      if (err.name === 'AbortError') return;
+      // AbortError = clean cancel from another path (test teardown OR T60
+      // alarm-driven supersede via pollLoopController.abort()).
+      if (err.name === 'AbortError') {
+        emitTrace('__pollloop__', 'pollloop_aborted', { reason: 'abort_signal' });
+        return;
+      }
       // TimeoutError = the per-fetch 10 s timeout fired with no command —
       // this is the NORMAL idle case (the daemon long-polls up to 5 s).
       // Pre-T22 this killed the loop, requiring an alarm to re-arm: bug.
@@ -584,27 +605,56 @@ async function pollLoop() {
       await new Promise((r) => setTimeout(r, baseMs + jitter));
     }
   }
+  emitTrace('__pollloop__', 'pollloop_aborted', { reason: 'signal_aborted_pre_iter' });
+}
+
+// T60: idempotent supersede. Aborts any prior pollLoop instance (releasing
+// stuck fetches) and starts a fresh one with a new AbortController. The
+// previous loop returns via its AbortError catch; this one runs free.
+function supersedePollLoop(reason) {
+  if (pollLoopController) {
+    try { pollLoopController.abort(); } catch { /* ignore */ }
+  }
+  const controller = new AbortController();
+  pollLoopController = controller;
+  emitTrace('__pollloop__', 'pollloop_started', { reason });
+  pollLoop(controller.signal).catch((e) => {
+    emitTrace('__pollloop__', 'pollloop_crashed', { errName: e?.name, errMessage: e?.message });
+  });
 }
 
 // ─── Wake sequence (HTTP) ───────────────────────────────────────────────────
+// T60: wakeSequence runs the BOUNDED setup phase only — tab cache load,
+// storage GC, stale storage-bus cleanup, /connect + reconcile. It does NOT
+// call pollLoop. pollLoop is started by initialize() AFTER this returns,
+// outside the wake-setup lock, via supersedePollLoop(). Pre-T60 the lock
+// wrapped pollLoop, so any forever-pending fetch inside pollLoop kept
+// isWakeRunning=true permanently and made all subsequent alarm wakes no-ops.
 async function wakeSequence(reason) {
   try {
     await loadTabCache();
     await gcPendingStorage();
     await cleanupStaleStorageBus();
     await connectAndReconcile();
-    await pollLoop();
   } catch (e) {
+    emitTrace('__wake__', 'wake_setup_error', { errName: e?.name, errMessage: e?.message });
     console.warn('[safari-pilot] wakeSequence error:', e.message);
   }
 }
 
 async function initialize(reason) {
   if (isWakeRunning) {
+    // T60 diagnostic: when alarm fires while a prior setup is still in
+    // flight, the new wake is coalesced. With the T60 fix, pollLoop no
+    // longer holds the lock, so this should only fire during legitimate
+    // overlapping setup (rare). If you see this every alarm cycle without
+    // a corresponding setup_completed, the bug returned at a different layer.
+    emitTrace('__init__', 'init_coalesced', { reason });
     wakePending = true;
     return;
   }
   isWakeRunning = true;
+  emitTrace('__init__', 'init_proceeding', { reason });
   try {
     // Verify keepalive alarm exists — recreate if cleared by update/restart/bug
     const alarms = await browser.alarms.getAll();
@@ -616,9 +666,15 @@ async function initialize(reason) {
       wakePending = false;
       await wakeSequence('coalesced');
     }
+    emitTrace('__init__', 'setup_completed', { reason });
   } finally {
     isWakeRunning = false;
   }
+  // T60: pollLoop is supervised OUTSIDE the wake-setup lock. Each alarm
+  // wake supersedes the prior pollLoop — aborting its (possibly wedged)
+  // fetch and starting a fresh one. This is the architectural fix for
+  // pre-T60 dormancy where a suspended fetch held isWakeRunning hostage.
+  supersedePollLoop(reason);
 }
 
 // ─── Top-level listener registration ─────────────────────────────────────────
