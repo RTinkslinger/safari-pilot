@@ -1787,4 +1787,87 @@ func registerExtensionBridgeTests() {
         try assertEqual(uncertain2, [],
                         "Hop 10: uncertain must be empty — all 3 are in executedLog")
     }
+
+    // T55a — frameId + frameUrl passthrough contract.
+    // ExtensionBridge.handleExecute forwards every key from `params` into the
+    // commandDict that the extension reads via /poll. T55a relies on this
+    // passthrough for frameId (Int) and frameUrl (String) — no Codable struct
+    // change is needed because params is already [String: AnyCodable]. This
+    // test locks in the contract so a future "tighten params to a typed
+    // struct" refactor cannot silently drop the new fields.
+
+    test("testFrameIdAndFrameUrlPassThroughToCommandDict_T55a") {
+        let bridge = ExtensionBridge()
+
+        let executeTask = Task {
+            await bridge.handleExecute(
+                commandID: "t55a-exec-1",
+                params: [
+                    "script": AnyCodable("return document.title"),
+                    "frameId": AnyCodable(5),
+                    "frameUrl": AnyCodable("https://checkout.stripe.com/inner"),
+                ]
+            )
+        }
+
+        Thread.sleep(forTimeInterval: 0.1)
+
+        let pollResponse = syncAwait { await bridge.handlePoll(commandID: "t55a-poll-1") }
+        try assertTrue(pollResponse.ok)
+
+        let valueDict = pollResponse.value?.value as? [String: Any]
+        let commands = valueDict?["commands"] as? [[String: Any]]
+        try assertTrue(commands != nil, "Poll should return commands array")
+        try assertEqual(commands?.count, 1)
+
+        let cmd = commands?.first
+        try assertEqual(cmd?["id"] as? String, "t55a-exec-1")
+        try assertEqual(cmd?["script"] as? String, "return document.title")
+        try assertEqual(cmd?["frameId"] as? Int, 5,
+                        "T55a: frameId must pass through into the polled command dict")
+        try assertEqual(cmd?["frameUrl"] as? String, "https://checkout.stripe.com/inner",
+                        "T55a: frameUrl must pass through into the polled command dict")
+
+        // Unblock the queued execute so the test does not hang on continuation
+        _ = bridge.handleResult(
+            commandID: "t55a-result-1",
+            params: [
+                "requestId": AnyCodable("t55a-exec-1"),
+                "result": AnyCodable("Inner Frame Document"),
+            ]
+        )
+        _ = syncAwait { await executeTask.value }
+    }
+
+    test("testFrameIdAbsentInParamsIsAbsentInCommandDict_T55a") {
+        // Backwards compat: top-frame callers (no frameId) → frameId key NOT
+        // present in commandDict. Content-isolated.js's filter rule treats
+        // (cmd.frameId ?? 0) === myFrameId, so omitted is equivalent to 0.
+        let bridge = ExtensionBridge()
+
+        let executeTask = Task {
+            await bridge.handleExecute(
+                commandID: "t55a-exec-2",
+                params: ["script": AnyCodable("return 1")]
+            )
+        }
+
+        Thread.sleep(forTimeInterval: 0.1)
+
+        let pollResponse = syncAwait { await bridge.handlePoll(commandID: "t55a-poll-2") }
+        let valueDict = pollResponse.value?.value as? [String: Any]
+        let commands = valueDict?["commands"] as? [[String: Any]]
+        let cmd = commands?.first
+        try assertTrue(cmd?["frameId"] == nil, "T55a: frameId must NOT appear when omitted")
+        try assertTrue(cmd?["frameUrl"] == nil, "T55a: frameUrl must NOT appear when omitted")
+
+        _ = bridge.handleResult(
+            commandID: "t55a-result-2",
+            params: [
+                "requestId": AnyCodable("t55a-exec-2"),
+                "result": AnyCodable(1),
+            ]
+        )
+        _ = syncAwait { await executeTask.value }
+    }
 }
