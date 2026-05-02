@@ -19,6 +19,20 @@ export interface LocatorDescriptor {
   placeholder?: string;
   /** 5A.4: XPath expression. When set, takes priority over every other key. */
   xpath?: string;
+  /**
+   * 5A.5: post-resolution modifier. Index into the matched array. Negative
+   * values count from the end (-1 = last). Out-of-range produces a
+   * `{found:false}` envelope. `nth` is a MODIFIER, not a base locator —
+   * it requires a base key (role / text / label / testId / placeholder /
+   * xpath) to have something to index into.
+   */
+  nth?: number;
+  /**
+   * 5A.5: post-resolution narrowing predicate. Applies BEFORE `nth`
+   * (Playwright composition order). Currently supports `hasText`
+   * (case-insensitive substring match against element text).
+   */
+  filter?: { hasText?: string };
   exact?: boolean; // default false (substring, case-insensitive)
 }
 
@@ -120,6 +134,13 @@ export function extractLocatorFromParams(
   if (typeof params.testId === 'string') desc.testId = params.testId;
   if (typeof params.placeholder === 'string') desc.placeholder = params.placeholder;
   if (typeof params.xpath === 'string') desc.xpath = params.xpath;
+  // 5A.5: nth is a modifier; typeof check (NOT truthiness — `nth: 0` is valid).
+  if (typeof params.nth === 'number') desc.nth = params.nth;
+  // 5A.5: filter narrowing — only `hasText` supported in v1 (Playwright's most-used variant).
+  if (params.filter && typeof params.filter === 'object') {
+    const f = params.filter as { hasText?: unknown };
+    if (typeof f.hasText === 'string') desc.filter = { hasText: f.hasText };
+  }
   if (typeof params.exact === 'boolean') desc.exact = params.exact;
   return desc;
 }
@@ -471,6 +492,15 @@ export function generateLocatorJs(
 
   ${resolutionBody}
 
+  // ── 5A.5: filter narrowing (BEFORE nth picker) ──
+  ${locator.filter && typeof locator.filter.hasText === 'string'
+    ? `var hasTextQuery = '${escapeForJs(locator.filter.hasText)}'.toLowerCase();
+       matched = matched.filter(function (el) {
+         var t = (el.innerText !== undefined ? el.innerText : el.textContent) || '';
+         return t.toLowerCase().indexOf(hasTextQuery) !== -1;
+       });`
+    : ''}
+
   // ── Result ──
   if (matched.length === 0) {
     return JSON.stringify({
@@ -481,8 +511,20 @@ export function generateLocatorJs(
     });
   }
 
-  // Stamp the first match with a data-sp-ref for subsequent tool calls
-  var target = matched[0];
+  // ── 5A.5: nth picker — index into matched, negative = from end ──
+  var nth = ${typeof locator.nth === 'number' ? locator.nth : 0};
+  var idx = nth < 0 ? matched.length + nth : nth;
+  if (idx < 0 || idx >= matched.length) {
+    return JSON.stringify({
+      found: false,
+      locator: locatorDesc,
+      candidateCount: matched.length,
+      hint: 'nth=' + nth + ' is out of range (matched.length=' + matched.length + ')'
+    });
+  }
+
+  // Stamp the picked match with a data-sp-ref for subsequent tool calls
+  var target = matched[idx];
   var refId = 'sp-' + Math.random().toString(36).substring(2, 8);
   target.setAttribute('data-sp-ref', refId);
 
