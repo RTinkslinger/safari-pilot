@@ -2,6 +2,7 @@ import { readFile, stat } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
 import { basename } from 'node:path';
 import type { IEngine } from '../engines/engine.js';
+import type { DaemonEngine } from '../engines/daemon.js';
 import type { Engine, ToolResponse, ToolRequirements } from '../types.js';
 import {
   EngineRequiredError,
@@ -42,10 +43,12 @@ interface ProbeResult {
 
 export class FileUploadTools {
   private engine: IEngine;
+  private daemon: DaemonEngine;
   private handlers = new Map<string, Handler>();
 
-  constructor(engine: IEngine) {
+  constructor(engine: IEngine, daemon: DaemonEngine) {
     this.engine = engine;
+    this.daemon = daemon;
     this.handlers.set('safari_file_upload', this.handleFileUpload.bind(this));
   }
 
@@ -191,10 +194,13 @@ export class FileUploadTools {
         const mimeType = overrideMime ?? mimeRes.mimeType;
         const mimeFallback = overrideMime === undefined && mimeRes.fallback;
 
-        // Stage to daemon: NDJSON `stage_file` — serialised as JSON string through IEngine.execute()
+        // Stage to daemon: NDJSON `stage_file` via DaemonEngine.command()
         const token = randomBytes(32).toString('hex');
-        const stageReq = { cmd: 'stage_file', token, mimeType, bytesB64: buf.toString('base64') };
-        const stageRes = await this.engine.execute(JSON.stringify(stageReq));
+        const stageRes = await this.daemon.command('stage_file', {
+          token,
+          mimeType,
+          bytesB64: buf.toString('base64'),
+        });
         if (!stageRes.ok) throw new Error(`stage_file failed: ${stageRes.error?.message ?? 'unknown'}`);
 
         const entry: { token: string; name: string; mimeType: string; mimeFallback?: true } = {

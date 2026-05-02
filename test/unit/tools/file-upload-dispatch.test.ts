@@ -30,17 +30,22 @@ import {
   FileUploadInvalidParamsError,
 } from '../../../src/errors.js';
 import type { IEngine } from '../../../src/engines/engine.js';
+import type { DaemonEngine } from '../../../src/engines/daemon.js';
 import type { Engine, EngineResult } from '../../../src/types.js';
 
 interface RecordingEngine extends IEngine {
   scripts: string[];
-  ndjsonCommands: Record<string, unknown>[];  // captured stage_file calls
   responseQueue: string[];
+}
+
+interface RecordingDaemon {
+  commands: { method: string; params: Record<string, unknown> }[];
+  responseQueue: string[];
+  command: (method: string, params?: Record<string, unknown>, timeout?: number) => Promise<EngineResult>;
 }
 
 function recordingEngine(name: Engine = 'extension', responses: string[] = []): RecordingEngine {
   const scripts: string[] = [];
-  const ndjsonCommands: Record<string, unknown>[] = [];
   const queue = [...responses];
   // Default probe response: ok + isFileInput true + multiple true.
   const defaultProbe = JSON.stringify({ ok: true, isFileInput: true, multiple: true, accept: '' });
@@ -49,20 +54,8 @@ function recordingEngine(name: Engine = 'extension', responses: string[] = []): 
   const e: RecordingEngine = {
     name,
     isAvailable: async () => true,
-    execute: async (cmd: unknown) => {
-      // Used for stage_file NDJSON commands.
-      // Production code serialises the command as JSON string; parse it here.
-      if (typeof cmd === 'string') {
-        try {
-          const parsed = JSON.parse(cmd) as Record<string, unknown>;
-          if (typeof parsed === 'object' && parsed !== null && 'cmd' in parsed) {
-            ndjsonCommands.push(parsed);
-          }
-        } catch { /* not JSON */ }
-      } else if (typeof cmd === 'object' && cmd !== null && 'cmd' in (cmd as object)) {
-        ndjsonCommands.push(cmd as Record<string, unknown>);
-      }
-      return { ok: true, value: '{"staged":true}', elapsed_ms: 1 };
+    execute: async () => {
+      return { ok: true, value: '{}', elapsed_ms: 1 };
     },
     executeJsInTab: async (...args: unknown[]) => {
       const script = args[1] as string;
@@ -79,11 +72,25 @@ function recordingEngine(name: Engine = 'extension', responses: string[] = []): 
     executeJsInFrame: async () => ({ ok: true, value: '{}', elapsed_ms: 1 }) as EngineResult,
     shutdown: async () => {},
     scripts,
-    ndjsonCommands,
     responseQueue: queue,
   } as unknown as RecordingEngine;
   return e;
 }
+
+function recordingDaemon(): RecordingDaemon {
+  const commands: { method: string; params: Record<string, unknown> }[] = [];
+  return {
+    commands,
+    responseQueue: [],
+    command: async (method: string, params: Record<string, unknown> = {}, _timeout?: number): Promise<EngineResult> => {
+      commands.push({ method, params });
+      return { ok: true, value: '{"staged":true}', elapsed_ms: 1 };
+    },
+  };
+}
+
+// Cast helper: RecordingDaemon satisfies the command() contract used by FileUploadTools.
+function asDaemon(d: RecordingDaemon): DaemonEngine { return d as unknown as DaemonEngine; }
 
 describe('5A.1 — safari_file_upload dispatch boundary', () => {
   let workDir: string;
@@ -104,7 +111,8 @@ describe('5A.1 — safari_file_upload dispatch boundary', () => {
 
   it('throws ENGINE_REQUIRED when engine is not extension', async () => {
     const engine = recordingEngine('applescript');
-    const tools = new FileUploadTools(engine);
+    const daemon = recordingDaemon();
+    const tools = new FileUploadTools(engine, asDaemon(daemon));
     const handler = tools.getHandler('safari_file_upload')!;
     let caught: unknown;
     try {
@@ -116,7 +124,8 @@ describe('5A.1 — safari_file_upload dispatch boundary', () => {
 
   it('throws FILE_UPLOAD_EMPTY_PATHS when paths is empty and clear is not true', async () => {
     const engine = recordingEngine();
-    const tools = new FileUploadTools(engine);
+    const daemon = recordingDaemon();
+    const tools = new FileUploadTools(engine, asDaemon(daemon));
     const handler = tools.getHandler('safari_file_upload')!;
     let caught: unknown;
     try {
@@ -129,7 +138,8 @@ describe('5A.1 — safari_file_upload dispatch boundary', () => {
 
   it('throws FILE_UPLOAD_TOO_MANY_FILES when paths.length > 4', async () => {
     const engine = recordingEngine();
-    const tools = new FileUploadTools(engine);
+    const daemon = recordingDaemon();
+    const tools = new FileUploadTools(engine, asDaemon(daemon));
     const handler = tools.getHandler('safari_file_upload')!;
     let caught: unknown;
     try {
@@ -141,7 +151,8 @@ describe('5A.1 — safari_file_upload dispatch boundary', () => {
 
   it('throws FILE_UPLOAD_INVALID_PARAMS when both paths and clear are provided', async () => {
     const engine = recordingEngine();
-    const tools = new FileUploadTools(engine);
+    const daemon = recordingDaemon();
+    const tools = new FileUploadTools(engine, asDaemon(daemon));
     const handler = tools.getHandler('safari_file_upload')!;
     let caught: unknown;
     try {
@@ -152,7 +163,8 @@ describe('5A.1 — safari_file_upload dispatch boundary', () => {
 
   it('throws FILE_UPLOAD_INVALID_PARAMS when neither paths nor clear is provided', async () => {
     const engine = recordingEngine();
-    const tools = new FileUploadTools(engine);
+    const daemon = recordingDaemon();
+    const tools = new FileUploadTools(engine, asDaemon(daemon));
     const handler = tools.getHandler('safari_file_upload')!;
     let caught: unknown;
     try {
@@ -163,7 +175,8 @@ describe('5A.1 — safari_file_upload dispatch boundary', () => {
 
   it('throws FILE_UPLOAD_PATH_NOT_FOUND when path does not exist', async () => {
     const engine = recordingEngine();
-    const tools = new FileUploadTools(engine);
+    const daemon = recordingDaemon();
+    const tools = new FileUploadTools(engine, asDaemon(daemon));
     const handler = tools.getHandler('safari_file_upload')!;
     let caught: unknown;
     try {
@@ -173,24 +186,26 @@ describe('5A.1 — safari_file_upload dispatch boundary', () => {
     // Probe ran; no upload dispatched.
     expect(engine.scripts.filter((s) => s.startsWith('__SP_FILE_UPLOAD_PROBE__'))).toHaveLength(1);
     expect(engine.scripts.filter((s) => s.startsWith('__SP_FILE_UPLOAD__:'))).toHaveLength(0);
-    expect(engine.ndjsonCommands).toHaveLength(0);
+    expect(daemon.commands).toHaveLength(0);
   });
 
   it('throws FILE_UPLOAD_FILE_TOO_LARGE on stat-time size > 25 MB', async () => {
     const engine = recordingEngine();
-    const tools = new FileUploadTools(engine);
+    const daemon = recordingDaemon();
+    const tools = new FileUploadTools(engine, asDaemon(daemon));
     const handler = tools.getHandler('safari_file_upload')!;
     let caught: unknown;
     try {
       await handler({ tabUrl: 'https://x', selector: '#f', paths: [bigFile] });
     } catch (e) { caught = e; }
     expect(caught).toBeInstanceOf(FileUploadFileTooLargeError);
-    expect(engine.ndjsonCommands).toHaveLength(0);
+    expect(daemon.commands).toHaveLength(0);
   });
 
   it('throws FILE_UPLOAD_INVALID_PARAMS when mimeOverrides has unmatched keys', async () => {
     const engine = recordingEngine();
-    const tools = new FileUploadTools(engine);
+    const daemon = recordingDaemon();
+    const tools = new FileUploadTools(engine, asDaemon(daemon));
     const handler = tools.getHandler('safari_file_upload')!;
     let caught: unknown;
     try {
@@ -209,7 +224,8 @@ describe('5A.1 — safari_file_upload dispatch boundary', () => {
     const engine = recordingEngine('extension', [
       JSON.stringify({ ok: true, isFileInput: false, multiple: false, accept: '' }),
     ]);
-    const tools = new FileUploadTools(engine);
+    const daemon = recordingDaemon();
+    const tools = new FileUploadTools(engine, asDaemon(daemon));
     const handler = tools.getHandler('safari_file_upload')!;
     let caught: unknown;
     try {
@@ -218,12 +234,13 @@ describe('5A.1 — safari_file_upload dispatch boundary', () => {
     expect(caught).toBeInstanceOf(SafariPilotError);
     expect((caught as SafariPilotError).code).toBe(ERROR_CODES.FILE_UPLOAD_INVALID_ELEMENT);
     // Probe dispatched, but NO stage_file NDJSON sent.
-    expect(engine.ndjsonCommands).toHaveLength(0);
+    expect(daemon.commands).toHaveLength(0);
   });
 
   it('dispatches the probe sentinel with locator + force + timeout in JSON suffix', async () => {
     const engine = recordingEngine();
-    const tools = new FileUploadTools(engine);
+    const daemon = recordingDaemon();
+    const tools = new FileUploadTools(engine, asDaemon(daemon));
     const handler = tools.getHandler('safari_file_upload')!;
     await handler({
       tabUrl: 'https://x',
@@ -246,36 +263,39 @@ describe('5A.1 — safari_file_upload dispatch boundary', () => {
 
   it('stages each file via NDJSON stage_file with token + mimeType + base64', async () => {
     const engine = recordingEngine();
-    const tools = new FileUploadTools(engine);
+    const daemon = recordingDaemon();
+    const tools = new FileUploadTools(engine, asDaemon(daemon));
     const handler = tools.getHandler('safari_file_upload')!;
     await handler({ tabUrl: 'https://x', selector: '#f', paths: [smallFile] });
-    expect(engine.ndjsonCommands).toHaveLength(1);
-    const cmd = engine.ndjsonCommands[0]!;
-    expect(cmd['cmd']).toBe('stage_file');
-    expect(typeof cmd['token']).toBe('string');
-    expect((cmd['token'] as string).length).toBe(64); // 32 bytes hex
-    expect(cmd['mimeType']).toBe('application/pdf');
-    expect(typeof cmd['bytesB64']).toBe('string');
+    expect(daemon.commands).toHaveLength(1);
+    const cmd = daemon.commands[0]!;
+    expect(cmd.method).toBe('stage_file');
+    expect(typeof cmd.params['token']).toBe('string');
+    expect((cmd.params['token'] as string).length).toBe(64); // 32 bytes hex
+    expect(cmd.params['mimeType']).toBe('application/pdf');
+    expect(typeof cmd.params['bytesB64']).toBe('string');
     // Base64 encodes "tiny pdf bytes" → "dGlueSBwZGYgYnl0ZXM="
-    const decoded = Buffer.from(cmd['bytesB64'] as string, 'base64').toString('utf-8');
+    const decoded = Buffer.from(cmd.params['bytesB64'] as string, 'base64').toString('utf-8');
     expect(decoded).toBe('tiny pdf bytes');
   });
 
   it('honors mimeOverrides when keys match raw paths entries (pre-expansion)', async () => {
     const engine = recordingEngine();
-    const tools = new FileUploadTools(engine);
+    const daemon = recordingDaemon();
+    const tools = new FileUploadTools(engine, asDaemon(daemon));
     const handler = tools.getHandler('safari_file_upload')!;
     await handler({
       tabUrl: 'https://x', selector: '#f',
       paths: [smallFile],
       mimeOverrides: { [smallFile]: 'application/x-custom' },
     });
-    expect(engine.ndjsonCommands[0]!['mimeType']).toBe('application/x-custom');
+    expect(daemon.commands[0]!.params['mimeType']).toBe('application/x-custom');
   });
 
   it('emits final sentinel with tokens + ref + probeOpts; storage bus payload is small', async () => {
     const engine = recordingEngine();
-    const tools = new FileUploadTools(engine);
+    const daemon = recordingDaemon();
+    const tools = new FileUploadTools(engine, asDaemon(daemon));
     const handler = tools.getHandler('safari_file_upload')!;
     await handler({ tabUrl: 'https://x', selector: '#f', paths: [smallFile], validationProbeMs: 500 });
     const finalScript = engine.scripts.find((s) => s.startsWith('__SP_FILE_UPLOAD__:'))!;
@@ -294,10 +314,11 @@ describe('5A.1 — safari_file_upload dispatch boundary', () => {
 
   it('on clear: true, dispatches final sentinel with empty tokens + clear flag, no NDJSON', async () => {
     const engine = recordingEngine();
-    const tools = new FileUploadTools(engine);
+    const daemon = recordingDaemon();
+    const tools = new FileUploadTools(engine, asDaemon(daemon));
     const handler = tools.getHandler('safari_file_upload')!;
     await handler({ tabUrl: 'https://x', selector: '#f', clear: true });
-    expect(engine.ndjsonCommands).toHaveLength(0);
+    expect(daemon.commands).toHaveLength(0);
     const finalScript = engine.scripts.find((s) => s.startsWith('__SP_FILE_UPLOAD__:'))!;
     const json = JSON.parse(finalScript.slice('__SP_FILE_UPLOAD__:'.length)) as { tokens: unknown[]; clear: boolean };
     expect(json.tokens).toEqual([]);
@@ -313,7 +334,8 @@ describe('5A.1 — safari_file_upload dispatch boundary', () => {
       // Final upload response from content-main
       JSON.stringify({ uploaded: 1, files: [{ name: 'data.parquet', size: 13, mimeType: 'application/octet-stream', path: unknownExt, mimeFallback: true }] }),
     ]);
-    const tools = new FileUploadTools(engine);
+    const daemon = recordingDaemon();
+    const tools = new FileUploadTools(engine, asDaemon(daemon));
     const handler = tools.getHandler('safari_file_upload')!;
     const r = await handler({ tabUrl: 'https://x', selector: '#f', paths: [unknownExt] });
     const payload = JSON.parse(r.content[0]!.text!);
@@ -325,13 +347,14 @@ describe('5A.1 — safari_file_upload dispatch boundary', () => {
 
   it('threads tabUrl through to engine.executeJsInTab for both probe and upload', async () => {
     const engine = recordingEngine();
+    const daemon = recordingDaemon();
     const observed: string[] = [];
     const origExec = engine.executeJsInTab;
     engine.executeJsInTab = async (...args: unknown[]) => {
       observed.push(args[0] as string);
       return origExec.apply(engine, args as Parameters<typeof origExec>);
     };
-    const tools = new FileUploadTools(engine);
+    const tools = new FileUploadTools(engine, asDaemon(daemon));
     const handler = tools.getHandler('safari_file_upload')!;
     await handler({ tabUrl: 'https://target/page', selector: '#f', paths: [smallFile] });
     expect(observed.every((u) => u === 'https://target/page')).toBe(true);
@@ -346,7 +369,8 @@ describe('5A.1 — safari_file_upload dispatch boundary', () => {
     // (A real TOCTOU race is too flaky to test reliably; the behavior is
     //  pinned by the post-read re-check existing as a code path.)
     const engine = recordingEngine();
-    const tools = new FileUploadTools(engine);
+    const daemon = recordingDaemon();
+    const tools = new FileUploadTools(engine, asDaemon(daemon));
     const handler = tools.getHandler('safari_file_upload')!;
     let caught: unknown;
     try {
@@ -364,7 +388,8 @@ describe('5A.1 — safari_file_upload dispatch boundary', () => {
       JSON.stringify({ ok: true, isFileInput: true, multiple: true, accept: '' }),
       JSON.stringify({ uploaded: 1, files: [{ name: 'target.pdf', size: 8, mimeType: 'application/pdf', path: target }] }),
     ]);
-    const tools = new FileUploadTools(engine);
+    const daemon = recordingDaemon();
+    const tools = new FileUploadTools(engine, asDaemon(daemon));
     const handler = tools.getHandler('safari_file_upload')!;
     const r = await handler({ tabUrl: 'https://x', selector: '#f', paths: [link] });
     const payload = JSON.parse(r.content[0]!.text!);

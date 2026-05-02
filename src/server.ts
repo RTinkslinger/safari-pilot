@@ -323,7 +323,7 @@ export class SafariPilotServer {
     const networkTools = new NetworkTools(proxy);
     const storageTools = new StorageTools(proxy);
     const authTools = new AuthTools(proxy);
-    const fileUploadTools = new FileUploadTools(proxy);
+    const fileUploadTools = new FileUploadTools(proxy, daemonEngine);
     const shadowTools = new ShadowTools(proxy);
     const frameTools = new FrameTools(proxy);
     const permissionTools = new PermissionTools(proxy);
