@@ -75,7 +75,15 @@ describe('T55a — extension-down frame call', () => {
     const errStr = caught
       ? (caught instanceof Error ? caught.message : JSON.stringify(caught))
       : JSON.stringify(payload);
-    expect(errStr, `payload=${JSON.stringify(payload)} caught=${String(caught)}`).toMatch(/FRAME_NOT_SUPPORTED|extension is not available|EngineUnavailable|EXTENSION_REQUIRED/i);
+    // Either of these structural answers is correct: selectEngine refuses
+    // routing with EngineUnavailableError ("Safari Web Extension which is
+    // not available") OR routeFrameAware refuses with FrameNotSupportedError
+    // when somehow a non-extension engine slipped through. Both semantically
+    // identical from the caller's perspective: a typed refusal, not a silent
+    // fallback. The negative assertion (no SecurityError/DOMException) is
+    // what guards the actual product invariant — no DOM-level cross-origin
+    // exception leaks to the agent.
+    expect(errStr, `payload=${JSON.stringify(payload)} caught=${String(caught)}`).toMatch(/FRAME_NOT_SUPPORTED|Safari Web Extension which is not available|extension is not available|EngineUnavailable|EXTENSION_REQUIRED/i);
     expect(errStr).not.toMatch(/SecurityError|DOMException/);
   }, 45_000);
 });
