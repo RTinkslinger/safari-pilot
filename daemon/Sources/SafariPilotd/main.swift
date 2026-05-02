@@ -233,6 +233,24 @@ if #available(macOS 14.0, *) {
     Logger.warning("ExtensionHTTPServer requires macOS 14+. Extension HTTP polling unavailable on this OS version.")
 }
 
+// Phase 5A · 5A.1 — file-staging TTL cleanup (every 30s).
+// Removes StagedFile entries past their 60s expiresAt so abandoned uploads
+// don't accumulate in memory. The 30s cadence vs 60s TTL gives at most one
+// extra cycle of slack — entries live 60-90s in the worst case.
+Task { [stagingStore = dispatcher.stagingStore] in
+    while !Task.isCancelled {
+        do {
+            try await Task.sleep(for: .seconds(30))
+        } catch {
+            break
+        }
+        let evicted = await stagingStore.evictExpired(now: Date())
+        if evicted > 0 {
+            Logger.info("file-stage: evicted \(evicted) expired tokens")
+        }
+    }
+}
+
 // Install SIGTERM handler before entering the run loop.
 installSIGTERMHandler()
 
