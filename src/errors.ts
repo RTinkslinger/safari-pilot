@@ -31,6 +31,16 @@ export const ERROR_CODES = {
   FRAME_UNREACHABLE: 'FRAME_UNREACHABLE',
   FRAME_NOT_SUPPORTED: 'FRAME_NOT_SUPPORTED',
   DOWNLOAD_SOURCE_MISSING: 'DOWNLOAD_SOURCE_MISSING',
+  FILE_UPLOAD_PATH_NOT_FOUND: 'FILE_UPLOAD_PATH_NOT_FOUND',
+  FILE_UPLOAD_PATH_NOT_READABLE: 'FILE_UPLOAD_PATH_NOT_READABLE',
+  FILE_UPLOAD_PATH_NOT_ABSOLUTE: 'FILE_UPLOAD_PATH_NOT_ABSOLUTE',
+  FILE_UPLOAD_FILE_TOO_LARGE: 'FILE_UPLOAD_FILE_TOO_LARGE',
+  FILE_UPLOAD_TOO_MANY_FILES: 'FILE_UPLOAD_TOO_MANY_FILES',
+  FILE_UPLOAD_EMPTY_PATHS: 'FILE_UPLOAD_EMPTY_PATHS',
+  FILE_UPLOAD_INVALID_ELEMENT: 'FILE_UPLOAD_INVALID_ELEMENT',
+  FILE_UPLOAD_ELEMENT_DETACHED: 'FILE_UPLOAD_ELEMENT_DETACHED',
+  FILE_UPLOAD_MULTIPLE_NOT_ALLOWED: 'FILE_UPLOAD_MULTIPLE_NOT_ALLOWED',
+  FILE_UPLOAD_INVALID_PARAMS: 'FILE_UPLOAD_INVALID_PARAMS',
 } as const;
 // SD-22 (2026-04-25): removed 4 dead codes (ELEMENT_NOT_INTERACTABLE,
 // CROSS_ORIGIN_FRAME, DIALOG_UNEXPECTED, FRAME_NOT_FOUND) — declared but
@@ -483,6 +493,147 @@ export class DownloadSourceMissingError extends SafariPilotError {
       'Safari may have moved or deleted the file before saveAs ran.',
       'Verify the source path returned by safari_wait_for_download still exists, or retry the download.',
     ];
+  }
+}
+
+// ─── File Upload Error Classes (5A.1) ────────────────────────────────────────
+
+export class FileUploadPathNotFoundError extends SafariPilotError {
+  readonly code = ERROR_CODES.FILE_UPLOAD_PATH_NOT_FOUND;
+  readonly retryable = false;
+  readonly hints: string[];
+  readonly path: string;
+  readonly suggestion?: string;
+
+  constructor(path: string, suggestion?: string) {
+    super(`File not found: ${path}${suggestion ? `. Did you mean: ${suggestion}?` : ''}`);
+    this.path = path;
+    if (suggestion !== undefined) this.suggestion = suggestion;
+    this.hints = ['Pass an absolute path or ~-prefixed path to a file that exists.'];
+  }
+}
+
+export class FileUploadPathNotReadableError extends SafariPilotError {
+  readonly code = ERROR_CODES.FILE_UPLOAD_PATH_NOT_READABLE;
+  readonly retryable = false;
+  readonly hints: string[];
+  readonly path: string;
+
+  constructor(path: string) {
+    super(`Cannot read file: ${path} (permission denied, is a directory, or contains NUL bytes).`);
+    this.path = path;
+    this.hints = [];
+  }
+}
+
+export class FileUploadPathNotAbsoluteError extends SafariPilotError {
+  readonly code = ERROR_CODES.FILE_UPLOAD_PATH_NOT_ABSOLUTE;
+  readonly retryable = false;
+  readonly hints: string[];
+  readonly path: string;
+
+  constructor(path: string) {
+    super(`Path must be absolute or ~-prefixed: ${path}`);
+    this.path = path;
+    this.hints = ['Use an absolute path (/Users/...) or ~/relative/path.'];
+  }
+}
+
+export class FileUploadFileTooLargeError extends SafariPilotError {
+  readonly code = ERROR_CODES.FILE_UPLOAD_FILE_TOO_LARGE;
+  readonly retryable = false;
+  readonly hints: string[];
+  readonly path: string;
+  readonly size: number;
+  readonly cap: number = 26_214_400;
+
+  constructor(path: string, size: number) {
+    super(`File exceeds 25 MB cap: ${path} (${size} bytes).`);
+    this.path = path;
+    this.size = size;
+    this.hints = [
+      'v1 cap is 25 MB. For larger files, upload via a custom site mechanism (e.g., a direct API call from the agent).',
+    ];
+  }
+}
+
+export class FileUploadTooManyFilesError extends SafariPilotError {
+  readonly code = ERROR_CODES.FILE_UPLOAD_TOO_MANY_FILES;
+  readonly retryable = false;
+  readonly hints: string[];
+  readonly count: number;
+
+  constructor(count: number) {
+    super(`Too many files: ${count}. v1 limit is 4.`);
+    this.count = count;
+    this.hints = [
+      'To upload more, call multiple times — note that subsequent calls REPLACE the FileList, not append.',
+    ];
+  }
+}
+
+export class FileUploadEmptyPathsError extends SafariPilotError {
+  readonly code = ERROR_CODES.FILE_UPLOAD_EMPTY_PATHS;
+  readonly retryable = false;
+  readonly hints: string[];
+
+  constructor() {
+    super('paths is empty and clear is not true.');
+    this.hints = ['Pass clear: true to clear the input.'];
+  }
+}
+
+export class FileUploadInvalidElementError extends SafariPilotError {
+  readonly code = ERROR_CODES.FILE_UPLOAD_INVALID_ELEMENT;
+  readonly retryable = false;
+  readonly hints: string[];
+  readonly tagName: string;
+  readonly type: string;
+
+  constructor(tagName: string, type: string) {
+    super(
+      `Locator resolved to <${tagName.toLowerCase()}${type ? ` type="${type}"` : ''}>, not <input type=file>.`,
+    );
+    this.tagName = tagName;
+    this.type = type;
+    this.hints = [
+      'safari_file_upload only operates on <input type=file>. If the page uses a custom picker, look for the hidden <input> sibling — usually inside the same <label>. Try locating by the label text.',
+    ];
+  }
+}
+
+export class FileUploadElementDetachedError extends SafariPilotError {
+  readonly code = ERROR_CODES.FILE_UPLOAD_ELEMENT_DETACHED;
+  readonly retryable = true; // retryable: page may re-render
+  readonly hints: string[];
+  readonly ref?: string;
+
+  constructor(ref?: string) {
+    super(`Element was removed between probe and inject${ref ? ` (ref: ${ref})` : ''}.`);
+    if (ref !== undefined) this.ref = ref;
+    this.hints = ['Page re-rendered between probe and inject. Retry the call.'];
+  }
+}
+
+export class FileUploadMultipleNotAllowedError extends SafariPilotError {
+  readonly code = ERROR_CODES.FILE_UPLOAD_MULTIPLE_NOT_ALLOWED;
+  readonly retryable = false;
+  readonly hints: string[];
+
+  constructor() {
+    super('Input does not have the multiple attribute; cannot accept >1 path.');
+    this.hints = ['Pass exactly 1 path, or locate an input that has multiple="true".'];
+  }
+}
+
+export class FileUploadInvalidParamsError extends SafariPilotError {
+  readonly code = ERROR_CODES.FILE_UPLOAD_INVALID_PARAMS;
+  readonly retryable = false;
+  readonly hints: string[];
+
+  constructor(issue: string) {
+    super(`Invalid parameters: ${issue}`);
+    this.hints = [];
   }
 }
 
