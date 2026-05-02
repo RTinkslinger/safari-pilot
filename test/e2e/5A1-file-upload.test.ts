@@ -339,4 +339,73 @@ describe('5A.1 — safari_file_upload e2e (core)', () => {
       payload.validation!.message || (payload.validation!.alerts && payload.validation!.alerts.join(' ')),
     ).toMatch(/site|rejected|too large/i);
   }, 60_000);
+
+  it('concurrent uploads in same tab: each response surfaces only its own bytes (commandId isolation)', async () => {
+    // Two parallel safari_file_upload calls against two different inputs in the
+    // same tab. Each upload uses its own token + commandId; they MUST NOT collide
+    // in the storage bus, the daemon's FileStagingStore, or the MAIN-world
+    // postMessage routing. The litmus is sha256-equality per input — if tokens
+    // crossed wires, the wrong bytes land in the wrong input and the hashes mismatch.
+    await callTool(client, 'safari_navigate', {
+      tabUrl: tabUrl!, url: `http://127.0.0.1:${fixture.hostPort}/upload-form?sp_t5A1=${Date.now()}`,
+    }, nextId(), 15_000);
+    await new Promise((r) => setTimeout(r, 1500));
+
+    // Add a second input so the two parallel calls target distinct elements.
+    await callTool(client, 'safari_evaluate', {
+      tabUrl: tabUrl!,
+      script: `
+        const i = document.createElement('input');
+        i.id = 'second-input';
+        i.type = 'file';
+        document.body.appendChild(i);
+        return true;
+      `,
+      timeout: 5000,
+    }, nextId(), 15_000);
+
+    const fileA = join(workDir, 'concurrentA.bin');
+    const fileB = join(workDir, 'concurrentB.bin');
+    const bufA = Buffer.alloc(2 * 1024 * 1024, 0xAA);
+    const bufB = Buffer.alloc(2 * 1024 * 1024, 0xBB);
+    writeFileSync(fileA, bufA);
+    writeFileSync(fileB, bufB);
+    const shaA = sha256(bufA);
+    const shaB = sha256(bufB);
+
+    await Promise.all([
+      callTool(client, 'safari_file_upload', {
+        tabUrl: tabUrl!, selector: '#file-input', paths: [fileA],
+      }, nextId(), 60_000),
+      callTool(client, 'safari_file_upload', {
+        tabUrl: tabUrl!, selector: '#second-input', paths: [fileB],
+      }, nextId(), 60_000),
+    ]);
+
+    const verifyA = await callTool(client, 'safari_evaluate', {
+      tabUrl: tabUrl!,
+      script: `
+        const f = document.getElementById('file-input').files[0];
+        const buf = await f.arrayBuffer();
+        const hash = await crypto.subtle.digest('SHA-256', buf);
+        const hex = Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, '0')).join('');
+        return { name: f.name, sha256: hex };
+      `,
+      timeout: 10_000,
+    }, nextId(), 30_000);
+    const verifyB = await callTool(client, 'safari_evaluate', {
+      tabUrl: tabUrl!,
+      script: `
+        const f = document.getElementById('second-input').files[0];
+        const buf = await f.arrayBuffer();
+        const hash = await crypto.subtle.digest('SHA-256', buf);
+        const hex = Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, '0')).join('');
+        return { name: f.name, sha256: hex };
+      `,
+      timeout: 10_000,
+    }, nextId(), 30_000);
+
+    expect((verifyA['value'] as { sha256: string }).sha256).toBe(shaA);
+    expect((verifyB['value'] as { sha256: string }).sha256).toBe(shaB);
+  }, 120_000);
 });
