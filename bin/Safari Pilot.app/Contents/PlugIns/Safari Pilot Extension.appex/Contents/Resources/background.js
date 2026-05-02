@@ -203,6 +203,59 @@ async function executeCommand(cmd) {
     return result;
   }
 
+  // T55a: list_frames sentinel — bypass storage bus, call webNavigation directly.
+  // safari_list_frames sends '__SP_LIST_FRAMES__' as the script string when
+  // engine.name === 'extension'. Returns frame topology with stable frameIds.
+  // Placed AFTER findTargetTab (need valid tab.id) and BEFORE frameId validation
+  // (list_frames itself doesn't target a frame — it queries the topology).
+  if (cmd.script === '__SP_LIST_FRAMES__') {
+    let frames;
+    try {
+      frames = await browser.webNavigation.getAllFrames({ tabId: tab.id });
+    } catch (e) {
+      const result = { ok: false, error: { name: 'WEBNAVIGATION_ERROR', message: `webNavigation.getAllFrames failed: ${e?.message ?? String(e)}` } };
+      await updatePendingEntry(commandId, { status: 'completed', result });
+      return result;
+    }
+    const value = JSON.stringify({
+      count: frames.length,
+      frames: frames.map((f) => ({
+        frameId: f.frameId,
+        parentFrameId: f.parentFrameId,
+        url: f.url,
+        errorOccurred: f.errorOccurred ?? false,
+      })),
+    });
+    const result = { ok: true, value };
+    await updatePendingEntry(commandId, { status: 'completed', result });
+    return result;
+  }
+
+  // T55a: validate frameId at dispatch time. Missing frame → fast-fail
+  // before any storage-bus traffic. Re-resolve frame.url so content-isolated.js's
+  // mutation guard has the authoritative value when comparing to location.href.
+  if (cmd.frameId != null && cmd.frameId !== 0) {
+    let frames;
+    try {
+      frames = await browser.webNavigation.getAllFrames({ tabId: tab.id });
+    } catch (e) {
+      const result = { ok: false, error: { name: 'FRAME_NOT_FOUND', message: `webNavigation.getAllFrames failed for tab ${tab.id}: ${e?.message ?? String(e)}` } };
+      await updatePendingEntry(commandId, { status: 'completed', result });
+      return result;
+    }
+    const target = (frames || []).find((f) => f.frameId === cmd.frameId);
+    if (!target) {
+      const result = { ok: false, error: { name: 'FRAME_NOT_FOUND', message: `Frame ${cmd.frameId} not found in tab ${tab.id}` } };
+      await updatePendingEntry(commandId, { status: 'completed', result });
+      return result;
+    }
+    // Re-resolve frameUrl to the frame's CURRENT URL at dispatch time.
+    // content-isolated.js compares this against location.href on receipt;
+    // mismatch → FRAME_NAVIGATED. Mutating cmd in place so storageCmd
+    // construction below picks it up.
+    cmd.frameUrl = target.url;
+  }
+
   // ── Storage bus: write command, wait for result ──────────────────────────
   // Safari's tabs.sendMessage and scripting.executeScript return undefined/null
   // in alarm-woken event page context. Use browser.storage.local as the message
@@ -211,13 +264,20 @@ async function executeCommand(cmd) {
   // IMPORTANT: Attach the result listener BEFORE writing the command.
   // If the write triggers onChanged synchronously before the listener is
   // attached, the result event would be missed and we'd wait 30s for nothing.
+  // T55a: keys are commandId-suffixed (sp_cmd_<id>/sp_result_<id>) to avoid
+  // single-slot collisions when multiple frame-targeted commands are in flight.
+  const cmdKey = 'sp_cmd_' + commandId;
+  const resultKey = 'sp_result_' + commandId;
+  const isFrameTargeted = cmd.frameId != null && cmd.frameId !== 0;
+  const TIMEOUT_MS = isFrameTargeted ? 10000 : 30000;
   const storageCmd = {
     commandId,
     tabId: tab.id,
     method: 'execute_script',
     params: { script: cmd.script, commandId },
+    ...(isFrameTargeted ? { frameId: cmd.frameId, frameUrl: cmd.frameUrl } : {}),
     timestamp: Date.now(),
-    deadline: Date.now() + 30000,
+    deadline: Date.now() + TIMEOUT_MS,
   };
 
   // Step 1: Attach result listener FIRST
@@ -236,12 +296,17 @@ async function executeCommand(cmd) {
   const resultTimeout = setTimeout(() => {
     clearInterval(keepAlive);
     browser.storage.onChanged.removeListener(resultListener);
-    resultResolver({ ok: false, error: { message: 'Storage bus timeout (30s) — content script may not be loaded on target tab' } });
-  }, 30000);
+    const errorCode = isFrameTargeted ? 'FRAME_UNREACHABLE' : 'STORAGE_BUS_TIMEOUT';
+    const errorMessage = isFrameTargeted
+      ? `Frame ${cmd.frameId} unreachable — content script did not respond within ${TIMEOUT_MS}ms (sandbox/CSP/injection failure?)`
+      : `Storage bus timeout (${TIMEOUT_MS}ms) — content script may not be loaded on target tab`;
+    resultResolver({ ok: false, error: { name: errorCode, message: errorMessage } });
+  }, TIMEOUT_MS);
 
   function resultListener(changes, area) {
-    if (area !== 'local' || !changes.sp_result?.newValue) return;
-    const reply = changes.sp_result.newValue;
+    if (area !== 'local' || !changes[resultKey]?.newValue) return;
+    const reply = changes[resultKey].newValue;
+    // commandId match is implied by the keyed lookup; defensive double-check
     if (reply.commandId !== commandId) return;
     clearInterval(keepAlive);
     clearTimeout(resultTimeout);
@@ -252,7 +317,7 @@ async function executeCommand(cmd) {
   browser.storage.onChanged.addListener(resultListener);
 
   // Step 2: THEN write the command (listener is already waiting)
-  await browser.storage.local.set({ sp_cmd: storageCmd });
+  await browser.storage.local.set({ [cmdKey]: storageCmd });
   emitTrace(commandId, 'cmd_dispatched', { tabId: tab.id, tabUrl: cmd.tabUrl });
 
   // Step 3: Wait for result
@@ -268,7 +333,7 @@ async function executeCommand(cmd) {
   emitTrace(commandId, 'result_enriched', { tabId: tab.id, tabUrl: tab.url, enriched: typeof enrichedResult === 'object' && '_meta' in enrichedResult });
 
   // Cleanup storage keys (safe — result already captured in `result` variable)
-  try { await browser.storage.local.remove(['sp_cmd', 'sp_result']); } catch { /* ignore cleanup errors */ }
+  try { await browser.storage.local.remove([cmdKey, resultKey]); } catch { /* ignore cleanup errors */ }
 
   await updatePendingEntry(commandId, { status: 'completed', result: enrichedResult });
   return enrichedResult;
@@ -400,18 +465,20 @@ async function gcPendingStorage() {
 }
 
 // ─── Storage-bus cleanup (T44) ──────────────────────────────────────────────
-// Safari may suspend the event page between writing `sp_cmd` and removing it
-// at executeCommand:285 (post-success cleanup). On wake, that orphan key is
+// Safari may suspend the event page between writing `sp_cmd_<id>` and removing
+// it at executeCommand's post-success cleanup. On wake, that orphan key is
 // invisible to the previous session's resultListener (which is dead) and can
-// be re-read by content-isolated.js:96-100 on next tab load — phantom
-// execution. Same risk for `sp_result` left behind by a session that died
-// before delivering its result. Run this after gcPendingStorage so the
-// "live" predicate reflects the post-GC pending map, and before
+// be re-read by content-isolated.js on next tab load — phantom execution.
+// Same risk for `sp_result_<id>` left behind by a session that died before
+// delivering its result. Run this after gcPendingStorage so the "live"
+// predicate reflects the post-GC pending map, and before
 // connectAndReconcile/pollLoop so the daemon's first dispatched command
 // can never collide with a leftover key.
+// T55a: storage bus migrated to commandId-keyed slots — prefix-scan all
+// sp_cmd_*/sp_result_* keys instead of two literals.
 async function cleanupStaleStorageBus() {
   try {
-    const stored = await browser.storage.local.get(['sp_cmd', 'sp_result']);
+    const stored = await browser.storage.local.get(null);
     const pending = await readPending();
     const liveIds = new Set();
     for (const [commandId, entry] of Object.entries(pending)) {
@@ -421,13 +488,15 @@ async function cleanupStaleStorageBus() {
     }
     const toRemove = [];
     const removedDetails = {};
-    if (stored.sp_cmd && (!stored.sp_cmd.commandId || !liveIds.has(stored.sp_cmd.commandId))) {
-      toRemove.push('sp_cmd');
-      removedDetails.sp_cmd = stored.sp_cmd.commandId ?? null;
-    }
-    if (stored.sp_result && (!stored.sp_result.commandId || !liveIds.has(stored.sp_result.commandId))) {
-      toRemove.push('sp_result');
-      removedDetails.sp_result = stored.sp_result.commandId ?? null;
+    // T55a: prefix-scan all sp_cmd_*/sp_result_* keys. Any whose commandId is
+    // not in the live set (no in-flight handleCommand owns it) is stale and removed.
+    for (const key of Object.keys(stored)) {
+      if (!key.startsWith('sp_cmd_') && !key.startsWith('sp_result_')) continue;
+      const commandId = key.startsWith('sp_cmd_') ? key.slice('sp_cmd_'.length) : key.slice('sp_result_'.length);
+      if (!liveIds.has(commandId)) {
+        toRemove.push(key);
+        removedDetails[key] = commandId;
+      }
     }
     if (toRemove.length > 0) {
       await browser.storage.local.remove(toRemove);
@@ -578,6 +647,28 @@ if (!listenersAttached) {
     // depend on the broken tabs.query IPC.
     if (message?.action === 'sp_getTabId') {
       sendResponse({ tabId: sender.tab?.id ?? null });
+      return false;
+    }
+    // T55a: content-isolated.js calls this lazily on first sp_cmd_* arrival.
+    // sender.frameId is the authoritative answer — 0 = top frame, > 0 = iframe.
+    // frameId is stable for the life of the frame (across SPA navigations).
+    if (message?.action === 'sp_getFrameId') {
+      sendResponse({ frameId: sender.frameId ?? null });
+      return false;
+    }
+    // T55a: best-effort fast-fail signal from a frame's pagehide listener.
+    // If the message lands before reload finishes, callers waiting on
+    // in-flight commands targeting this frameId can short-circuit. v1
+    // minimum: log + return ok. Future iterations may use this to
+    // proactively resolve pending listeners with FRAME_NAVIGATED. The
+    // frameUrl mutation guard in content-isolated.js + webNavigation
+    // revalidation on the next call are the safety nets.
+    if (message?.action === 'sp_frame_unloading') {
+      emitTrace('frame', 'frame_unloading', {
+        tabId: sender?.tab?.id ?? null,
+        frameId: message.frameId ?? null,
+      });
+      sendResponse({ ok: true });
       return false;
     }
     if (message?.type === 'ping') {

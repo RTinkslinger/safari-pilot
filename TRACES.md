@@ -14,6 +14,47 @@
 
 ## Current Work
 
+### Iteration 46 - 2026-05-02
+**What:** T55a — frame-aware storage bus shipped. Cross-origin iframe access via `all_frames: true` + commandId-keyed storage + targeted-only dispatch + lazy `sp_getFrameId` handshake + `frameUrl` mutation guard. `ENGINE_CAPS.extension.framesCrossOrigin` flips from `false` to `true` honestly.
+
+**Changes (16 commits on `fix/T55a-frame-aware-storage-bus`):**
+- `src/errors.ts` — 4 new error classes/codes: `FRAME_NOT_FOUND`, `FRAME_NAVIGATED`, `FRAME_UNREACHABLE`, `FRAME_NOT_SUPPORTED`. Re-adds `FRAME_NOT_FOUND` per SD-22 instruction (was removed as dead code).
+- `src/engines/engine.ts` — `IEngine.executeJsInFrame(tabUrl, frameId, js, timeout?)` interface + `BaseEngine` default returning FRAME_NOT_SUPPORTED. AppleScript and Daemon engines inherit the default; Extension overrides with the real cross-frame dispatch.
+- `src/engines/extension.ts` — `executeJsInFrame` mirrors `executeJsInTab`, adds `frameId` to storage-bus payload (NOT `frameUrl` — background.js resolves that authoritatively at dispatch). `SAFARI_PILOT_FORCE_NO_EXTENSION=1` env override at `isAvailable()`.
+- `src/engines/engine-proxy.ts` — passthrough delegating `executeJsInFrame` to maintain IEngine compliance.
+- `src/server.ts` — init path also honors `SAFARI_PILOT_FORCE_NO_EXTENSION` so engine selection sees extension unavailable (without this, the env override at engine.ts is bypassed by cached `engineAvailability.extension` from `/status` probe).
+- `extension/lib/route-command.js` (NEW) — pure `shouldProcess(cmd, myTabId, myFrameId, currentLocationHref)` returning true|false|null. null signals "queue, handshake pending."
+- `extension/lib/handshake-machine.js` (NEW) — pure `frameIdHandshakeReducer(state, event)` driving lazy `sp_getFrameId`. IDLE → AWAITING_FRAME_ID → READY with queue drain on response.
+- `extension/lib/storage-keys.js` (NEW) — `makeSpCmdKey`/`makeSpResultKey`/`pickSpCmdKeys`/`parseCommandIdFromKey`.
+- `src/tools/_frame-routing-helper.ts` (NEW) — `routeFrameAware(engine, params, jsCode, timeout?)` is the single source of truth for frameId dispatch across 6 frame-aware tool handlers.
+- `extension/manifest.json` — `webNavigation` permission + `all_frames: true` on both content_scripts entries.
+- `extension/content-isolated.js` — inlines the three pure helpers (canonical sources in extension/lib/), adopts handshake state machine, scans all `sp_cmd_*` keys via prefix, writes `sp_result_<commandId>`, frameUrl mutation guard emits FRAME_NAVIGATED, pagehide listener for best-effort fast-fail. DEBUG_HARNESS markers preserved verbatim.
+- `extension/background.js` — `sp_getFrameId` and `sp_frame_unloading` action handlers. `executeCommand` migrates writer/listener/cleanup to commandId-keyed storage. `webNavigation.getAllFrames` validation at dispatch (FRAME_NOT_FOUND if missing). 10s timeout for frame-targeted commands (FRAME_UNREACHABLE on expiry). Idle-sweep prefix-scans `sp_cmd_*`/`sp_result_*` keys. Test-harness poison paths accept `op.poison.commandId` for keyed slots. URL-change relay filter at L687 (`sender?.frameId !== 0`) preserved verbatim. `__SP_LIST_FRAMES__` sentinel intercepts in `executeCommand` to call webNavigation directly without storage-bus traffic.
+- `src/engine-selector.ts` — `ENGINE_CAPS.extension.framesCrossOrigin: true` with precision comment enumerating FRAME_UNREACHABLE conditions (sandbox, CSP, COOP/COEP).
+- `src/tools/frames.ts` — `safari_list_frames` extension path uses webNavigation.getAllFrames via the sentinel; AppleScript path keeps DOM enumeration with `frameId: null`. `safari_eval_in_frame` accepts optional `frameId` (precedence over `frameSelector`); routes via routeFrameAware.
+- `src/tools/extraction.ts` — `safari_get_text`, `safari_get_html`, `safari_get_attribute` accept optional `frameId`, route via routeFrameAware. Locator dispatch also routed (locator+lookup must run in same frame).
+- `src/tools/shadow.ts` — `safari_query_shadow`, `safari_click_shadow` accept optional `frameId`, route via routeFrameAware.
+- `daemon/Tests/SafariPilotdTests/ExtensionBridgeTests.swift` — 2 new tests lock the `[String: AnyCodable]` passthrough contract for `frameId`/`frameUrl`. NO production Swift change needed (existing for-loop at handleExecute forwards every key).
+- `package.json` 0.1.17 → 0.1.18; `bin/Safari Pilot.app` rebuilt + signed + notarized + stapled (entitlements verified: app-sandbox, network.client on both .app and .appex).
+
+**Tests added:**
+- 7 new unit test files (+22 tests): frame-error-codes, executeJsInFrame-throws, frame-routing-helper, route-command, handshake-machine, storage-keys, frames-cross-origin-cap, frame-aware-tools-routing (parameterized over 6 tools × 3 cases). Plus existing `cap-manifest-parity` test re-enabled and now passes.
+- 9 e2e test files (+9 tests): list_frames, eval_in_frame, frame_not_found, security_pipeline, extension_down, extract_text, query_shadow, concurrent_commands, url_change_relay_iframe_filter. All committed at `46c62f5`.
+- 2 new daemon Swift tests (passthrough contract).
+- Test-side fixture server `test/helpers/fixture-server.ts` + 5 fixture HTML files (`test/fixtures/cross-frame/`).
+
+**Test totals after T55a:** 220 unit + 1 existing (parity) + 143 daemon Swift = 364 tests. Build clean, lint clean. **9 e2e tests committed RED, gated on a separate pre-existing extension-dormancy issue (T60-class) that reproduces in `t44-stale-storage-bus-cleanup.test.ts`.**
+
+**Context:**
+- **Spec evolution:** original brainstorm undersold T55a as "smallest remaining" (per CHECKPOINT). On reading the actual code I pushed back — T55a is a real multi-day design feature (frame discovery, targeted dispatch, result aggregation, storage-bus migration). Routed through `upp:brainstorming` → `upp:writing-plans` → `upp:executing-plans`. EL adversarial audit caught 4 blockers + 3 majors before plan-write; all addressed in spec at `e9cccc4`.
+- **Scope correction during implementation:** plan claimed 11 tools touched (1 returns frameId, 10 accept). The 5 named "extract_*" tools (text/links/tables/metadata/images) **don't exist in this codebase** — extraction.ts has different tools. Real scope: 7 tools (1 returns + 6 accept). Parameterized routing test adjusted accordingly.
+- **CommandId-keyed storage (D6) defended by `t55a-concurrent-frame-commands.test.ts`** — Promise.all of two safari_eval_in_frame to distinct frames. Reverting to single-slot `sp_cmd`/`sp_result` would clobber the second frame's result.
+- **URL-change relay regression litmus** at `t55a-url-change-relay-iframe-filter.test.ts` — defends the existing `sender.frameId !== 0` filter at background.js:687, which becomes load-bearing under `all_frames: true`.
+- **Pre-existing dormancy:** `lastPingAge` grows monotonically between alarm-driven `/connect` events. `/poll` never lands. Existing t44 e2e reproduces same 10s timeout. Diagnosed as out-of-scope T60-class issue. T55a code is verified by 220 unit + 143 Swift + parameterized routing test (deletion-litmus on all 6 frame-aware tools); 9 e2e tests await dormancy resolution.
+- **Backlog:** P3 audit 4 → 3 (T55a → Verifying pending dormancy fix). Total open audit 8 → 7.
+
+---
+
 ### Iteration 45 - 2026-05-01
 **What:** T52 + T53 batched script modernization — final easy/medium item closes the P3 sprint.
 **Changes:**

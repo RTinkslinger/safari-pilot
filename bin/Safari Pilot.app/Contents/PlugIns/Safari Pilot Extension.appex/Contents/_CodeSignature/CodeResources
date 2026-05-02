@@ -6,7 +6,7 @@
 	<dict>
 		<key>Resources/background.js</key>
 		<data>
-		BfYt2Uq1u+vRLYuk2NbelVYqqOY=
+		1q06qgidFRvvMF4hxzgxk423QtA=
 		</data>
 		<key>Resources/build.config.js</key>
 		<data>
@@ -14,7 +14,7 @@
 		</data>
 		<key>Resources/content-isolated.js</key>
 		<data>
-		3vazj3gwSQeWIwmvTrGUFv3L4C8=
+		uMx/Yq1pAeN5u/a8iXwgCEh2Yhk=
 		</data>
 		<key>Resources/content-main.js</key>
 		<data>
@@ -32,9 +32,21 @@
 		<data>
 		BIDpanaSN0Y3OQQEOwLyXND4SNk=
 		</data>
+		<key>Resources/lib/handshake-machine.js</key>
+		<data>
+		xglueEe3SHs65cWl1/dC5cEaJ1A=
+		</data>
+		<key>Resources/lib/route-command.js</key>
+		<data>
+		HKuqS+wkhyyQtqWt/h3FZ6LGBVE=
+		</data>
+		<key>Resources/lib/storage-keys.js</key>
+		<data>
+		QuKBeYVj7KLBM6uXEnrEc0NnHGg=
+		</data>
 		<key>Resources/manifest.json</key>
 		<data>
-		UesZCJ4FC2S0xZcaAvOZv0+c74U=
+		agLICmtFc07FlFygWHy4xbAqKjE=
 		</data>
 		<key>Resources/native/SafariWebExtensionHandler.swift</key>
 		<data>
@@ -47,7 +59,7 @@
 		<dict>
 			<key>hash2</key>
 			<data>
-			2NYcFFWLeGEDEXGfwwEmMbav7GdMiCua0K1KejxARLM=
+			VKJQs6MimOwmIXKBDVNviHCQreFxFy2JisfgMGxX4/M=
 			</data>
 		</dict>
 		<key>Resources/build.config.js</key>
@@ -61,7 +73,7 @@
 		<dict>
 			<key>hash2</key>
 			<data>
-			F8tf2W310z9RMirnTZLDwHln8uO9ISNFMHPUptwSOFk=
+			LQYoX1SPgn4yskyWNlCIuO34XZKTQ9PkXI4CJiZNv4o=
 			</data>
 		</dict>
 		<key>Resources/content-main.js</key>
@@ -92,11 +104,32 @@
 			4fU0j7l5IFPvOhj3hoiPbx4gJfRTvSIdLfUccwqeOVE=
 			</data>
 		</dict>
+		<key>Resources/lib/handshake-machine.js</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			yJKDAtRU/R5pWn5ha7Nz01diuqX3WjAS1umlsYN9HmE=
+			</data>
+		</dict>
+		<key>Resources/lib/route-command.js</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			TmCGEnvNKTjj9MLLxSfNOG5dCHPLoL6LHvZmo9eGC5Y=
+			</data>
+		</dict>
+		<key>Resources/lib/storage-keys.js</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			z5QmK//NhQVtdCIBx8R+cH3vmu7dL7R7DF5ihq+KSEQ=
+			</data>
+		</dict>
 		<key>Resources/manifest.json</key>
 		<dict>
 			<key>hash2</key>
 			<data>
-			LPyj3xyigMzn6j5Cu5ailBVsfO36Tw/1Lv0lZpZlg8I=
+			am2zuSUPPC+LiCelDZVN64NpOj5r17f0j8x39BQ7mCU=
 			</data>
 		</dict>
 		<key>Resources/native/SafariWebExtensionHandler.swift</key>

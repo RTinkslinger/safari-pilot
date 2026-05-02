@@ -1,0 +1,14 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Shadow inside frame</title>
+</head>
+<body>
+  <div id="shadow-host"></div>
+  <script>
+    const root = document.getElementById('shadow-host').attachShadow({ mode: 'open' });
+    root.innerHTML = '<p id="shadow-marker">SHADOW_INSIDE_FRAME_OK</p>';
+  </script>
+</body>
+</html>

@@ -2,6 +2,7 @@ import type { ToolResponse, ToolRequirements } from '../types.js';
 import type { IEngine } from '../engines/engine.js';
 import type { Engine } from '../types.js';
 import { escapeForJsSingleQuote } from '../escape.js';
+import { routeFrameAware } from './_frame-routing-helper.js';
 
 export interface ToolDefinition {
   name: string;
@@ -41,10 +42,11 @@ export class ShadowTools {
             tabUrl: { type: 'string', description: 'Current URL of the tab' },
             hostSelector: { type: 'string', description: 'CSS selector for the shadow host element (the element with a shadowRoot)' },
             shadowSelector: { type: 'string', description: 'CSS selector to query inside the shadow root' },
+            frameId: { type: 'number', description: 'Optional: target a specific iframe by frameId from safari_list_frames (cross-origin requires extension engine)' },
           },
           required: ['tabUrl', 'hostSelector', 'shadowSelector'],
         },
-        requirements: { idempotent: true, requiresShadowDom: true },
+        requirements: { idempotent: true, requiresShadowDom: true, requiresFramesCrossOrigin: true },
       },
       {
         name: 'safari_click_shadow',
@@ -57,10 +59,11 @@ export class ShadowTools {
             tabUrl: { type: 'string', description: 'Current URL of the tab' },
             hostSelector: { type: 'string', description: 'CSS selector for the shadow host element' },
             shadowSelector: { type: 'string', description: 'CSS selector for the element to click inside the shadow root' },
+            frameId: { type: 'number', description: 'Optional: target a specific iframe by frameId from safari_list_frames (cross-origin requires extension engine)' },
           },
           required: ['tabUrl', 'hostSelector', 'shadowSelector'],
         },
-        requirements: { idempotent: false, requiresShadowDom: true },
+        requirements: { idempotent: false, requiresShadowDom: true, requiresFramesCrossOrigin: true },
       },
     ];
   }
@@ -74,6 +77,7 @@ export class ShadowTools {
   private async handleQueryShadow(params: Record<string, unknown>): Promise<ToolResponse> {
     const start = Date.now();
     const tabUrl = params['tabUrl'] as string;
+    const frameId = params['frameId'] as number | undefined;
     const hostSelector = params['hostSelector'] as string;
     const shadowSelector = params['shadowSelector'] as string;
 
@@ -101,7 +105,7 @@ export class ShadowTools {
       };
     `;
 
-    const result = await this.engine.executeJsInTab(tabUrl, js);
+    const result = await routeFrameAware(this.engine, { tabUrl, frameId }, js);
     if (!result.ok) throw new Error(result.error?.message ?? 'Shadow query failed');
 
     return this.makeResponse(result.value ? JSON.parse(result.value) : { found: false }, Date.now() - start);
@@ -110,6 +114,7 @@ export class ShadowTools {
   private async handleClickShadow(params: Record<string, unknown>): Promise<ToolResponse> {
     const start = Date.now();
     const tabUrl = params['tabUrl'] as string;
+    const frameId = params['frameId'] as number | undefined;
     const hostSelector = params['hostSelector'] as string;
     const shadowSelector = params['shadowSelector'] as string;
 
@@ -140,7 +145,7 @@ export class ShadowTools {
       };
     `;
 
-    const result = await this.engine.executeJsInTab(tabUrl, js);
+    const result = await routeFrameAware(this.engine, { tabUrl, frameId }, js);
     if (!result.ok) throw new Error(result.error?.message ?? 'Shadow click failed');
 
     return this.makeResponse(result.value ? JSON.parse(result.value) : { clicked: true }, Date.now() - start);
