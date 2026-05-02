@@ -57,7 +57,7 @@ Build pipeline (for future extension changes): edit → `bash scripts/build-exte
 | ~~T52~~ | RESOLVED 2026-05-01 | See "Resolved this sprint" below. |
 | ~~T53~~ | RESOLVED 2026-05-01 | See "Resolved this sprint" below. |
 | ~~T54~~ | RESOLVED 2026-05-01 | See "Resolved this sprint" below. |
-| ~~T55a~~ ⚠ VERIFYING | RESOLVED 2026-05-02 | code shipped + merged + pushed; 9 e2e tests pending T60-class dormancy fix. See "Resolved this sprint" below. |
+| ~~T55a~~ ✓ RESOLVED 2026-05-02 | RESOLVED + VERIFIED | code shipped + merged + pushed `caeab38`; 8/9 e2e GREEN after T60 fix `8b3147d` (the 9th, `t55a-url-change-relay-iframe-filter`, fails on a separate test-harness JSON parse error tracked as **T64** — DEBUG_HARNESS bridge bug, no product-path impact). 220 → 227 unit + 143 daemon Swift + 8/9 T55a e2e green. See "Resolved this sprint" below. |
 | ~~T56~~ | RESOLVED 2026-05-01 | See "Resolved this sprint" below. |
 | ~~T57~~ | RESOLVED 2026-05-01 | See "Resolved this sprint" below. |
 | ~~T58~~ | RESOLVED 2026-05-01 | See "Resolved this sprint" below. |
@@ -81,8 +81,9 @@ Build pipeline (for future extension changes): edit → `bash scripts/build-exte
 | ID | Surface | One-liner |
 |---|---|---|
 | ROADMAP-flake | NDJSON parser | line-split flake under parallel test runs (long click JS payloads with embedded newlines break the daemon's line-based JSON parser) |
-| **T60** ⚠ blocks T55a-e2e | `daemon/Sources/SafariPilotdCore/ExtensionHTTPServer.swift` (Hummingbird, port 19475) | HTTP server deadlocks under `extension-reload-during-active-connection` — accepts TCP but never sends responses. TCP daemon-engine path (port 19474) unaffected. `launchctl bootout`/`bootstrap` does NOT clear the bug; needs full Safari quit + relaunch (or system reboot). Reproduced 2026-04-29 during T22 e2e attempts; reproduced again 2026-05-02 during T55a e2e (extension polling dormancy: `lastPingAge` grows monotonically, `/poll` never lands between alarm-driven `/connect` events; pre-existing `t44-stale-storage-bus-cleanup.test.ts` reproduces same 10s timeout). **Blocking item:** T55a's 9 e2e tests can't verify GREEN until T60 is fixed. |
+| ~~T60~~ ✓ RESOLVED 2026-05-02 | `extension/background.js` (NOT the Hummingbird HTTP server as previously suspected) | **Root cause was structural in the extension, not a daemon HTTP deadlock.** `initialize()` wrapped both wakeSequence-setup AND `pollLoop` in `isWakeRunning`. `pollLoop` is a forever-loop that only returns on abort/MAX_ATTEMPTS — so the try/finally clearing the lock never ran in steady state. When Safari's MV3 event-page suspended a `/poll` fetch into an unresolvable pending state, `isWakeRunning` stayed true permanently and every subsequent alarm-driven `initialize()` bailed at the early-return path. Symptom: `alarm_fire` traces continue every 60s with NO `/connect` or `/poll` reaching the daemon. Architectural fix: `wakeSequence` now runs the BOUNDED setup phase only; `pollLoop` is supervised OUTSIDE the wake-setup lock by `supersedePollLoop()` which aborts the prior pollLoop's `AbortController` (releasing wedged fetches) and starts a fresh one. `pollLoop` accepts an `abortSignal` and combines it with `AbortSignal.timeout(10000)` via `AbortSignal.any` so a wedged fetch from a prior alarm cycle is forcibly killed when the next alarm supersedes it. Verified empirically 2026-05-02: v0.1.19 install produced `init_proceeding` → `setup_completed` → `pollloop_started` traces followed by sustained POLLs every 5s. T22's transient-retry ladder preserved verbatim. New unit suite: `test/unit/extension/t60-pollloop-decouple.test.ts` (7 structural invariants). Commits: `5d504bf 334200f`. Merge: `8b3147d`. The previous tracker text claiming "Hummingbird HTTP deadlock" was wrong — daemon HTTP server was healthy throughout. |
 | **SD-32-followup** | `test/e2e/` (new) | concurrent MCP sessions e2e — assert Session A's keepalive survives Session B's startup. Closes the unit-test wiring gap at `server.ts:1422` (otherSessions count stored into a private field; only an e2e exercises the full registerWithDaemon → field-write → cleanup-skip flow). Flagged by SD-32 reviewer 2026-04-25; promoted from inline tally prose to row 2026-05-02. Worth filing as the e2e test for any future concurrent-session breakage report. |
+| **T64** harness JSON parse | `extension/content-isolated.js` test bridge OR `src/tools/extraction.ts:422` `handleEvaluate` JSON.parse path | Surfaced after T60 fix unblocked T55a e2e: `t44-stale-storage-bus-cleanup` and `t55a-url-change-relay-iframe-filter` both fail with `MCP protocol error -32603: Unexpected token ':'`. Tests use the `__SP_TEST_HARNESS__:<json>` script prefix that content-isolated.js intercepts. Likely the harness response shape (`{ok, value}`) collides with `handleEvaluate`'s JSON.parse on `result.value` — needs investigation. Affects DEBUG_HARNESS-prefix scripts only (stripped from release builds), no product-path impact. Discovered 2026-05-02 during T55a e2e verification; previously masked by T60 dormancy. |
 | ~~T63~~ | RESOLVED 2026-04-30 | See "Resolved this sprint" below. |
 
 ---
@@ -144,14 +145,14 @@ Pre-2026-04-25 sprint resolved entries (SD-01..SD-28, T13..T25 originals): see a
 
 *Re-tallied 2026-05-02 after T55a merge + cleanup. Prior "27" figure was stale — it counted resolved entries.*
 
-**Actionable open: 6** (excluding deferred + verifying-only).
+**Actionable open: 6** (T41/T42/T43 features + ROADMAP-flake + SD-32-followup + **T64** harness JSON parse, surfaced 2026-05-02 after T60 fix).
 
 | Category | Count | IDs |
 |---|---|---|
 | P3 missing features / e2e sub-sprints | 3 | **T41** (build `safari_file_upload`), **T42** (recovery/degradation e2e), **T43** (61-untested-tools e2e — multi-week) |
 | ROADMAP backlog | 3 | **T60** (HTTP deadlock — blocks T55a-e2e + T44 reproduces same), **ROADMAP-flake** (NDJSON line-split), **SD-32-followup** (concurrent-MCP-sessions e2e) |
 
-**Verifying-only: 1** — **T55a** (frame-aware storage bus, code shipped + merged + pushed 2026-05-02; 9 e2e tests committed RED, gated on T60 fix). Cross-listed Open + Resolved.
+**Verifying-only: 0** — T55a (frame-aware storage bus) RESOLVED 2026-05-02 after T60 fix unblocked e2e verification (8/9 GREEN; 9th tracked as T64).
 
 **Deferred (not actionable): 1** — **SD-33d** (`forceReloadExtension` doesn't exist; defer until needed).
 
@@ -159,4 +160,4 @@ Pre-2026-04-25 sprint resolved entries (SD-01..SD-28, T13..T25 originals): see a
 
 **P2 quality debt:** empty.
 
-**The dormancy gap in plain English:** T60 is the single open item blocking T55a's e2e verification. Everything else in T55a is shipped + verified by 220 unit tests + 143 daemon Swift tests + parameterized routing test on all 6 frame-aware tools.
+**The dormancy gap (RESOLVED 2026-05-02):** T60's actual root cause was structural in `extension/background.js`, NOT a Hummingbird HTTP server deadlock as previously hypothesized. The architectural fix decouples `pollLoop` from the wake-setup lock + adds AbortController plumbing so a wedged fetch never holds the lock hostage. T55a's 9 e2e tests now run; 8 GREEN, 1 (harness JSON parse) tracked separately as T64.
