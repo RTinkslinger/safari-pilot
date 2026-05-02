@@ -1,10 +1,12 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { readdir, stat } from 'node:fs/promises';
-import { join, basename } from 'node:path';
+import { readdir, stat, copyFile, mkdir } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { join, basename, dirname } from 'node:path';
 import { homedir } from 'node:os';
 import type { ToolResponse, ToolRequirements, ClickContext, Engine } from '../types.js';
 import type { SafariPilotServer } from '../server.js';
+import { DownloadSourceMissingError } from '../errors.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -34,6 +36,21 @@ interface DownloadMetadata {
   size: number;
   mimeType: string | undefined;
   source: 'daemon' | 'plist_poll';
+}
+
+// 5A.2: Playwright-parity saveAs. Copies (does NOT move) the completed
+// download from its detected path to the user-supplied target. Source is
+// preserved because Safari may still reference it in its download list.
+// Parents are created. Existing target is overwritten.
+export async function applySaveAs(
+  metadata: DownloadMetadata,
+  saveAs: string | undefined,
+): Promise<DownloadMetadata> {
+  if (!saveAs) return metadata;
+  if (!existsSync(metadata.path)) throw new DownloadSourceMissingError(metadata.path);
+  await mkdir(dirname(saveAs), { recursive: true });
+  await copyFile(metadata.path, saveAs);
+  return { ...metadata, path: saveAs, filename: basename(saveAs) };
 }
 
 const POLL_INTERVAL_MS = 200;
@@ -161,6 +178,10 @@ export class DownloadTools {
               type: 'string',
               description: 'URL of the tab where the download was initiated (optional — used for inline render detection)',
             },
+            saveAs: {
+              type: 'string',
+              description: 'Absolute target path to copy the completed download to. Parent directories are created if missing. Existing target is overwritten. Source file in ~/Downloads is preserved (Safari may still reference it). Matches Playwright download.saveAs(path) semantics.',
+            },
           },
         },
         requirements: { idempotent: true } as ToolRequirements,
@@ -181,6 +202,7 @@ export class DownloadTools {
     const timeout = typeof params['timeout'] === 'number' ? params['timeout'] : 60_000;
     const filenamePattern = params['filenamePattern'] as string | undefined;
     const paramTabUrl = params['tabUrl'] as string | undefined;
+    const saveAs = params['saveAs'] as string | undefined;
 
     // 1. Consume click context (one-shot — cleared on read)
     const clickCtx = this.server.consumeClickContext(paramTabUrl ?? undefined);
@@ -193,13 +215,13 @@ export class DownloadTools {
       }
 
       // 3. Try daemon path first
-      const daemonResult = await this.tryDaemonPath(clickCtx, timeout, filenamePattern);
+      const daemonResult = await this.tryDaemonPath(clickCtx, timeout, filenamePattern, saveAs);
       if (daemonResult) {
         return daemonResult;
       }
 
       // 4. Fallback: plist + directory polling
-      return this.pollForDownload(clickCtx, timeout, filenamePattern, start);
+      return await this.pollForDownload(clickCtx, timeout, filenamePattern, start, saveAs);
     } catch (err) {
       // Restore context for retry on unexpected errors
       if (clickCtx) this.server.setClickContext(clickCtx);
@@ -253,6 +275,7 @@ export class DownloadTools {
     clickCtx: ClickContext | null,
     timeout: number,
     filenamePattern: string | undefined,
+    saveAs?: string,
   ): Promise<ToolResponse | null> {
     const daemon = this.server.getDaemonEngine();
     if (!daemon) return null;
@@ -287,7 +310,7 @@ export class DownloadTools {
           mimeType: parsed.mimeType ?? parsed.mime_type,
           source: 'daemon',
         };
-        return this.makeSuccessResponse(metadata, 'daemon', Date.now());
+        return this.makeSuccessResponse(await applySaveAs(metadata, saveAs), 'daemon', Date.now());
       } catch (parseErr) {
         return this.makeErrorResponse(
           'DAEMON_PARSE_ERROR',
@@ -303,7 +326,7 @@ export class DownloadTools {
     // appeared during daemon probe/startup overhead.
     if (result.error?.code === 'TIMEOUT' || result.error?.code === 'DOWNLOAD_TIMEOUT') {
       // Quick last-chance check: did the file appear while daemon was starting?
-      const lastChance = await this.quickDirectoryCheck(clickCtx, filenamePattern);
+      const lastChance = await this.quickDirectoryCheck(clickCtx, filenamePattern, saveAs);
       if (lastChance) return lastChance;
 
       // Check if Safari was showing a permission prompt during the timeout
@@ -337,6 +360,7 @@ export class DownloadTools {
     timeout: number,
     filenamePattern: string | undefined,
     startTime: number,
+    saveAs?: string,
   ): Promise<ToolResponse> {
     const downloadDir = await resolveDownloadDir();
     const plistPath = join(
@@ -414,7 +438,7 @@ export class DownloadTools {
           mimeType,
           source: 'plist_poll',
         };
-        return this.makeSuccessResponse(metadata, 'applescript', startTime);
+        return this.makeSuccessResponse(await applySaveAs(metadata, saveAs), 'applescript', startTime);
       }
 
       // mtime-gated plist check: only read plist when it has changed
@@ -451,7 +475,7 @@ export class DownloadTools {
                 mimeType,
                 source: 'plist_poll',
               };
-              return this.makeSuccessResponse(metadata, 'applescript', startTime);
+              return this.makeSuccessResponse(await applySaveAs(metadata, saveAs), 'applescript', startTime);
             } catch (err: unknown) {
               const code = (err as NodeJS.ErrnoException)?.code;
               if (code !== 'ENOENT') {
@@ -467,7 +491,7 @@ export class DownloadTools {
     }
 
     // Last-chance check before declaring timeout
-    const lastChance = await this.quickDirectoryCheck(clickCtx, filenamePattern);
+    const lastChance = await this.quickDirectoryCheck(clickCtx, filenamePattern, saveAs);
     if (lastChance) return lastChance;
 
     // Timeout — restore click context so the agent can retry
@@ -497,6 +521,7 @@ export class DownloadTools {
   private async quickDirectoryCheck(
     clickCtx: ClickContext | null,
     filenamePattern: string | undefined,
+    saveAs?: string,
   ): Promise<ToolResponse | null> {
     try {
       const downloadDir = await resolveDownloadDir();
@@ -531,7 +556,7 @@ export class DownloadTools {
               mimeType,
               source: 'plist_poll',
             };
-            return this.makeSuccessResponse(metadata, 'daemon', Date.now());
+            return this.makeSuccessResponse(await applySaveAs(metadata, saveAs), 'daemon', Date.now());
           } catch {
             // File not accessible
           }

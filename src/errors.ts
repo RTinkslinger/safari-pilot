@@ -30,6 +30,7 @@ export const ERROR_CODES = {
   FRAME_NAVIGATED: 'FRAME_NAVIGATED',
   FRAME_UNREACHABLE: 'FRAME_UNREACHABLE',
   FRAME_NOT_SUPPORTED: 'FRAME_NOT_SUPPORTED',
+  DOWNLOAD_SOURCE_MISSING: 'DOWNLOAD_SOURCE_MISSING',
 } as const;
 // SD-22 (2026-04-25): removed 4 dead codes (ELEMENT_NOT_INTERACTABLE,
 // CROSS_ORIGIN_FRAME, DIALOG_UNEXPECTED, FRAME_NOT_FOUND) — declared but
@@ -466,6 +467,21 @@ export class FrameNotSupportedError extends SafariPilotError {
     this.hints = [
       'Cross-origin frame access requires the Safari Pilot extension to be installed and connected.',
       'AppleScript and Daemon engines cannot inject content scripts into iframes — the extension is the only path.',
+    ];
+  }
+}
+
+export class DownloadSourceMissingError extends SafariPilotError {
+  readonly code = ERROR_CODES.DOWNLOAD_SOURCE_MISSING;
+  readonly retryable = false;
+  readonly hints: string[];
+
+  constructor(sourcePath: string) {
+    super(`Download source file does not exist: ${sourcePath}`);
+    this.hints = [
+      'The download metadata referenced a path that no longer exists.',
+      'Safari may have moved or deleted the file before saveAs ran.',
+      'Verify the source path returned by safari_wait_for_download still exists, or retry the download.',
     ];
   }
 }
