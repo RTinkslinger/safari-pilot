@@ -295,6 +295,60 @@ Dual-key registry: tabs are tracked by both positional `TabId` (windowIndex * 10
   `window.__safariPilotExecutedCommands` Map keyed by `params.commandId`;
   repeat calls for the same id return the cached result instead of re-running.
 
+### Frame-Aware Storage Bus (T55a, 2026-05-02)
+
+Cross-origin iframe access. Manifest sets `all_frames: true` on both content_scripts entries; every frame loads its own content-isolated.js and content-main.js. Storage keys are commandId-suffixed so concurrent commands across frames/tabs cannot race.
+
+**Storage keys:**
+- `sp_cmd_<commandId>` — written by background.js, read+filtered by every frame, removed by background after result.
+- `sp_result_<commandId>` — written by exactly one frame (the one passing the routing filter), read by background's filtered listener.
+- Idle-sweep at `executeCommand`'s outer scope reads `storage.local.get(null)`, prefix-scans `sp_cmd_*`/`sp_result_*`, removes any whose commandId is not in the live `pendingCommandIds` set.
+
+**Routing rule (load-bearing, single source of truth in `extension/lib/route-command.js`, inlined into content-isolated.js):**
+```
+shouldProcess(cmd, myTabId, myFrameId, currentLocationHref):
+  if cmd.tabId !== myTabId → false
+  if myFrameId === null → null  (queue, handshake pending)
+  if (cmd.frameId ?? 0) !== myFrameId → false
+  if cmd.frameUrl != null && cmd.frameUrl !== currentLocationHref → false (emit FRAME_NAVIGATED)
+  → true
+```
+
+**Lazy `sp_getFrameId` handshake (state machine in `extension/lib/handshake-machine.js`, inlined):**
+- `IDLE` → first sp_cmd arrival → `AWAITING_FRAME_ID` (queue cmd, send sp_getFrameId message)
+- `AWAITING_FRAME_ID` → response → `READY` (drain queue) | error → `IDLE` (next cmd retries)
+- `READY` → process cmds immediately, no handshake needed
+- Why lazy: every iframe sees every `sp_cmd_*` storage event. A 50-iframe page with one cross-frame command incurs 50 simultaneous handshakes. Eager registration would amplify on every page load.
+
+**Frame discovery + validation:**
+- `safari_list_frames` extension path uses `webNavigation.getAllFrames(tabId)` directly (via `__SP_LIST_FRAMES__` sentinel intercepted in background.js executeCommand). Returns `{frameId, parentFrameId, url}` per frame. AppleScript path falls back to top-frame DOM enumeration with `frameId: null`.
+- `executeCommand` validates `cmd.frameId` via `webNavigation.getAllFrames` before any storage-bus write. Missing frame → `FRAME_NOT_FOUND` immediately. Successful match → `cmd.frameUrl` is re-resolved to `frame.url` so content-isolated.js's mutation guard has the authoritative value.
+
+**Document-mutation guard:**
+- Frame can navigate between dispatch-time validation (background) and storage-bus arrival (content-isolated.js).
+- background writes `cmd.frameUrl = <validated frame.url>`; content-isolated.js compares to `location.href`.
+- Mismatch → write `sp_result_<commandId>` with `FRAME_NAVIGATED` error.
+- pagehide listener also fires `sp_frame_unloading` to background as a best-effort fast-fail signal (not guaranteed during teardown).
+
+**Timeout discipline:**
+- Top-frame commands: 30s storage-bus timeout (existing).
+- Frame-targeted commands: 10s timeout, emits `FRAME_UNREACHABLE` on expiry as sandbox/CSP/injection-failure heuristic.
+
+**`ENGINE_CAPS.extension.framesCrossOrigin: true`** with precision: covers typical cross-origin iframes via content-script injection. `FRAME_UNREACHABLE` returned for sandbox-without-`allow-scripts`, page CSP that blocks extension scripts, COOP/COEP-isolated frames, silent injection failures. Parity test (`test/unit/engine-selector/cap-manifest-parity.test.ts`) asserts `framesCrossOrigin === every-content_scripts-entry-has-all_frames`.
+
+**Tool surface — 7 tools touched:**
+- `safari_list_frames` — returns `frameId`/`parentFrameId`/`url` (extension) or `frameId: null` (AppleScript).
+- `safari_eval_in_frame`, `safari_get_text`, `safari_get_html`, `safari_get_attribute`, `safari_query_shadow`, `safari_click_shadow` — accept optional `frameId`. Routed via shared `routeFrameAware` helper at `src/tools/_frame-routing-helper.ts`. Adding a new frame-aware tool that bypasses the helper fails the parameterized routing test at `test/unit/tools/frame-aware-tools-routing.test.ts`.
+
+**Litmus tests (delete-a-component → must fail):**
+- Remove `webNavigation` permission → `t55a-list-frames-cross-origin.test.ts` fails (frameId becomes null).
+- Remove `all_frames: true` → `t55a-eval-in-frame-cross-origin.test.ts` fails (no content script in iframe).
+- Remove webNavigation validation → `t55a-frame-not-found.test.ts` fails (10s timeout instead of fast FRAME_NOT_FOUND).
+- Move frame validation before security pipeline → `t55a-frame-targeted-respects-security-pipeline.test.ts` fails.
+- Remove `routeFrameAware` engine guard → `t55a-extension-down-frame-call.test.ts` fails (silent fallback to AppleScript returns DOMException SecurityError).
+- Revert to single-slot sp_cmd/sp_result → `t55a-concurrent-frame-commands.test.ts` fails (frame races clobber).
+- Remove `sender.frameId !== 0` filter at background.js:687 → `t55a-url-change-relay-iframe-filter.test.ts` fails (iframe URL pollutes tabCacheMap).
+
 ### Event-Page Lifecycle (commit 1a, v0.1.5)
 - Manifest: `background = {scripts:['background.js'], persistent:false}`; `alarms` permission required for keepalive.
 - No IIFE, no ES modules: Safari re-evaluates the script on every wake; listeners must be registered at top level.
