@@ -5,7 +5,11 @@ import {
   FileUploadPathNotReadableError,
 } from '../../src/errors.js';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+// Project root, derived from this test file's location — portable across machines/CI.
+const PROJECT_ROOT = resolve(fileURLToPath(import.meta.url), '../../../');
 
 describe('resolveUploadPath', () => {
   it('passes through an absolute path unchanged when realpath matches', () => {
@@ -39,10 +43,10 @@ describe('resolveUploadPath', () => {
   });
 
   it('accepts paths with spaces (macOS paths legitimately contain spaces)', () => {
-    // /Users/Aakash/Claude Projects/... is the actual project path. Rejecting
-    // spaces would break every macOS user. Spec mandates NUL rejection only.
-    const r = resolveUploadPath('/Users/Aakash/Claude Projects/Skills Factory/safari-pilot/package.json');
-    expect(r.absolute).toContain('/Users/Aakash/Claude Projects/Skills Factory/safari-pilot/package.json');
+    // PROJECT_ROOT often contains spaces (e.g., "Claude Projects/Skills Factory").
+    // Rejecting spaces would break every macOS user. Spec mandates NUL rejection only.
+    const r = resolveUploadPath(join(PROJECT_ROOT, 'package.json'));
+    expect(r.absolute).toContain('package.json');
   });
 
   it('rejects ~user form with FileUploadPathNotAbsoluteError', () => {
@@ -52,10 +56,13 @@ describe('resolveUploadPath', () => {
   it('emits a symlink warning when realpath diverges from input', () => {
     // /tmp on macOS is a symlink to /private/tmp — a reliable real case.
     const r = resolveUploadPath('/tmp');
-    // If /tmp is a symlink, there should be a warning; if it's not, no warning.
-    // We assert conditional shape: when realpath diverges, warning mentions 'symlink resolved'.
+    // If /tmp is a symlink, the warning must contain BOTH the original input
+    // and the resolved path — that's the forensic-trail contract per spec.
     if (r.absolute !== '/tmp') {
-      expect(r.warnings.some((w) => w.includes('symlink resolved'))).toBe(true);
+      const w = r.warnings.find((w) => w.includes('symlink resolved'));
+      expect(w).toBeDefined();
+      expect(w).toContain('/tmp');
+      expect(w).toContain(r.absolute);
     }
   });
 
@@ -81,16 +88,14 @@ describe('findClosestSibling', () => {
 
   it('returns closest match when Levenshtein distance is ≤ 3', () => {
     // package.json is in the project root — "pacakge.json" is distance 2 (transposition)
-    const root = '/Users/Aakash/Claude Projects/Skills Factory/safari-pilot';
-    const result = findClosestSibling(`${root}/pacakge.json`);
+    const result = findClosestSibling(join(PROJECT_ROOT, 'pacakge.json'));
     expect(result).toBeDefined();
     expect(result).toContain('package.json');
   });
 
   it('returns undefined when closest match distance > 3', () => {
     // A filename with no close siblings — many edits away from any real file
-    const root = '/Users/Aakash/Claude Projects/Skills Factory/safari-pilot';
-    const result = findClosestSibling(`${root}/zzzzzzzzzzzzzzzzzzzzzzz.xyz`);
+    const result = findClosestSibling(join(PROJECT_ROOT, 'zzzzzzzzzzzzzzzzzzzzzzz.xyz'));
     expect(result).toBeUndefined();
   });
 });
