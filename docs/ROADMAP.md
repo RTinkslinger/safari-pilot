@@ -201,20 +201,28 @@ Strict UPP pipeline per item: brainstorm (where ambiguous) → spec → plan →
 **Sequencing decision update (2026-05-02, after 5A.6 ship):** the original "ascending scope" sequence within Group A would have meant ~5 separate extension rebuild + sign + notarize + Safari install cycles. Re-sorted to batch extension changes: **TS-only items first (in ascending scope), then a single extension batch.** One install cycle for all extension-bound work.
 
 ```
-GROUP A — TS-only items first, extension batch second
+GROUP A — TS-only items first, extension batch second (3+2 cadence)
 
-  TS-only sub-batch (no Safari install required)
+  TS-only sub-batch — COMPLETE
   5A.3   Right-click + middle-click               ✓ shipped  6ae37db
   5A.6   Multi-element extraction native API     ✓ shipped  e918ddf
-  5A.4   XPath as first-class locator            ← NEXT
-  5A.5   Locator chaining (nth · filter)
+  5A.4   XPath as first-class locator            ✓ shipped  5de6d74
+  5A.5   Locator chaining (nth · filter)         ✓ shipped  2824d53
 
-  Extension sub-batch (single rebuild + sign + notarize + Safari install)
-  5A.8   Cookies httpOnly via browser.cookies
+  Extension sub-batch · Chunk 1 (3 items → rebuild + install + e2e)
+  5A.8   Cookies httpOnly via browser.cookies    ← NEXT
   5A.2   Download API parity
   5A.9   HTTP basic / digest auth
+
+  → REBUILD CHECKPOINT 1: build-extension.sh (v0.1.20),
+    sign + notarize + staple, you install + verify, run e2e for 5A.8/2/9
+
+  Extension sub-batch · Chunk 2 (2 items → rebuild + install + e2e)
   5A.7   HAR record & replay
   5A.1   T41 safari_file_upload                  [full UPP brainstorm]
+
+  → REBUILD CHECKPOINT 2: build-extension.sh (v0.1.21),
+    sign + notarize + staple, you install + verify, run e2e for 5A.7/1
 
 GROUP B — after Group A closes
 
