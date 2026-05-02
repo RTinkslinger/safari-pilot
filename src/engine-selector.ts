@@ -15,16 +15,16 @@ export const ENGINE_CAPS: Record<Engine, EngineCapabilities> = {
     dialogIntercept: true,
     networkIntercept: true,
     cookieHttpOnly: true,
-    // T34: false until the extension can correctly route per-frame messages.
-    // T55 (2026-04-29) confirmed that adding `all_frames: true` to the manifest
-    // alone is insufficient — the storage bus (`sp_cmd`/`sp_result`) is keyed
-    // only on `commandId` with no `frameId` discrimination, so every frame
-    // would race to write the single result slot (last-writer-wins). The real
-    // prereq is frame-aware storage-bus routing, tracked as T55a. Once T55a
-    // lands and the manifest gains `all_frames: true`, this flips to true in
-    // the same commit. Invariant guarded by
-    // test/unit/engine-selector/cap-manifest-parity.test.ts.
-    framesCrossOrigin: false,
+    // T55a (2026-05-02): true = the extension can inject content scripts into
+    // typical cross-origin iframes via manifest all_frames:true with frame-aware
+    // storage-bus routing (commandId-keyed sp_cmd_<id>/sp_result_<id> + lazy
+    // sp_getFrameId handshake + frameUrl mutation guard). FRAME_UNREACHABLE is
+    // returned when injection fails for a specific frame (sandbox without
+    // allow-scripts, page CSP blocking extension scripts, COOP/COEP isolation,
+    // or silent injection failure). FRAME_NOT_FOUND for stale frameIds at
+    // dispatch (validated via webNavigation.getAllFrames). Invariant guarded
+    // by test/unit/engine-selector/cap-manifest-parity.test.ts.
+    framesCrossOrigin: true,
     asyncJs: true,
     latencyMs: 10,
   },
