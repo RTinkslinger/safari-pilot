@@ -14,18 +14,27 @@
  * RUN ORDER: this test file MUST run BEFORE any other 5A.1 e2e (5A1-file-upload.test.ts).
  * Vitest's alphabetical default ensures "phase0-spike" sorts before "file-upload".
  */
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { callTool, type McpTestClient } from '../helpers/mcp-client.js';
 import { getSharedClient } from '../helpers/shared-client.js';
+import { startFixtureServer, type FixtureServer } from '../helpers/fixture-server.js';
 
 describe('5A.1 / Phase 0 — architecture spike (GATING)', () => {
   let client: McpTestClient;
   let nextId: () => number;
+  let fixture: FixtureServer;
+  let baseHttpUrl = '';
 
   beforeAll(async () => {
+    fixture = await startFixtureServer();
     const s = await getSharedClient();
     client = s.client;
     nextId = s.nextId;
+    baseHttpUrl = `http://127.0.0.1:${fixture.hostPort}`;
+  }, 30_000);
+
+  afterAll(async () => {
+    if (fixture) await fixture.close();
   }, 30_000);
 
   it('content-isolated.js can fetch http://127.0.0.1:19475/health (Assumption 1)', async () => {
@@ -34,10 +43,10 @@ describe('5A.1 / Phase 0 — architecture spike (GATING)', () => {
     // explicitly lists 127.0.0.1:19475 but governs extension pages —
     // content scripts run under a hybrid CSP. This test is the empirical
     // truth of whether Safari extends connect-src to content scripts.
-    const tab = await callTool(client, 'safari_new_tab', {
-      url: 'about:blank',
-    }, nextId(), 15_000);
+    const target = `${baseHttpUrl}/cookie-fixture?sp_t5A1_a=${Date.now()}`;
+    const tab = await callTool(client, 'safari_new_tab', { url: target }, nextId(), 15_000);
     const tabUrl = tab['tabUrl'] as string;
+    await new Promise((r) => setTimeout(r, 1500));
     try {
       const r = await callTool(client, 'safari_evaluate', {
         tabUrl,
@@ -66,10 +75,10 @@ describe('5A.1 / Phase 0 — architecture spike (GATING)', () => {
     // to MAIN. MAIN reads bytes via arrayBuffer() and verifies the 8-byte
     // signature matches. If MAIN sees a stripped Blob (size=0) or non-File
     // primitive, this fails.
-    const tab = await callTool(client, 'safari_new_tab', {
-      url: 'about:blank',
-    }, nextId(), 15_000);
+    const target = `${baseHttpUrl}/cookie-fixture?sp_t5A1_b=${Date.now()}`;
+    const tab = await callTool(client, 'safari_new_tab', { url: target }, nextId(), 15_000);
     const tabUrl = tab['tabUrl'] as string;
+    await new Promise((r) => setTimeout(r, 1500));
     try {
       const r = await callTool(client, 'safari_evaluate', {
         tabUrl,
