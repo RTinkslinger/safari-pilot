@@ -42,6 +42,10 @@ export class ExtensionEngine extends BaseEngine {
    * queued to its bridge will never be picked up.
    */
   async isAvailable(): Promise<boolean> {
+    // T55a Task 24: dev/test override — forces the extension to report
+    // unavailable so e2e can verify FRAME_NOT_SUPPORTED gating without
+    // actually unloading the extension in Safari.
+    if (process.env['SAFARI_PILOT_FORCE_NO_EXTENSION'] === '1') return false;
     try {
       const result = await this.daemon.execute(
         `${INTERNAL_PREFIX} extension_health`,
