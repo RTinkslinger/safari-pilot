@@ -230,4 +230,113 @@ describe('5A.1 — safari_file_upload e2e (core)', () => {
     expect(v.submitDisabled).toBe(false);
     expect(v.stateText).toContain('doc.pdf');
   }, 60_000);
+
+  it('detached-element race: input replaced post-probe → FILE_UPLOAD_ELEMENT_DETACHED', async () => {
+    await callTool(client, 'safari_navigate', {
+      tabUrl: tabUrl!, url: `http://127.0.0.1:${fixture.hostPort}/upload-form?sp_t5A1=${Date.now()}`,
+    }, nextId(), 15_000);
+    await new Promise((r) => setTimeout(r, 1500));
+
+    // Monkey-patch addEventListener so the message-handler installation captures
+    // file_upload_inject and races to replace #file-input with a clone before the
+    // MAIN-world handler (Task 13) runs. The clone is a fresh element — the original
+    // is detached, and Task 13's `document.contains(input)` check should fire.
+    await callTool(client, 'safari_evaluate', {
+      tabUrl: tabUrl!,
+      script: `
+        const orig = window.addEventListener;
+        window.addEventListener = function(type, handler, opts) {
+          if (type === 'message') {
+            const wrapped = function(ev) {
+              if (ev.data && ev.data.op === 'file_upload_inject') {
+                const old = document.getElementById('file-input');
+                if (old) {
+                  const clone = old.cloneNode(true);
+                  old.parentNode.replaceChild(clone, old);
+                }
+              }
+              return handler(ev);
+            };
+            return orig.call(this, type, wrapped, opts);
+          }
+          return orig.call(this, type, handler, opts);
+        };
+        return true;
+      `,
+      timeout: 5000,
+    }, nextId(), 15_000);
+
+    let caught: { message?: string } | null = null;
+    try {
+      await callTool(client, 'safari_file_upload', {
+        tabUrl: tabUrl!, selector: '#file-input', paths: [pngFile],
+      }, nextId(), 30_000);
+    } catch (e) { caught = e as { message?: string }; }
+    expect(caught!.message || JSON.stringify(caught)).toContain('FILE_UPLOAD_ELEMENT_DETACHED');
+  }, 90_000);
+
+  it('shadow-host failure mode: locator on shadow host → FILE_UPLOAD_INVALID_ELEMENT', async () => {
+    await callTool(client, 'safari_navigate', {
+      tabUrl: tabUrl!, url: `http://127.0.0.1:${fixture.hostPort}/upload-form?sp_t5A1=${Date.now()}`,
+    }, nextId(), 15_000);
+    await new Promise((r) => setTimeout(r, 1500));
+    // Custom element with a closed-by-default shadow input — selector resolves to the
+    // host (a <shadow-file>), NOT to <input type=file>. Task 13's tagName check fires.
+    await callTool(client, 'safari_evaluate', {
+      tabUrl: tabUrl!,
+      script: `
+        class ShadowFile extends HTMLElement {
+          constructor() {
+            super();
+            this.attachShadow({ mode: 'open' }).innerHTML = '<input id="inner" type="file" />';
+          }
+        }
+        if (!customElements.get('shadow-file')) customElements.define('shadow-file', ShadowFile);
+        const host = document.createElement('shadow-file');
+        host.id = 'shadow-host';
+        document.body.appendChild(host);
+        return true;
+      `,
+      timeout: 5000,
+    }, nextId(), 15_000);
+
+    let caught: { message?: string } | null = null;
+    try {
+      await callTool(client, 'safari_file_upload', {
+        tabUrl: tabUrl!, selector: '#shadow-host', paths: [pngFile],
+      }, nextId(), 30_000);
+    } catch (e) { caught = e as { message?: string }; }
+    expect(caught!.message || JSON.stringify(caught)).toContain('FILE_UPLOAD_INVALID_ELEMENT');
+  }, 60_000);
+
+  it('validation surface: site rejects via aria-invalid → response.validation populated', async () => {
+    // Real-world pattern: site listens to change event on the file input, runs custom
+    // validity, sets a [role=alert] sibling. Task 13's collectFileUploadValidation
+    // should pick up both the validationMessage and the alert text within probeMs.
+    await callTool(client, 'safari_navigate', {
+      tabUrl: tabUrl!, url: `http://127.0.0.1:${fixture.hostPort}/upload-form?sp_t5A1=${Date.now()}`,
+    }, nextId(), 15_000);
+    await new Promise((r) => setTimeout(r, 1500));
+    await callTool(client, 'safari_evaluate', {
+      tabUrl: tabUrl!,
+      script: `
+        const wrap = document.createElement('div');
+        wrap.innerHTML = '<input id="validating-input" type="file" /><div role="alert">File rejected by site rules: too large.</div>';
+        document.body.appendChild(wrap);
+        document.getElementById('validating-input').addEventListener('change', function() {
+          this.setCustomValidity('Site says: file too large');
+        });
+        return true;
+      `,
+      timeout: 5000,
+    }, nextId(), 15_000);
+    const r = await callTool(client, 'safari_file_upload', {
+      tabUrl: tabUrl!, selector: '#validating-input', paths: [pngFile], validationProbeMs: 300,
+    }, nextId(), 30_000);
+    const payload = r as { validation?: { message?: string; alerts?: string[] } };
+    expect(payload.validation).toBeDefined();
+    expect(
+      payload.validation!.message || (payload.validation!.alerts && payload.validation!.alerts.join(' ')),
+    ).toMatch(/site|rejected|too large/i);
+  }, 60_000);
 });
