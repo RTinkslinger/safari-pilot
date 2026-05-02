@@ -107,6 +107,7 @@ export class ExtractionTools {
             placeholder: { type: 'string', description: 'placeholder attribute value' },
             exact: { type: 'boolean', description: 'Use exact matching instead of substring', default: false },
             maxLength: { type: 'number', description: 'Maximum characters to return', default: 50000 },
+            multi: { type: 'boolean', description: 'When true, returns {matches: string[], count} for ALL matching elements via querySelectorAll. Default false returns first match only.', default: false },
             frameId: { type: 'number', description: 'Optional: target a specific iframe by frameId from safari_list_frames (cross-origin requires extension engine)' },
           },
           required: ['tabUrl'],
@@ -134,6 +135,7 @@ export class ExtractionTools {
               description: 'true = outerHTML (includes the element itself), false = innerHTML (just contents)',
               default: true,
             },
+            multi: { type: 'boolean', description: 'When true, returns {matches: string[], count} for ALL matching elements via querySelectorAll. Default false returns first match only.', default: false },
             frameId: { type: 'number', description: 'Optional: target a specific iframe by frameId from safari_list_frames (cross-origin requires extension engine)' },
           },
           required: ['tabUrl'],
@@ -157,6 +159,7 @@ export class ExtractionTools {
             placeholder: { type: 'string', description: 'placeholder attribute value' },
             exact: { type: 'boolean', description: 'Use exact matching instead of substring', default: false },
             attribute: { type: 'string', description: 'Attribute name: href, src, data-id, aria-label, etc.' },
+            multi: { type: 'boolean', description: 'When true, returns {matches: (string|null)[], count} for ALL matching elements via querySelectorAll. null entries indicate the attribute is missing on that element. Default false returns first match only.', default: false },
             frameId: { type: 'number', description: 'Optional: target a specific iframe by frameId from safari_list_frames (cross-origin requires extension engine)' },
           },
           required: ['tabUrl', 'attribute'],
@@ -285,7 +288,22 @@ export class ExtractionTools {
     }
 
     const escapedSelector = selector ? escapeForJsSingleQuote(selector) : '';
-    const js = `
+    const multi = params['multi'] === true;
+    // 5A.6: multi:true returns {matches: string[], count} via querySelectorAll;
+    // multi:false (default) preserves the original {text, length, truncated}.
+    const js = multi
+      ? `
+      if (!${selector ? 'true' : 'false'}) throw Object.assign(new Error('multi:true requires a selector'), { name: 'INVALID_PARAMS' });
+      var els = document.querySelectorAll('${escapedSelector}');
+      var max = ${maxLength};
+      var matches = [];
+      for (var i = 0; i < els.length; i++) {
+        var t = els[i].innerText || els[i].textContent || '';
+        matches.push(t.slice(0, max));
+      }
+      return { matches: matches, count: els.length };
+    `
+      : `
       var el = ${selector ? `document.querySelector('${escapedSelector}')` : 'document.body'};
       if (!el) throw Object.assign(new Error('Element not found'), { name: 'ELEMENT_NOT_FOUND' });
       var max = ${maxLength};
@@ -326,7 +344,20 @@ export class ExtractionTools {
     }
 
     const escapedSelector = selector ? escapeForJsSingleQuote(selector) : '';
-    const js = `
+    const multi = params['multi'] === true;
+    // 5A.6: multi:true returns {matches: string[], count} via querySelectorAll;
+    // multi:false (default) preserves the original {html, length}.
+    const js = multi
+      ? `
+      if (!${selector ? 'true' : 'false'}) throw Object.assign(new Error('multi:true requires a selector'), { name: 'INVALID_PARAMS' });
+      var els = document.querySelectorAll('${escapedSelector}');
+      var matches = [];
+      for (var i = 0; i < els.length; i++) {
+        matches.push(${outer ? 'els[i].outerHTML' : 'els[i].innerHTML'});
+      }
+      return { matches: matches, count: els.length };
+    `
+      : `
       var el = ${selector ? `document.querySelector('${escapedSelector}')` : 'document.documentElement'};
       if (!el) throw Object.assign(new Error('Element not found'), { name: 'ELEMENT_NOT_FOUND' });
       var html = ${outer ? 'el.outerHTML' : 'el.innerHTML'};
@@ -370,7 +401,20 @@ export class ExtractionTools {
 
     const escapedSelector = escapeForJsSingleQuote(selector);
     const escapedAttribute = escapeForJsSingleQuote(attribute);
-    const js = `
+    const multi = params['multi'] === true;
+    // 5A.6: multi:true returns {matches: (string|null)[], count} via querySelectorAll;
+    // null entries indicate the attribute is missing on that element. multi:false
+    // (default) preserves the original {value, element}.
+    const js = multi
+      ? `
+      var els = document.querySelectorAll('${escapedSelector}');
+      var matches = [];
+      for (var i = 0; i < els.length; i++) {
+        matches.push(els[i].getAttribute('${escapedAttribute}'));
+      }
+      return { matches: matches, count: els.length };
+    `
+      : `
       var el = document.querySelector('${escapedSelector}');
       if (!el) throw Object.assign(new Error('Element not found'), { name: 'ELEMENT_NOT_FOUND' });
       return {
