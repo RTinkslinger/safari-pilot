@@ -190,7 +190,35 @@ These cannot close without an architectural mode shift (WebDriver-BiDi, multi-mo
 
 ### Approach
 
-Strict UPP pipeline per item: brainstorm → spec → plan → TDD → verify, per `~/.claude/CLAUDE.md` UPP rules. No batching across items — each Group A item gets its own cycle. Parallelism allowed across Group A and Group B (different surfaces) but not across two Group A items (avoids cross-cutting refactor risk in the locator system).
+Strict UPP pipeline per item: brainstorm (where ambiguous) → spec → plan → TDD → verify, per `~/.claude/CLAUDE.md` UPP rules. Each Group A item gets its own cycle.
+
+**Sequencing decision (2026-05-02): strict serial Group A → Group B; lightest scope first, ascending.** No parallelism within Group A. Group B begins only after Group A closes.
+
+**E2E strategy: per-item AND final sweep.** Each Group A item lands with its own e2e on release-mode build; 5A.13 at the end is a comprehensive sweep across every Cluster 1–7 tool to catch interaction effects.
+
+### Locked sequence
+
+```
+GROUP A — ascending scope
+
+  5A.3   Right-click + middle-click               [½ day]   ← FIRST
+  5A.6   Multi-element extraction native API     [1–2 days]
+  5A.8   Cookies httpOnly via browser.cookies    [1–2 days]
+  5A.4   XPath as first-class locator            [1–2 days]
+  5A.2   Download API parity                     [1–2 days]
+  5A.5   Locator chaining (nth · filter)         [2–3 days]
+  5A.9   HTTP basic / digest auth                [2–3 days]
+  5A.7   HAR record & replay                     [3–4 days]
+  5A.1   T41 safari_file_upload                  [multi-day, full UPP brainstorm]
+
+GROUP B — after Group A closes
+
+  5A.14  npm run test:e2e:harness automation     [infra]
+  5A.12  NDJSON line-split fix (ROADMAP-flake)   [infra]
+  5A.11  SD-32-followup concurrent MCP e2e       [Phase 4.4 closure]
+  5A.10  T42 recovery / degradation e2e          [Phase 5 hardening]
+  5A.13  Cluster 1–7 e2e sweep (final)           [closure verification]
+```
 
 **Decisions confirmed (2026-05-02):** Accept the three structural ceilings and document them. Defer the two agent-irrelevant items. Pragmatic strictness — exit criteria above are the bar, not "every row green."
 
