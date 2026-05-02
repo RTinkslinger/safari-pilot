@@ -1,97 +1,111 @@
 # Checkpoint
-*Written: 2026-05-02 23:05*
+*Written: 2026-05-03 02:35*
 
 ## Current Task
-Phase 5A · Group A · **Chunk 2 item 1 (5A.7 HAR record & replay) SHIPPED + verified GREEN against existing v0.1.21 install.** Next up: chunk 2 item 2 = 5A.1 T41 safari_file_upload (multi-day, full UPP brainstorm pipeline). Then REBUILD CHECKPOINT 2 → v0.1.22.
+Phase 5A · Group A · Chunk 2 item 2 = **5A.1 T41 `safari_file_upload`** — brainstorm + spec + plan COMPLETE; awaiting `upp:executing-plans` handoff. Multi-day work targeting v0.1.22 rebuild.
 
 ## Progress
-- [x] **5A.3** right-click + middle-click + modifiers — `6ae37db`
-- [x] **5A.6** multi-element extraction — `e918ddf`
-- [x] **5A.4** xpath as first-class locator — `5de6d74`
-- [x] **5A.5** locator chaining (nth · filter) — `2824d53`
+
+### Phase 5A · Group A — chunk-by-chunk
+- [x] **5A.3** right-click + middle-click + modifiers — `6ae37db` (TS-only sub-batch)
+- [x] **5A.6** multi-element extraction — `e918ddf` (TS-only sub-batch)
+- [x] **5A.4** xpath as first-class locator — `5de6d74` (TS-only sub-batch)
+- [x] **5A.5** locator chaining (nth · filter) — `2824d53` (TS-only sub-batch)
 - [x] **5A.8** cookies httpOnly via browser.cookies — `979be01` (chunk 1)
-- [x] **5A.2** download saveAs post-process — `bb7f4d4`
+- [x] **5A.2** download saveAs post-process — `bb7f4d4` (TS-only standalone)
 - [x] **5A.9** HTTP basic auth via DNR — `5104487` (chunk 1)
 - [x] **REBUILD CHECKPOINT 1 v0.1.20 + v0.1.21 fix bundle** — `b0b5977`
-- [x] **5A.7** HAR record & replay (path B) — `ef1ab4f` `43b61e3` `39528f9` `545929b` `597b1b4` ← **chunk 2 item 1 SHIPPED**
-- [ ] **5A.1** T41 safari_file_upload (multi-day, full UPP brainstorm) ← **NEXT (chunk 2 item 2)**
-- [ ] → REBUILD CHECKPOINT 2 (v0.1.22) — only needed if 5A.1 requires extension/daemon code (likely yes)
+- [x] **5A.7** HAR record & replay (chunk 2 item 1) — 5 commits ending `597b1b4` + checkpoint `5d1844d`
+- [x] **5A.1 brainstorm pipeline** — spec `fd9041c`/`9ebafbc`/`8a670e7` + plan `6a974bf`
+- [ ] **5A.1 EXECUTE plan** ← **NEXT** (21 tasks across 9 phases; Phase 0 GATING)
+- [ ] → REBUILD CHECKPOINT 2 (v0.1.22) ships at end of Phase 7
 - [ ] Phase 5A · Group B (5A.10–5A.14)
 
 ## Key Decisions (not yet persisted)
-All decisions persisted — see commits, ROADMAP.md § Phase 5A, this CHECKPOINT, and TRACES.md iteration 49.
+
+All decisions for the 5A.1 brainstorm pipeline are captured in the committed spec + plan + their commit messages. Specifically:
+
+- **Architecture**: Approach 3 (out-of-band HTTP byte fetch) chosen over Approach 1 (storage bus base64) per engineering CRITICAL — no empirical evidence storage.local handles multi-MB writes in Safari Web Extensions.
+- **Phase 0 spike** is a GATING test in v0.1.22 — verifies content-script `fetch('http://127.0.0.1:19475/...')` works AND `File` objects survive ISOLATED→MAIN structured-clone via `window.postMessage`. If either fails, ABORT 5A.1 and re-open design (no v0.1.22 ships).
+- **API divergence from Playwright**: empty `paths: []` is rejected (FILE_UPLOAD_EMPTY_PATHS) instead of clearing the input — explicit `clear: true` required. Removes silent-destruction foot-gun for agent-constructed arrays.
+- **No path allowlist** (Playwright/Selenium parity). Symlink resolution logged to `server-trace.ndjson` but not blocked.
+- **Cap**: 25 MB / file × 4 / call.
+- **10 new error codes**, 9-phase plan with 21 tasks total.
+
+TRACES.md NOT updated this session — only documentation artifacts (spec + plan) were committed; no source code changed yet. First source-code iteration starts at executing-plans Phase 1, which is when iteration 50 will be opened.
 
 ## Next Steps
 
-### Chunk 2 item 2 — 5A.1 T41 safari_file_upload
+### Resume executing-plans (chunk 2 item 2 = 5A.1)
 
-Tracker entry: T41 safari_file_upload. Multi-day work warranting full UPP pipeline (brainstorming → writing-plans → executing-plans). Per the original tracker entry, the architecture decision is open:
+```
+Skill tool → upp:executing-plans
+args: docs/upp/plans/2026-05-03-safari-file-upload-plan.md
+mode: subagent (recommended) | inline
+```
 
-1. **Native macOS file picker via AppleScript / AXUIElement**: Safari's `<input type=file>` triggers a native NSOpenPanel; programmatic dismissal + path injection requires AX scripting from the daemon. Most realistic for true compat with all upload sites, but requires daemon/Swift work.
-2. **HTML File API injection from extension**: bypass the picker entirely by setting `input.files` from a Web Extension API, using a host-permission'd file:// read. Simpler but coverage is partial — sites that intercept `<input type=file>` click programmatically may still trigger the picker.
-3. **Hybrid**: extension-side injection as the default (handles 90% of cases); fall back to AX-driven picker for sites where the input element isn't directly reachable.
+The plan is structured for either mode. Subagent mode is the spec's recommendation; the controller dispatches a fresh subagent per task with the three-stage review pipeline (spec compliance, code quality, design — though design gate is N/A here, no DESIGN.md).
 
-Decision belongs in the brainstorm. The brainstorm should also cover:
-- File path validation (security: don't allow uploading from arbitrary paths an agent passes; constrain to a sandbox dir or require explicit user-allowed roots)
-- Multi-file uploads (single input vs multiple-attribute)
-- Drag-drop uploads (separate code path; many sites use drag-drop instead of file picker)
-- Test fixture: a multipart-receiving endpoint on fixture-server.ts that echoes uploaded content for assertion
+### Hard gates encoded in the plan
 
-Recommended sequence:
-1. Invoke `upp:brainstorming` to nail the architecture, security model, and scope
-2. `upp:writing-plans` for the implementation plan
-3. `upp:executing-plans` to execute (likely a multi-task plan with daemon Swift + TS handler + extension code)
+1. **Phase 0 e2e tests run FIRST in Phase 7 step 7** — architectural gate. Both must pass (content-script fetch + File structured-clone) or 5A.1 ABORTS.
+2. **Version bump before rebuild** — `package.json` + `extension/manifest.json` both at 0.1.22 BEFORE `update-daemon.sh` or `build-extension.sh`.
+3. **User installs `.app` manually** — agent never invokes system tools (per `feedback-no-system-manipulation`). Tell the user to `open "bin/Safari Pilot.app"`, wait for confirmation.
+4. **TDD reviewer gate per task** — `upp:test-reviewer-fast` for ≤3 tests, `upp:test-reviewer` for >3.
 
-### Then REBUILD CHECKPOINT 2 (v0.1.22)
-Only if 5A.1 ends up requiring extension or daemon code (very likely):
-- Bump package.json 0.1.21 → 0.1.22
-- `bash scripts/build-extension.sh`
-- User installs (`open "bin/Safari Pilot.app"`)
-- Verify in Safari > Settings > Extensions
-- Run e2e for 5A.1
+### Phase 0 spike must run BEFORE 5A.1 e2e
 
-### Then Group B (no rebuild needed)
-5A.10 T42, 5A.11 SD-32-followup, 5A.12 ROADMAP-flake, 5A.13 final Cluster 1-7 sweep, 5A.14 npm test:e2e:harness automation.
+Vitest's alphabetical default already orders `test/e2e/5A1-phase0-spike.test.ts` before `test/e2e/5A1-file-upload.test.ts` — no special wiring needed. But the runner in Phase 7 step 7 must be invoked separately to assert the gate before continuing to step 8.
 
 ## Context
 
 ### Branch state
-- on `main`, all commits pushed up to `597b1b4`
-- Pre-existing untracked: `daemon/CLAUDE.md`, `daemon/TRACES.md`, `handoffs/`, `.claude/scheduled_tasks.lock` — leave them alone
-- Stash list: TWO stale stashes from 2026-04-16 `feat/file-download-handling` branch — irrelevant to current work, preserved for salvage. Do NOT `git stash pop` these in any composed `&&` command (one was accidentally popped this session, recovered cleanly).
+- on `main`, all commits pushed up to `6a974bf`
+- 14 unpushed commits ahead of origin/main since last push
+- Pre-existing untracked files (leave alone): `daemon/CLAUDE.md`, `daemon/TRACES.md`, `handoffs/`, `.claude/scheduled_tasks.lock`
+- Stale stashes from 2026-04-16 `feat/file-download-handling` branch — DO NOT `git stash pop` in any composed `&&` command
 
-### Test state
-- **402 unit tests** (was 305 at start of chunk 2, +52 from 5A.7: 15 har-serialize + 21 har-route + 3 interceptor-smoke + 13 dispatch + others incidental)
-- **27 new e2e tests** total in this Phase 5A · Group A:
-  - 4 right-click (5A.3) ✓
-  - 4 multi-extract (5A.6) ✓
-  - 4 xpath (5A.4) ✓
-  - 5 locator-chaining (5A.5) ✓
-  - 4 cookies httpOnly (5A.8) ✓ verified v0.1.21
-  - 3 HTTP basic auth (5A.9) ✓ verified v0.1.21
-  - 3 HAR record/replay (5A.7) ✓ verified v0.1.21
-- T65 (phase3-3.1 form-submission flake) still open — confirmed pre-existing
+### Test state (going into Phase 0 implementation)
+- **402 unit tests passing** (after 5A.7 add of +52)
+- **27 e2e tests passing** (4 right-click + 4 multi-extract + 4 xpath + 5 locator-chaining + 4 cookies + 3 auth + 3 HAR record/replay)
+- Phase 0 implementation will add: 2 new e2e tests (RED until v0.1.22 install)
+- Full implementation will add: ~42 unit tests + 13 e2e tests
 
 ### Active extension version
-- **v0.1.21** installed and verified. Will bump to v0.1.22 at chunk-2 rebuild ONLY if 5A.1 requires it.
+- **v0.1.21** installed and verified
+- Will bump to **v0.1.22** at Phase 7 of the plan
+- v0.1.22 ships ALL of Phase 0 + Phase 1–6 + Phase 8 work in one rebuild
 
-### Memory rules to remember (load-bearing for next session)
-- `feedback-debugging-discipline`: Use upp:systematic-debugging for any bug, never ad-hoc.
-- `feedback-no-system-manipulation`: NEVER pluginkit/lsregister/pkill if Safari acts up.
-- `reference-extension-enablement-workaround`: Develop > Allow Unsigned Extensions toggle for first-install enable.
-- `feedback-extension-version-both-fields`: Bump package.json version BEFORE any extension rebuild.
+### 5A.1 spec + plan locations
+- Spec: `docs/upp/specs/2026-05-03-safari-file-upload-design.md` (final commit `8a670e7`)
+- Plan: `docs/upp/plans/2026-05-03-safari-file-upload-plan.md` (commit `6a974bf`, 21 tasks, 3273 lines)
+
+### Memory rules to remember (load-bearing for execution)
+- `feedback-debugging-discipline`: Use `upp:systematic-debugging` for any bug, never ad-hoc.
+- `feedback-no-system-manipulation`: NEVER invoke system tools to manipulate extension state — only the user's manual `open "bin/Safari Pilot.app"` flow.
+- `reference-extension-enablement-workaround`: Develop > Allow Unsigned Extensions toggle for first-install enable if Safari blocks with click-interference error.
+- `feedback-extension-version-both-fields`: Bump package.json AND extension/manifest.json BEFORE any extension rebuild.
 - `feedback-never-open-app-without-version-bump`: Never `open bin/Safari Pilot.app` after rebuild without bumping first.
-- `feedback-distribution-builds`: Source changes to `extension/*.js` must be followed by rebuild + sign + notarize.
+- `feedback-distribution-builds`: Source changes to `extension/*.js` or `daemon/Sources/**/*.swift` must be followed by rebuild + sign + notarize.
 - `feedback-e2e-means-e2e`: e2e tests use real processes/protocols/Safari; zero mocks.
 - `feedback-e2e-tests-must-close-tabs`: Every test that opens a tab MUST close it in afterAll. URL markers `?sp_t<N>=`.
 - `feedback-never-switch-user-tabs`: Never activate Safari, switch, or navigate user tabs.
-- `reference-pdf-generation-sop`: PDF generation SOP at `~/.claude/rules/pdf-generation.md`.
 
-### 5A.7 discovery (worth promoting if it recurs)
-**The existing safari_intercept_requests + safari_mock_request infrastructure is engine-agnostic page-side TS, not extension routing.** CHECKPOINT predicted HAR would need extension changes; reading network.ts revealed the foundation was already complete. Saved a rebuild cycle. Lesson: read the source before classifying scope — checkpoint hand-offs can over-estimate dependency chains.
+### Architectural risk to track during execution
+The Phase 0 spike is genuinely uncertain. Best estimate: 70% chance both assumptions pass (Safari WebExtensions follow Chromium-like CSP behavior on content scripts; structured clone of File is universal across browsers). Worst case is Approach 3 dies and we either:
 
-### Sentinel pattern reference
-HAR did NOT need new sentinels because `__safariPilotNetwork` and `__safariPilotMocks` are page-side state, accessed by tag-team TS handlers. For 5A.1 file upload, the architecture decision will determine sentinel needs — extension-injection-based path would add `__SP_FILE_UPLOAD__` sentinel; daemon-AX-based path would need new daemon-side commands.
+1. Move File construction to MAIN world with bytes shipped via fragmented postMessage (workable but adds complexity)
+2. Abandon Approach 3 and accept a smaller cap with Approach 1 storage bus (~5 MB single-file)
+3. Abandon page-side injection entirely and pursue AX-driven NSOpenPanel automation in the daemon (multi-week scope)
 
-### Locked sequence reference
-ROADMAP.md `Phase 5A` section has the full sequence with 3+2 cadence. Chunk 1 closed; chunk 2 item 1 (5A.7) closed; chunk 2 item 2 (5A.1) is next.
+If Phase 0 fails, stop the plan; do not attempt a workaround inline. Open a follow-up design pass.
+
+### Brainstorm pipeline summary (for narrative continuity)
+- Discovery: 6 AskUserQuestion rounds across 5 lenses
+- 3 architecture approaches presented; user picked Approach 3 after engineering review forced switch from Approach 1
+- 2 design-pass reviews (eng + product) → spec v1
+- 2 spec-pass reviews on v1 → spec v2 (architecture switch + 13 fixes)
+- 2 spec-pass reviews on v2 → spec v3 (5 small clarifications)
+- 2 spec-pass reviews on v3 → spec v4 final (10 small clarifications)
+- All review verdicts: PASS / SHIP after final round
+- Plan derived from final spec; self-review pass; 21 tasks committed

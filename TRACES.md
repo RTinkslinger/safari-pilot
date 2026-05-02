@@ -68,6 +68,30 @@ Chunk-1 e2e verification debug used systematic-debugging skill (5A.8 srv_visible
 
 ---
 
+### Iteration 50 - 2026-05-03
+**What:** Phase 5A · Group A · Chunk 2 item 2 = 5A.1 T41 safari_file_upload — full UPP brainstorm + spec + plan pipeline. NO source code changed; output is design artifacts ready for upp:executing-plans handoff. Plan targets v0.1.22 rebuild at Phase 7.
+
+**Changes:**
+- `docs/upp/specs/2026-05-03-safari-file-upload-design.md` (NEW; 4 commits across the brainstorm/review cycle: `fd9041c` initial → `9ebafbc` architecture switch + 13 fixes → `8a670e7` final after 2nd-pass spec reviews) — full design spec covering Approach 3 architecture (out-of-band HTTP byte fetch via daemon `stage_file` NDJSON + `GET /file-bytes/<token>` route), 10 error codes, validation field contract, 9 implementation phases, 14 e2e tests, ~42 unit tests.
+- `docs/upp/plans/2026-05-03-safari-file-upload-plan.md` (NEW; commit `6a974bf`) — 21-task implementation plan derived from final spec. Phase 0 is GATING (architectural spike for content-script fetch + cross-world File structured-clone). TDD discipline per task with reviewer gates.
+
+**Context:**
+
+Brainstorm pipeline depth: 6 discovery rounds (5 lenses + adaptive checkpoint) → 3 approaches presented → user chose Approach 1 originally → engineering CRITICAL forced switch to Approach 3 (storage.local quota in Safari Web Extensions documented ~5MB without unlimitedStorage perm; existing 5A.* sentinels never traversed multi-MB through storage bus, so Approach 1 was empirically unverified at scale). Path B = full HAR fidelity for the upload bytes via dedicated daemon HTTP route + content-isolated.js fetch + cross-world File postMessage to content-main.js + Object.defineProperty(input, 'files', {...}) + DataTransfer + input + change events + 200ms validation probe.
+
+Key API divergence from Playwright: `paths: []` is REJECTED with FILE_UPLOAD_EMPTY_PATHS (use `clear: true` for explicit clearing). Removes silent-destruction foot-gun for agent-constructed `.filter()` arrays. Both reviewers agreed.
+
+Cap: 25 MB / file × 4 / call (raised from 10 MB after Approach 3 lifted the storage bus quota concern).
+
+Phase 0 GATING test verifies two unverified-in-codebase assumptions: (1) content-script `fetch('http://127.0.0.1:19475/...')` works under Safari Web Extension CSP (manifest's connect-src governs extension pages, not content scripts; Safari's CSP enforcement on content scripts has historically diverged from Chrome); (2) `File` objects survive ISOLATED→MAIN structured-clone via `window.postMessage` with bytes intact. If either fails, ABORT 5A.1 — design re-opens, no v0.1.22 rebuild ships. Spike scaffolding stays in codebase as permanent diagnostic.
+
+Review rounds (all dispatched as parallel subagents): design-pass × 2 (eng + prod, both REVISE) → spec-pass × 2 on v1 (both REVISE; eng CRITICAL forced architecture switch to Approach 3 + Phase 0 spike) → spec-pass × 2 on v2 (both REVISE × 5–6 small) → spec-pass × 2 on v3 (both PASS / SHIP with 10 small clarifications folded). Final spec v4 ready for plan derivation. Plan written, self-reviewed, committed.
+
+No source code changed this iteration — pure design artifact. First source-code iteration begins at executing-plans Phase 1 (Task 3 errors-file work + Task 4 mime.ts + Task 5 path-resolve.ts).
+
+**Commits:** `fd9041c` (spec v1) `9ebafbc` (spec v2 — architecture switch) `8a670e7` (spec v4 final) `6a974bf` (plan).
+
+---
 ### Iteration 49 - 2026-05-02
 **What:** Phase 5A · Group A · Chunk 2 item 1 = 5A.7 HAR record & replay shipped + verified GREEN against existing v0.1.21 install. Path B chosen (interceptor enhancement to capture headers + new HAR tools) over path A (TS-only with empty headers). All page-side TS — NO extension rebuild needed. 5 commits, 55 new tests (52 unit + 3 e2e) all green.
 
