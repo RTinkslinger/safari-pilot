@@ -153,6 +153,21 @@ function makeHandler() {
       return;
     }
 
+    // 5A.1 — React Hook Form fixture page (Task 16).
+    // Renders a controlled <input type=file> registered via RHF useForm().
+    // Hidden behind a <label>, so the label locator must unwrap to the inner input.
+    if (url === '/rhf-upload-form') {
+      try {
+        const body = readFileSync(resolve(FIXTURE_DIR, 'rhf-upload-form.html'));
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        res.end(body);
+      } catch {
+        res.writeHead(404, { 'Content-Type': 'text/plain' });
+        res.end('rhf fixture not found');
+      }
+      return;
+    }
+
     const file = url === '/' ? 'host.html' : url.replace(/^\/+/, '');
     try {
       const body = readFileSync(resolve(FIXTURE_DIR, file));

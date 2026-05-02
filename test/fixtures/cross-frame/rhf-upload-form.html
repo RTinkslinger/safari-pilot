@@ -1,0 +1,29 @@
+<!DOCTYPE html><html><head>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/react-hook-form@7/dist/index.umd.min.js"></script>
+</head><body>
+<div id="root"></div>
+<script>
+  const { useForm } = ReactHookForm;
+  const e = React.createElement;
+  function App() {
+    const { register, handleSubmit, watch } = useForm();
+    const file = watch('upload');
+    const hasFile = file && file.length > 0;
+    return e('div', null,
+      e('label', { id: 'rhf-label', htmlFor: 'rhf-input' }, 'Pick file: ',
+        e('input', {
+          id: 'rhf-input',
+          type: 'file',
+          style: { display: 'none' },
+          ...register('upload', { required: true }),
+        }),
+      ),
+      e('button', { id: 'rhf-submit', type: 'submit', disabled: !hasFile }, 'Submit'),
+      hasFile ? e('div', { id: 'rhf-state' }, 'File ready: ' + file[0].name) : null,
+    );
+  }
+  ReactDOM.createRoot(document.getElementById('root')).render(e(App));
+</script>
+</body></html>

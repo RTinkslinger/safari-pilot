@@ -203,4 +203,31 @@ describe('5A.1 — safari_file_upload e2e (core)', () => {
     expect(payload.uploaded).toBe(1);
     expect(payload.validation).toBeUndefined();
   }, 60_000);
+
+  it('React Hook Form: locator finds inner hidden input; change registers in RHF state', async () => {
+    await callTool(client, 'safari_navigate', {
+      tabUrl: tabUrl!, url: `http://127.0.0.1:${fixture.hostPort}/rhf-upload-form?sp_t5A1=${Date.now()}`,
+    }, nextId(), 15_000);
+    await new Promise((r) => setTimeout(r, 2500)); // RHF init
+
+    // Locate via the LABEL text — verifies locator finds the inner <input>, not the wrapper.
+    // NOTE: v1 minimal locator (selector/xpath/ref) does NOT yet implement `label` —
+    // this test will fail even after v0.1.22 ships, flagging the locator-coverage gap.
+    await callTool(client, 'safari_file_upload', {
+      tabUrl: tabUrl!, label: 'Pick file:', paths: [pdfFile], force: true,
+    }, nextId(), 30_000);
+
+    // Verify RHF saw the change: submit button should be enabled and rhf-state visible
+    const verify = await callTool(client, 'safari_evaluate', {
+      tabUrl: tabUrl!,
+      script: `return {
+        submitDisabled: document.getElementById('rhf-submit').disabled,
+        stateText: (document.getElementById('rhf-state') || {}).textContent || null,
+      };`,
+      timeout: 5000,
+    }, nextId(), 15_000);
+    const v = verify['value'] as { submitDisabled: boolean; stateText: string | null };
+    expect(v.submitDisabled).toBe(false);
+    expect(v.stateText).toContain('doc.pdf');
+  }, 60_000);
 });
