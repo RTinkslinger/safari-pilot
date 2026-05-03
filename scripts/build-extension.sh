@@ -288,7 +288,7 @@ codesign -d --entitlements - "$APP_PATH/Contents/PlugIns/Safari Pilot Extension.
 
 echo "=== Notarizing ==="
 
-ditto -c -k --keepParent "$APP_PATH" "$ROOT/bin/Safari Pilot.zip"
+ditto -c -k --keepParent --norsrc --noextattr --noqtn --noacl "$APP_PATH" "$ROOT/bin/Safari Pilot.zip"
 
 xcrun notarytool submit "$ROOT/bin/Safari Pilot.zip" \
   --keychain-profile "apple-notarytool" --wait
@@ -297,7 +297,7 @@ xcrun stapler staple "$APP_PATH"
 
 # Re-zip with stapled ticket
 rm "$ROOT/bin/Safari Pilot.zip"
-ditto -c -k --keepParent "$APP_PATH" "$ROOT/bin/Safari Pilot.zip"
+ditto -c -k --keepParent --norsrc --noextattr --noqtn --noacl "$APP_PATH" "$ROOT/bin/Safari Pilot.zip"
 
 # ── Step 10: Final Gatekeeper check ─────────────────────────────────────────
 
