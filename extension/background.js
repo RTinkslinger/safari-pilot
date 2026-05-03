@@ -141,7 +141,25 @@ async function readPending() {
 }
 
 async function writePending(pending) {
-  await browser.storage.local.set({ [STORAGE_KEY_PENDING]: pending });
+  // T67: quota recovery mirrors saveTabCache (line 43-58). Pre-T67 a quota
+  // throw escaped to every caller (gcPendingStorage, removePendingEntry,
+  // updatePendingEntry) and aborted their flows, leaving the extension
+  // wedged with isConnected=false until storage was manually cleared.
+  try {
+    await browser.storage.local.set({ [STORAGE_KEY_PENDING]: pending });
+  } catch (e) {
+    if (e?.message?.includes?.('quota')) {
+      await browser.storage.local.remove([STORAGE_KEY_PENDING]).catch(() => {});
+      try {
+        await browser.storage.local.set({ [STORAGE_KEY_PENDING]: pending });
+      } catch {
+        // Second failure: storage is in a worse state than quota alone.
+        // Swallow so callers stay alive; in-memory state is unaffected.
+      }
+    } else {
+      throw e;
+    }
+  }
 }
 
 async function updatePendingEntry(commandId, partial) {
@@ -855,15 +873,32 @@ function supersedePollLoop(reason) {
 // wrapped pollLoop, so any forever-pending fetch inside pollLoop kept
 // isWakeRunning=true permanently and made all subsequent alarm wakes no-ops.
 async function wakeSequence(reason) {
-  try {
-    await loadTabCache();
-    await gcPendingStorage();
-    await cleanupStaleStorageBus();
-    await connectAndReconcile();
-  } catch (e) {
-    emitTrace('__wake__', 'wake_setup_error', { errName: e?.name, errMessage: e?.message });
-    console.warn('[safari-pilot] wakeSequence error:', e.message);
-  }
+  // T67: per-step isolation + step-tagged trace events.
+  //
+  // Pre-T67 ordering was loadTabCache → gc → cleanup → connectAndReconcile,
+  // wrapped in a single outer try/catch. When gcPendingStorage's writePending
+  // threw on Safari's storage-quota cap (~5 MB), the throw aborted the chain
+  // and connectAndReconcile never ran. The extension stayed isConnected=false
+  // for 32+ hours despite alarms firing every minute. Trace evidence at
+  // ~/.safari-pilot/daemon-trace.ndjson around 2026-05-02T02:54:52.
+  //
+  // Post-T67: connectAndReconcile is the critical path and runs second
+  // (after read-only loadTabCache). Housekeeping (gc, cleanup) is best-effort
+  // and runs after, with each step in its own try/catch so a throw in one
+  // step doesn't skip the others. Each catch emits a step-tagged trace
+  // event so future operators can identify which step failed without
+  // re-reading source.
+  try { await loadTabCache(); }
+  catch (e) { emitTrace('__wake__', 'wake_load_error', { errName: e?.name, errMessage: e?.message }); }
+
+  try { await connectAndReconcile(); }
+  catch (e) { emitTrace('__wake__', 'wake_reconcile_error', { errName: e?.name, errMessage: e?.message }); }
+
+  try { await gcPendingStorage(); }
+  catch (e) { emitTrace('__wake__', 'wake_gc_error', { errName: e?.name, errMessage: e?.message }); }
+
+  try { await cleanupStaleStorageBus(); }
+  catch (e) { emitTrace('__wake__', 'wake_cleanup_error', { errName: e?.name, errMessage: e?.message }); }
 }
 
 async function initialize(reason) {
