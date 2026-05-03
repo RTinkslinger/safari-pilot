@@ -24,3 +24,15 @@ echo "  2. Wait for you to install bin/Safari Pilot.app in Safari"
 echo "  3. Run the 5 harness-dependent e2e tests"
 echo "  4. ALWAYS rebuild the release extension (SAFARI_PILOT_TEST_MODE=0)"
 echo "  5. Wait for you to install the release bin/Safari Pilot.app"
+
+echo
+echo "[1/5] Building extension with SAFARI_PILOT_TEST_MODE=1..."
+SAFARI_PILOT_TEST_MODE=1 bash scripts/build-extension.sh
+
+echo
+echo "[2/5] Install the test build:"
+echo "  1. Open Finder and double-click bin/Safari Pilot.app"
+echo "  2. In Safari → Settings → Extensions, confirm Safari Pilot is enabled"
+echo "  3. If Safari shows version mismatch, restart Safari and re-enable"
+echo
+read -rp "Press Enter once the test extension is installed and enabled..."
