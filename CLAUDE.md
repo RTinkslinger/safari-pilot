@@ -264,6 +264,52 @@ These are non-negotiable. Every one of these was learned through a catastrophic 
    codesign -d --entitlements - "bin/Safari Pilot.app/Contents/PlugIns/Safari Pilot Extension.appex"
    ```
 
+8. **NEVER use plain `ditto -c -k --keepParent`** to package the extension. Without metadata-stripping flags, it embeds AppleDouble (`._*`) resource-fork files in the zip. On extraction in CI, `codesign --verify --deep --strict` rejects the bundle as "a sealed resource is missing or invalid" (45 of 91 entries were AppleDouble in the v0.1.24 first-attempt failure). The build script must always invoke ditto with the full strip set:
+   ```bash
+   ditto -c -k --keepParent --norsrc --noextattr --noqtn --noacl SRC.app DST.zip
+   ```
+
+9. **NEVER push a release tag without running `bash scripts/pre-tag-check.sh` first**. The script mirrors every CI verify step (entitlements, AppleDouble-free zip, extracted-bundle codesign, daemon binary, prepublish hook short-circuit, version lockstep, unit tests, tag uniqueness). It runs locally in seconds. The cost of catching a bad zip locally is one minute; the cost of catching it in CI is a 5+ min round-trip plus a wasted notarization. v0.1.24's first attempt died at the CI extension-verify step; the script now exists specifically to catch that class.
+
+10. **CI release workflow must skip the local-only prepublish hook**. `hooks/pre-publish-verify.sh` enforces a `.verified-this-session` marker that's only created by `npm run verify:extension:smoke` on the developer's machine. CI has its own equivalent gate (the T47 verify steps in `release.yml`). The hook short-circuits when `CI=true` or `GITHUB_ACTIONS=true`. Don't remove that short-circuit; don't add new local-only enforcement that runs in `prepublishOnly` without the same CI guard.
+
+## Release SOP (codified after the v0.1.24 publish disaster)
+
+Two failures wasted CI cycles on the v0.1.24 first attempt: (a) `bin/Safari Pilot.zip` contained AppleDouble metadata that broke CI's verify step, (b) `prepublishOnly` hook blocked CI's `npm publish` because it required a local-only marker. Both were caught only because they finally ran in real CI — local rehearsals had bypassed both gates. Both are now codified.
+
+**Before any release tag push, the canonical SOP is:**
+
+```bash
+# 1. Bump versions in lockstep (per feedback-extension-version-both-fields)
+#    Edit package.json + extension/manifest.json — both to vX.Y.Z
+
+# 2. Rebuild the extension (mandatory if extension/* OR manifest.json changed)
+bash scripts/build-extension.sh
+# Watches: ditto flags, version bump propagation, entitlements, notarization, stapler
+
+# 3. Rebuild the daemon (only if daemon/Sources/* changed)
+bash scripts/update-daemon.sh
+
+# 4. Local user-install rehearsal (per hard rule #5)
+open "bin/Safari Pilot.app"
+# Verify in Safari > Settings > Extensions: vX.Y.Z appears, enabled, works
+
+# 5. Run the canonical pre-tag check
+bash scripts/pre-tag-check.sh
+# Must print "ALL CHECKS PASSED — safe to tag" before proceeding
+
+# 6. Commit + tag + push
+git add -A && git commit -m "chore(release): vX.Y.Z"
+git push origin main
+git tag -a vX.Y.Z -m "release notes"
+git push origin vX.Y.Z
+
+# 7. Watch CI
+gh run watch "$(gh run list --workflow=release.yml --limit 1 --json databaseId --jq '.[0].databaseId')"
+```
+
+Never skip step 5. The pre-tag check is what would have caught both v0.1.24 first-attempt failures.
+
 ## End-to-End Testing (HARD RULES)
 
 E2E tests verify the **shipped artifact works as an end user would experience it**. Not the internal API. Not mocked components. The actual product, through the actual interfaces, producing actual results.
