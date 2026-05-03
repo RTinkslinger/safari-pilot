@@ -332,8 +332,18 @@ export class DaemonEngine extends BaseEngine {
         try {
           const msg = JSON.parse(line) as DaemonResponse;
           this._dispatchResponse(msg);
-        } catch {
-          // Malformed JSON line — ignore
+        } catch (e) {
+          // T69b — pre-fix this catch was silent ({}). Any malformed line
+          // (process noise, stderr→stdout leak, partial chunk on the rare
+          // edge case) was dropped without trace, leaving the matching
+          // pending request to time out with no diagnostic. Now we log so
+          // the failure mode is visible. Length + truncated content lets
+          // operators spot truncation patterns without flooding logs.
+          const reason = e instanceof Error ? e.message : String(e);
+          const truncated = line.length > 200 ? line.slice(0, 200) + '…[truncated]' : line;
+          console.warn(
+            `[safari-pilot] daemon stdout: malformed JSON line dropped (${line.length} bytes). reason="${reason}" line="${truncated}"`
+          );
         }
       }
     });
@@ -458,9 +468,28 @@ export class DaemonEngine extends BaseEngine {
   }
 
   private _dispatchResponse(msg: DaemonResponse): void {
-    if (!msg.id) return;
+    if (!msg.id) {
+      // T69b — daemon emitted a response with no id. This shouldn't
+      // happen in normal operation; logging surfaces protocol drift.
+      console.warn(
+        `[safari-pilot] daemon response has no id; cannot route. ok=${msg.ok} error=${JSON.stringify(msg.error ?? null)}`
+      );
+      return;
+    }
     const pending = this.pending.get(msg.id);
-    if (!pending) return;
+    if (!pending) {
+      // T69b — daemon emitted a response whose id doesn't match any
+      // pending request. This is the daemon's "id: unknown" parse-error
+      // signal (CommandDispatcher.swift uses "unknown" when the line
+      // can't be parsed enough to recover the original id). Logging
+      // here lets operators correlate daemon parse failures with
+      // hanging pending requests. T69a fixes the underlying TCP-side
+      // truncation that triggers this.
+      console.warn(
+        `[safari-pilot] daemon response id="${msg.id}" matches no pending request. ok=${msg.ok} error=${JSON.stringify(msg.error ?? null)}`
+      );
+      return;
+    }
     clearTimeout(pending.timer);
     this.pending.delete(msg.id);
     pending.resolve(msg);
