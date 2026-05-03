@@ -233,7 +233,12 @@ GROUP B — after Group A closes
   5A.12  NDJSON line-split fix                    ⊘ subsumed by T69 (diagnosis was wrong)
   5A.11  concurrent MCP sessions e2e              ✓ shipped  (3/3 PASS, closes SD-32-followup)
   5A.10  recovery / degradation e2e (T42)         ✓ shipped  (3/3 PASS, closes T42)
-  5A.13  Cluster 1–7 e2e sweep (final)            ← NEXT
+  5A.13  Cluster 1–7 e2e sweep (final)            ✓ shipped  (25/31 files PASS, 96/106 tests PASS;
+                                                              4 pre-existing flakes filed as T70,
+                                                              2 known limitations: T65/T59)
+                                                              GROUP B COMPLETE
+                                                              GROUP A COMPLETE
+                                                              PHASE 5A COMPLETE
   5A.12  NDJSON line-split fix (ROADMAP-flake)   [infra]
   5A.11  SD-32-followup concurrent MCP e2e       [Phase 4.4 closure]
   5A.10  T42 recovery / degradation e2e          [Phase 5 hardening]
