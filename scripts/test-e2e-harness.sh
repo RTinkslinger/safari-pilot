@@ -60,3 +60,12 @@ echo "  2. In Safari → Settings → Extensions, confirm Safari Pilot is enable
 echo "  3. If Safari shows version mismatch, restart Safari and re-enable"
 echo
 read -rp "Press Enter once the test extension is installed and enabled..."
+
+echo
+echo "[3/5] Running 5 harness-dependent e2e tests..."
+npx vitest run \
+  test/e2e/t21-spa-history-cache-refresh.test.ts \
+  test/e2e/t22-poll-loop-transient-retry.test.ts \
+  test/e2e/t27-find-target-tab-fail-closed.test.ts \
+  test/e2e/t44-stale-storage-bus-cleanup.test.ts \
+  test/e2e/t55a-url-change-relay-iframe-filter.test.ts
