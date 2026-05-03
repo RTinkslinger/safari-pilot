@@ -160,7 +160,7 @@ After Phase 5 ships extension engine end-to-end (T55a frame-aware storage bus + 
 | 5A.11 | Concurrent MCP sessions e2e | SD-32-followup | Assert Session A's keepalive survives Session B's startup. Closes Phase 4.4. |
 | 5A.12 | NDJSON line-split fix | ROADMAP-flake | Long click JS payloads with embedded newlines break the daemon's line-based JSON parser under parallel test load. Frame-based or length-prefixed protocol. |
 | 5A.13 | Cluster 1–7 e2e coverage | T43 (subset) | Every tool referenced in Group A + every Cluster-1–7 tool in the current registry gets one real e2e on a release-mode build. Full T43 (61 tools) stays Phase 6. |
-| 5A.14 | `npm run test:e2e:harness` | T64 followup | Auto-build with `SAFARI_PILOT_TEST_MODE=1` before running harness-dependent tests; restore release build after. |
+| 5A.14 ✓ | `npm run test:e2e:harness` | T64 followup | **SHIPPED** 2026-05-04 (commit 4a8be90, branch feat/5A.14-test-e2e-harness). `scripts/test-e2e-harness.sh` wraps build-extension.sh: builds TEST_MODE=1, auto-opens .app, sleeps 15s, runs 5 tests (t21/t22/t27/t44/t55a), trap rebuilds release on any exit. CI guard exits 2. Verified end-to-end: 4/5 pass, t44 surfaces a real cleanup-event commandId regression (filed separately). |
 
 ### Group C — Documented structural ceilings (no work, doc only)
 
@@ -226,7 +226,7 @@ GROUP A — TS-only items first, extension batch second (3+2 cadence)
 
 GROUP B — after Group A closes
 
-  5A.14  npm run test:e2e:harness automation     [infra]
+  5A.14  npm run test:e2e:harness automation     ✓ shipped  4a8be90
   5A.12  NDJSON line-split fix (ROADMAP-flake)   [infra]
   5A.11  SD-32-followup concurrent MCP e2e       [Phase 4.4 closure]
   5A.10  T42 recovery / degradation e2e          [Phase 5 hardening]

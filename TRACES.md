@@ -14,6 +14,34 @@
 
 ## Current Work
 
+### Iteration 54 - 2026-05-04
+**What:** Phase 5A · 5A.14 SHIPPED — `npm run test:e2e:harness` infra automation. Wraps `scripts/build-extension.sh` with `SAFARI_PILOT_TEST_MODE=1`, runs the 5 harness-dependent e2e tests, trap-restores release build on any exit (success, failure, signal). Fully non-interactive — works via `! npm run test:e2e:harness` from chat or terminal. Closes T64 followup. Group B Phase 5A item 1/5 complete.
+
+**Changes:**
+- `scripts/test-e2e-harness.sh` (NEW, 64 lines) — bash wrapper. Strict-mode + CI guard (exit 2 on `CI=true`/`GITHUB_ACTIONS=true`). `RELEASE_REBUILT` flag + `trap cleanup EXIT` guarantees `SAFARI_PILOT_TEST_MODE=0 bash scripts/build-extension.sh` runs even on test failure or signal. Auto-`open bin/Safari Pilot.app` + `sleep 15` for Safari registration (no `read -rp` — Safari extension caching by CFBundleShortVersionString documented in header as known limitation).
+- `package.json` — new script entry `"test:e2e:harness": "bash scripts/test-e2e-harness.sh"` between `verify:extension:full` and `prepublishOnly`.
+- `AGENTS.md` Repository-Specific Commands — added one line: "E2E harness suite (TEST_MODE build, local-only): `npm run test:e2e:harness`".
+- `README.md` Testing section — added the script alongside `npm run test:e2e` + new policy bullet explaining harness-test prerequisite (the 5 files: t21/t22/t27/t44/t55a).
+- `docs/upp/plans/2026-05-03-5A14-test-e2e-harness.md` (NEW, 480 lines) — full UPP plan, 7 tasks.
+- `docs/ROADMAP.md` — 5A.14 row marked SHIPPED with commit SHA + verification result.
+
+**Context:**
+
+First end-to-end run (commit 0fe298c) failed at exit code 1: `read -rp` returns non-zero with no TTY (the `! <cmd>` prefix runs in background mode, no stdin). `set -e` triggered the trap correctly — release rebuild ran, `bin/Safari Pilot.app` ended in clean release state, no corruption. But the diagnostic taught: any `read -rp` in a script intended for chat-driven `!` invocation is a hard fail. Rewrote (commit 466a1a7) to drop both prompts in favor of `open` + `sleep 15`. Trade-off: marketing version stays at 0.1.24 across both builds, so Safari MIGHT cache release code instead of TEST_MODE=1 build. Documented as a known fallback (toggle off/on in Safari Settings) in script header.
+
+Second end-to-end run (commit 466a1a7): full automation succeeded. TEST_MODE=1 build → `open` + 15s → vitest ran 5 files → trap fired on test failure → TEST_MODE=0 release build → `open` → exit 1. **Result: 4/5 pass, 1 failure on t44-stale-storage-bus-cleanup.** The failure is a real cleanup-event regression (commandIds report `"unknown"` instead of the expected `T44_STALE_NEVER_PENDING_RESULT_*` token) — tracked separately as next-iteration systematic-debug investigation. Empirically proves: (a) Safari DID load the new TEST_MODE=1 build despite same marketing version (4 tests using harness markers passed → DEBUG_HARNESS code is executing), (b) trap mechanism is bulletproof (release rebuild always runs).
+
+Trap mechanics verified earlier (commit fa1a529) by stubbing `scripts/build-extension.sh` with a fast echo-only stub, inserting temporary `exit 7` before the prompt, confirming both build phases ran and exit code preserved. Restored real `build-extension.sh` byte-identical (sha256 f1c72c46).
+
+**Group B status:** 1/5 complete. Next: 5A.12 (NDJSON line-split fix), then 5A.11/5A.10/5A.13.
+
+**Open follow-ups from this iteration:**
+- t44 cleanup-event regression — needs `upp:systematic-debugging` cycle next, NOT bundled into 5A.14.
+
+**Commits:** `327e8ad` (Task 1 skeleton + CI guard), `066f67a` (Task 2 build phase + read prompt), `fa1a529` (Task 3 trap), `63c0eda` (Task 4 vitest), `0fe298c` (Task 5 npm wiring v1 with read -rp), `466a1a7` (rewrite — non-interactive), `4a8be90` (Task 6 docs), `5ca3e68` (plan).
+
+---
+
 ### Iteration 47 - 2026-05-02
 **What:** T60 dormancy resolved + T55a verified GREEN + Phase 5A drafted/locked + 4 Group A TS-only items shipped (5A.3 right-click, 5A.6 multi-extract, 5A.4 xpath, 5A.5 locator chaining). 220 → 268 unit tests; +17 e2e all green on release-mode build.
 
