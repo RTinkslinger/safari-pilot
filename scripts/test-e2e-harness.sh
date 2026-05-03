@@ -17,6 +17,30 @@ if [[ "${CI:-}" == "true" || "${GITHUB_ACTIONS:-}" == "true" ]]; then
   exit 2
 fi
 
+RELEASE_REBUILT=0
+cleanup() {
+  local rc=$?
+  if [[ "$RELEASE_REBUILT" -eq 0 ]]; then
+    echo
+    echo "[4/5] Rebuilding release extension (SAFARI_PILOT_TEST_MODE=0)..."
+    if SAFARI_PILOT_TEST_MODE=0 bash scripts/build-extension.sh; then
+      RELEASE_REBUILT=1
+      echo
+      echo "[5/5] Install the RELEASE build:"
+      echo "  1. Open Finder and double-click bin/Safari Pilot.app"
+      echo "  2. Confirm Safari Pilot is enabled in Safari → Settings → Extensions"
+      echo
+      echo "Test exit code: $rc"
+    else
+      echo "WARNING: release rebuild FAILED. bin/Safari Pilot.app is still TEST_MODE=1." >&2
+      echo "Run: SAFARI_PILOT_TEST_MODE=0 bash scripts/build-extension.sh" >&2
+      if [[ $rc -eq 0 ]]; then rc=3; fi
+    fi
+  fi
+  exit "$rc"
+}
+trap cleanup EXIT
+
 echo "test:e2e:harness — Phase 5A · 5A.14"
 echo "This script will:"
 echo "  1. Build the extension with SAFARI_PILOT_TEST_MODE=1 (DEBUG_HARNESS retained)"
