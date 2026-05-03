@@ -1108,15 +1108,19 @@ browser.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         sendResponse({ ok: true, value: { scheduled: true, action: 'poison_and_unload' } });
         setTimeout(async () => {
           try {
-            // T55a: storage bus migrated to commandId-keyed slots. Caller's poison op
-            // must include `op.poison.commandId` so writes land in the correct slot.
-            // Pre-T55a callers that omit commandId fall back to a literal 'unknown'
-            // suffix — preserves test compatibility for tests that don't care about
+            // T55a: storage bus uses commandId-keyed slots (sp_cmd_<id>/sp_result_<id>).
+            // T68 fix: each slot's value already carries its own .commandId (real
+            // storage entries do — this mirrors that). Read per-slot first so a test
+            // can plant TWO poisons with DIFFERENT ids in one call. Fall back to a
+            // shared top-level `op.poison.commandId` for callers that need both slots
+            // to share an id, then to 'unknown' for callers that don't care about
             // exact key match (poison detection itself is the assertion).
-            const poisonCommandId = op.poison?.commandId ?? 'unknown';
+            const sharedId = op.poison?.commandId ?? 'unknown';
+            const resultId = op.poison?.sp_result?.commandId ?? sharedId;
+            const cmdId = op.poison?.sp_cmd?.commandId ?? sharedId;
             const writes = {};
-            if (op.poison?.sp_result) writes['sp_result_' + poisonCommandId] = op.poison.sp_result;
-            if (op.poison?.sp_cmd) writes['sp_cmd_' + poisonCommandId] = op.poison.sp_cmd;
+            if (op.poison?.sp_result) writes['sp_result_' + resultId] = op.poison.sp_result;
+            if (op.poison?.sp_cmd) writes['sp_cmd_' + cmdId] = op.poison.sp_cmd;
             if (Object.keys(writes).length > 0) {
               await browser.storage.local.set(writes);
             }

@@ -176,26 +176,32 @@ describe('T44 — wakeSequence cleans stale sp_result / sp_cmd', () => {
       `live pending set.`,
     ).toBeGreaterThan(0);
 
-    // The cleanup event must reference BOTH our planted poison commandIds
-    // (sp_result with staleResultId, sp_cmd with staleCmdId). A trace
-    // event that removed neither would not satisfy this — the test would
-    // be silently passing on incidental cleanups of other orphans.
+    // The cleanup event must reference BOTH our planted poison commandIds.
+    // T55a refactored storage bus to commandId-keyed slots — orphan cleanup's
+    // `removed` array contains the FULL storage keys (`sp_result_<id>` /
+    // `sp_cmd_<id>`). Scanning that array is the authoritative check; the
+    // `commandIds` map is supplementary diagnostic.
+    // A trace event that removed neither planted key would not satisfy
+    // this — the test would be silently passing on incidental cleanups
+    // of other orphans (T68 caught exactly this drift).
+    const expectedResultKey = `sp_result_${staleResultId}`;
+    const expectedCmdKey = `sp_cmd_${staleCmdId}`;
     const hasResultCleanup = cleanupEvents.some((e) => {
-      const ids = e.data?.['commandIds'] as Record<string, string> | undefined;
-      return ids?.sp_result === staleResultId;
+      const removed = e.data?.['removed'] as string[] | undefined;
+      return removed?.includes(expectedResultKey);
     });
     const hasCmdCleanup = cleanupEvents.some((e) => {
-      const ids = e.data?.['commandIds'] as Record<string, string> | undefined;
-      return ids?.sp_cmd === staleCmdId;
+      const removed = e.data?.['removed'] as string[] | undefined;
+      return removed?.includes(expectedCmdKey);
     });
     expect(
       hasResultCleanup,
-      `Cleanup event must report sp_result removal with commandId=${staleResultId}. ` +
+      `Cleanup event must report removal of "${expectedResultKey}". ` +
       `Captured events: ${JSON.stringify(cleanupEvents)}`,
     ).toBe(true);
     expect(
       hasCmdCleanup,
-      `Cleanup event must report sp_cmd removal with commandId=${staleCmdId}. ` +
+      `Cleanup event must report removal of "${expectedCmdKey}". ` +
       `Captured events: ${JSON.stringify(cleanupEvents)}`,
     ).toBe(true);
   }, 45000);
