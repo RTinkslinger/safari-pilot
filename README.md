@@ -4,7 +4,7 @@
 
 Safari Pilot gives Claude Code direct control of Safari through AppleScript and a persistent Swift daemon — no Chrome, no Playwright, no third-party code touching your browser. Your real Safari, with all your logins, automated natively.
 
-> **74 tools** | **3 engine tiers** | **92x faster than raw AppleScript** | **9 security layers** | **macOS 12+**
+> **82 tools** | **3 engine tiers** | **92x faster than raw AppleScript** | **9 security layers** | **macOS 14+ recommended** (12+ minimum)
 
 ---
 
@@ -91,7 +91,8 @@ Without the extension, Safari Pilot still works for ~80% of use cases (navigatio
 
 ### System Requirements
 
-- **macOS 12.0 (Monterey)** or later
+- **macOS 14.0 (Sonoma)** or later — recommended; required for the extension engine (the daemon's HTTP poll server uses Hummingbird, which requires macOS 14+)
+- **macOS 12.0 (Monterey)** — minimum; daemon + AppleScript engines work, extension features are unavailable
 - **Safari** (pre-installed on every Mac)
 - **Node.js 20+**
 
@@ -119,7 +120,7 @@ Monitor news.ycombinator.com for any post about our company
 Open my X.com bookmarks and extract the top 5 posts with author profiles
 ```
 
-## Tool Catalog (74 Tools)
+## Tool Catalog (82 Tools)
 
 ### Navigation (7)
 `safari_navigate` | `safari_navigate_back` | `safari_navigate_forward` | `safari_reload` | `safari_new_tab` | `safari_close_tab` | `safari_list_tabs`
@@ -127,14 +128,20 @@ Open my X.com bookmarks and extract the top 5 posts with author profiles
 ### Interaction (11)
 `safari_click` | `safari_double_click` | `safari_fill` | `safari_select_option` | `safari_check` | `safari_hover` | `safari_type` | `safari_press_key` | `safari_scroll` | `safari_drag` | `safari_handle_dialog`
 
+### File Upload (1)
+`safari_file_upload` — programmatic upload to standard `<input type=file>` elements, including hidden inputs behind `<label>` (use `force: true`). 25 MiB / file × 4 / call. Path B architecture: out-of-band byte transport via daemon staging → extension fetch. Does NOT support drag-and-drop dropzones, custom pickers, or native OS dialogs.
+
 ### Extraction (7)
 `safari_snapshot` | `safari_get_text` | `safari_get_html` | `safari_get_attribute` | `safari_evaluate` | `safari_take_screenshot` | `safari_get_console_messages`
 
-### Network (8)
-`safari_list_network_requests` | `safari_get_network_request` | `safari_intercept_requests` | `safari_network_throttle` | `safari_network_offline` | `safari_mock_request` | `safari_websocket_listen` | `safari_websocket_filter`
+### Network (10)
+`safari_list_network_requests` | `safari_get_network_request` | `safari_intercept_requests` | `safari_network_throttle` | `safari_network_offline` | `safari_mock_request` | `safari_websocket_listen` | `safari_websocket_filter` | `safari_dump_har` | `safari_route_from_har`
 
 ### Storage (11)
 `safari_get_cookies` | `safari_set_cookie` | `safari_delete_cookie` | `safari_storage_state_export` | `safari_storage_state_import` | `safari_local_storage_get` | `safari_local_storage_set` | `safari_session_storage_get` | `safari_session_storage_set` | `safari_idb_list` | `safari_idb_get`
+
+### Authentication (2)
+`safari_authenticate` | `safari_clear_authentication` — HTTP Basic auth via DNR header injection (extension required).
 
 ### Shadow DOM (2)
 `safari_query_shadow` | `safari_click_shadow`
@@ -160,8 +167,17 @@ Open my X.com bookmarks and extract the top 5 posts with author profiles
 ### Compound Workflows (4)
 `safari_test_flow` | `safari_monitor_page` | `safari_paginate_scrape` | `safari_media_control`
 
+### Downloads (1)
+`safari_wait_for_download` — wait for download triggered by a click, capture metadata + optional `saveAs`.
+
+### PDF (1)
+`safari_export_pdf` — export the frontmost Safari tab as a PDF via WKWebView.
+
 ### Wait (1)
 `safari_wait_for` — 7 condition types: selector, selectorHidden, text, textGone, urlMatch, networkidle, function
+
+### Diagnostics (2)
+`safari_extension_health` | `safari_extension_debug_dump` — observability for the extension engine. Read-only; safe to call any time.
 
 ### System (2)
 `safari_health_check` | `safari_emergency_stop`
@@ -290,18 +306,24 @@ bash scripts/build-extension.sh
 ### Testing
 
 ```bash
-# All tests
-npm test
+# Default — unit tests, no Safari required
+npm test                    # 398 unit tests
+npm run test:unit           # alias for above
 
-# By category
-npm run test:unit          # 777 tests, no Safari needed
-npm run test:integration   # Multi-component workflows
-npm run test:security      # 27 security-focused tests
-npm run test:e2e           # Against real Safari (optional)
+# Real Safari required (production stack must be running)
+npm run test:e2e            # ~30 e2e tests across 12+ files
 
-# Swift daemon tests
-cd daemon && swift run SafariPilotdTests
+# Both
+npm run test:all            # unit + e2e
+
+# Swift daemon (real Swift types, mocked at NSAppleScript boundary only)
+cd daemon && swift test     # 153 tests
 ```
+
+**Test policy:**
+- Unit tests (`test/unit/`) cover pure logic; can mock Node boundaries (`fs`, `net`, `child_process`) but never internal modules.
+- E2E tests (`test/e2e/`) spawn a real MCP server, drive Safari through the real stack, and use ZERO mocks (enforced by pre-commit hook). They fail closed on any `vi.mock` or direct `import from '../../src/'`.
+- See `CLAUDE.md` "End-to-End Testing (HARD RULES)" for the full contract.
 
 ### Adding a New Tool
 
@@ -310,6 +332,31 @@ cd daemon && swift run SafariPilotdTests
 3. Write tests in `test/unit/tools/`
 4. The server auto-registers tools from all modules in `initialize()`
 5. Add the tool name to `skills/safari-pilot/SKILL.md` allowed-tools
+6. If touching `extension/*` or `daemon/Sources/*`, follow `CLAUDE.md` "Extension Build: Hard Rules" — version bump in lockstep, ditto with metadata-stripping flags, run `bash scripts/pre-tag-check.sh` before any tag push.
+
+### Releasing a new version
+
+The release pipeline is automated via `.github/workflows/release.yml` on tag push. Before tagging, run the local SOP gate:
+
+```bash
+# 1. Bump versions in lockstep
+#    Edit package.json + extension/manifest.json (must match)
+
+# 2. Rebuild extension if extension/* changed
+bash scripts/build-extension.sh
+
+# 3. Local install rehearsal
+open "bin/Safari Pilot.app"     # verify in Safari Settings
+
+# 4. Mandatory pre-tag check (mirrors every CI verify step)
+bash scripts/pre-tag-check.sh   # must print "ALL CHECKS PASSED"
+
+# 5. Commit, tag, push
+git tag -a v0.1.X -m "..."
+git push origin main && git push origin v0.1.X
+```
+
+The pre-tag check catches: AppleDouble (`._*`) metadata in zip, codesign --deep --strict failures, missing entitlements, version mismatch, dangling tag, prepublish hook misconfiguration, unit test regressions. It runs in seconds and saves CI round-trips.
 
 ## What Safari Pilot Does NOT Replace
 

@@ -79,7 +79,9 @@ Use the narrowest useful command for the claim being reviewed.
 - Build daemon: `bash scripts/update-daemon.sh`
 - Build extension: `bash scripts/build-extension.sh`
 - Extension smoke gate: `npm run verify:extension:smoke`
-- Pre-publish gate: `bash hooks/pre-publish-verify.sh`
+- Pre-publish gate (local-only, short-circuits on CI): `bash hooks/pre-publish-verify.sh`
+- Pre-tag gate (mirrors every CI verify step locally): `bash scripts/pre-tag-check.sh`
+- Daemon tests: `cd daemon && swift test`
 
 ## Review Notes For This Repo
 - Prefer real-path evidence over mocks or class-level tests.

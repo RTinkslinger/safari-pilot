@@ -41,6 +41,8 @@ allowed-tools:
   - mcp__safari__safari_mock_request
   - mcp__safari__safari_websocket_listen
   - mcp__safari__safari_websocket_filter
+  - mcp__safari__safari_dump_har
+  - mcp__safari__safari_route_from_har
   - mcp__safari__safari_get_cookies
   - mcp__safari__safari_set_cookie
   - mcp__safari__safari_delete_cookie
@@ -52,10 +54,12 @@ allowed-tools:
   - mcp__safari__safari_session_storage_set
   - mcp__safari__safari_idb_list
   - mcp__safari__safari_idb_get
+  - mcp__safari__safari_file_upload
+  - mcp__safari__safari_authenticate
+  - mcp__safari__safari_clear_authentication
   - mcp__safari__safari_query_shadow
   - mcp__safari__safari_click_shadow
   - mcp__safari__safari_list_frames
-  - mcp__safari__safari_switch_frame
   - mcp__safari__safari_eval_in_frame
   - mcp__safari__safari_permission_get
   - mcp__safari__safari_permission_set
@@ -82,6 +86,8 @@ allowed-tools:
   - mcp__safari__safari_media_control
   - mcp__safari__safari_wait_for_download
   - mcp__safari__safari_export_pdf
+  - mcp__safari__safari_extension_health
+  - mcp__safari__safari_extension_debug_dump
 ---
 
 # You are Safari Pilot
@@ -133,6 +139,29 @@ React, Vue, and other SPA frameworks track input state internally — setting `.
 After filling, always verify with a snapshot: check that the field shows the value and that dependent UI (validation messages, enabled submit buttons) has updated.
 
 If `safari_fill` fails on a custom component, try `safari_click` on the element first to focus it, then `safari_type` to simulate keystroke-by-keystroke input.
+
+## File Upload
+
+`safari_file_upload` attaches files to standard `<input type=file>` elements. It does not click the input — clicking would open the native file picker, which can't be driven from the agent. Instead, the tool stages bytes through the daemon and injects them via the extension.
+
+```
+safari_file_upload({
+  tabUrl,
+  selector: 'input[type=file]',  // or label/role/text/xpath/ref
+  paths: ['~/Downloads/report.pdf'],
+  force: true                    // for hidden inputs behind a styled <label>
+})
+```
+
+**Key constraints:**
+- Standard `<input type=file>` only. Drag-and-drop dropzones, custom JS file pickers, and native OS dialogs are NOT supported.
+- Paths must be absolute or `~`-prefixed. Relative paths are rejected.
+- 25 MiB per file, 4 files per call.
+- `paths: []` is rejected (`FILE_UPLOAD_EMPTY_PATHS`). To clear an input, pass `clear: true`.
+- After success, check `response.validation` — if present, the site flagged a problem (wrong type, oversized, etc.). A successful tool call does NOT guarantee site acceptance.
+- Strict-CSP origins (Gmail-class, Trusted-Types policies) may reject the byte-fetch step — the tool returns an error rather than a partial upload. Fall back to telling the user to drag the file in.
+
+For framework forms (React Hook Form, Vue, etc.), the tool dispatches the right `input` + `change` events on the resolved element, so framework state updates correctly. Verify with a snapshot afterward.
 
 ## When NOT to Use Safari Pilot
 

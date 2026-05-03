@@ -1,6 +1,6 @@
 # Safari Pilot Architecture — Canonical Source of Truth
 
-*Last verified: 2026-04-26 | Branch: main*
+*Last verified: 2026-05-03 | Branch: main | Latest tag: v0.1.24*
 
 **This document describes how Safari Pilot ACTUALLY works as shipped. Every statement is backed by verified evidence. If code changes contradict this document, either the code is wrong or this document must be updated — never silently diverge.**
 
@@ -10,7 +10,7 @@
 
 ## System Overview
 
-Safari Pilot is a native Safari browser automation framework exposing **78 tools** via MCP (stdio). It controls Safari through three engine tiers, protected by 7 pre-execution security layers + 3 post-execution checks.
+Safari Pilot is a native Safari browser automation framework exposing **82 tools** via MCP (stdio). It controls Safari through three engine tiers, protected by 7 pre-execution security layers + 3 post-execution checks.
 
 ```
 Claude Code / AI Agent
@@ -21,7 +21,7 @@ Claude Code / AI Agent
 │  MCP Server (src/index.ts)      │
 │  ┌───────────────────────────┐  │
 │  │ SafariPilotServer         │  │
-│  │  • 78 tools registered    │  │
+│  │  • 82 tools registered    │  │
 │  │  • 9 security layers      │  │
 │  │  • Engine selection       │  │
 │  └───────────────────────────┘  │
@@ -349,15 +349,22 @@ shouldProcess(cmd, myTabId, myFrameId, currentLocationHref):
 - Revert to single-slot sp_cmd/sp_result → `t55a-concurrent-frame-commands.test.ts` fails (frame races clobber).
 - Remove `sender.frameId !== 0` filter at background.js:687 → `t55a-url-change-relay-iframe-filter.test.ts` fails (iframe URL pollutes tabCacheMap).
 
-### Event-Page Lifecycle (commit 1a, v0.1.5)
+### Event-Page Lifecycle (commit 1a, v0.1.5; T60 fix v0.1.19; T67 fix v0.1.24)
 - Manifest: `background = {scripts:['background.js'], persistent:false}`; `alarms` permission required for keepalive.
 - No IIFE, no ES modules: Safari re-evaluates the script on every wake; listeners must be registered at top level.
-- Wake sequence (run on every init: onStartup / onInstalled / alarm / session_* / script_load):
-  1. `readPending()` — re-deliver any `completed` results from `storage.local[safari_pilot_pending_commands]` left un-acked by a prior wake.
-  2. Announce `{type:'connected'}` to the daemon (idempotent on `ExtensionBridge`).
-  3. Drain the daemon queue via `{type:'poll'}` in a loop — supports `{commands:[...]}` (Task 3) with `{command:{...}}` legacy fallback — executing each command and sending `{type:'result'}`.
+- Wake sequence (post-T67 ordering, run on every init: onStartup / onInstalled / alarm / session_* / script_load):
+  1. `loadTabCache()` — re-hydrate `tabCacheMap` from `storage.local[safari_pilot_tab_cache]`. Read-only; never throws.
+  2. `connectAndReconcile()` — POST `/connect` to daemon. **Critical-path: must run before any storage write.** Daemon updates `lastReconcileTimestamp` and ships back the 5-case reconcile response (acked / uncertain / reQueued / inFlight / pushNew).
+  3. `gcPendingStorage()` — best-effort. Removes completed entries older than 10 min from `storage.local[safari_pilot_pending_commands]`.
+  4. `cleanupStaleStorageBus()` — best-effort. Prefix-scans `sp_cmd_*` / `sp_result_*` keys, removes any whose commandId is not in the live `pendingCommandIds` set.
+  Each step is wrapped in its own `try`/`catch` and emits a step-tagged trace event on failure (`wake_load_error`, `wake_reconcile_error`, `wake_gc_error`, `wake_cleanup_error`) — operators can identify which step failed without re-reading source. After wakeSequence returns, `supersedePollLoop(reason)` runs OUTSIDE the wake-setup lock.
 - Keepalive: `browser.alarms` named `safari-pilot-keepalive` fires every 1 min, emits `alarm_fire` log (ingested by `HealthStore.lastAlarmFireTimestamp`) and re-runs the wake sequence.
 - Pending-command persistence uses `storage.local` key `safari_pilot_pending_commands` (status `executing` → `completed`); profile identity persisted under `safari_pilot_profile_id`.
+
+**T67 (v0.1.24, 2026-05-03) — quota recovery + reorder.** Pre-T67 `wakeSequence` ran `loadTabCache → gcPendingStorage → cleanupStaleStorageBus → connectAndReconcile` inside a single outer try/catch. When `browser.storage.local` filled to Safari's ~5 MB cap, `gcPendingStorage`'s `writePending` threw "Exceeded storage quota" — the throw aborted the chain BEFORE `connectAndReconcile()` ran. `/connect` never landed; `lastReconcileTimestamp` flatlined; `isConnected` stayed `false` for as long as storage stayed full (32+ hours observed live; trace evidence at `~/.safari-pilot/daemon-trace.ndjson:109513+`). T67's structural fix: (1) reorder so reconcile runs second (after read-only `loadTabCache`), (2) per-step try/catch + step-tagged traces, (3) `writePending` gains quota recovery mirroring `saveTabCache` (catch quota → `remove(STORAGE_KEY_PENDING)` → retry `set` once → swallow on second failure → re-throw non-quota). Existing wedged installs auto-recover on first wake under v0.1.24. Guarded by 6 unit tests in `test/unit/extension/t67-storage-quota-blocks-reconcile.test.ts` (4 structural invariants + 1 defense-in-depth + 1 behavioral via eval-sandbox of `writePending`).
+
+**T60 (v0.1.19, 2026-05-02) — pollLoop decoupled from wake-setup lock.** Pre-T60 `pollLoop` ran INSIDE `isWakeRunning`'s try/finally; the forever-loop never returned, so `finally` never cleared the lock, and a fetch suspended by event-page sleep would wedge `isWakeRunning=true` indefinitely. Fix: `supersedePollLoop()` aborts any prior pollLoop's `AbortController` (releasing wedged fetches) and starts a fresh one OUTSIDE the wake-setup lock; `pollLoop(abortSignal)` combines an external AbortSignal with `AbortSignal.timeout(10000)` via `AbortSignal.any` so a wedged fetch from a prior alarm cycle is forcibly killed when the next alarm supersedes it. Guarded by `test/unit/extension/t60-pollloop-decouple.test.ts`.
+
 - **DEBUG_HARNESS force-unload hook:** A `browser.runtime.onMessage` listener responds to `{type: '__safari_pilot_test_force_unload__'}` by calling `browser.runtime.reload()` after a 50ms delay — used by e2e tests to simulate cold-wake. Gated inside `/*@DEBUG_HARNESS_BEGIN@*/ … /*@DEBUG_HARNESS_END@*/` markers; stripped from release builds by `build-extension.sh`.
 
 ### Initialization System (2026-04-23)
@@ -449,19 +456,21 @@ Build steps:
 
 ## Tool Modules
 
-78 tools across 17 modules. 12 modules accept `IEngine` interface (engine-agnostic). 2 modules (navigation, compound) use `AppleScriptEngine` for tab management. 2 modules (downloads, pdf) get engine from server. 1 module (extension-diagnostics) proxies the daemon's `extension_health` dispatch via `DaemonEngine.sendRawCommand`.
+82 tools across 19 modules. 13 modules accept `IEngine` interface (engine-agnostic). 2 modules (navigation, compound) use `AppleScriptEngine` for tab management. 2 modules (downloads, pdf) get engine from server. 1 module (extension-diagnostics) proxies the daemon's `extension_health` dispatch via `DaemonEngine.sendRawCommand`. 1 module (file-upload) takes a `DaemonEngine` injected at constructor time for byte staging via NDJSON `stage_file`.
 
-Every tool declares `requirements.idempotent: boolean` (required field — no default). Non-idempotent tools (click, type, fill, select_option, press_key, hover, drag, scroll, navigate*, reload, cookie writes, storage writes, permission_set, override_*, mock_request, network_offline/throttle, websocket_listen, emergency_stop, evaluate, eval_in_frame, switch_frame, compound tools that mutate state) MUST NOT be auto-retried on an ambiguous Extension-engine disconnect. The `EXTENSION_UNCERTAIN` error (Task 7) surfaces disconnect-during-execution and relies on this flag to decide retry safety.
+Every tool declares `requirements.idempotent: boolean` (required field — no default). Non-idempotent tools (click, type, fill, select_option, press_key, hover, drag, scroll, navigate*, reload, cookie writes, storage writes, permission_set, override_*, mock_request, network_offline/throttle, websocket_listen, emergency_stop, evaluate, eval_in_frame, file_upload, authenticate, clear_authentication, compound tools that mutate state) MUST NOT be auto-retried on an ambiguous Extension-engine disconnect. The `EXTENSION_UNCERTAIN` error (Task 7) surfaces disconnect-during-execution and relies on this flag to decide retry safety.
 
 | Module | Tools | Engine Type |
 |--------|-------|-------------|
 | navigation.ts | 7 | AppleScriptEngine |
 | interaction.ts | 11 | IEngine |
+| file-upload.ts | 1 | IEngine + DaemonEngine (byte staging) |
 | extraction.ts | 7 | IEngine |
-| network.ts | 8 | IEngine |
+| network.ts | 10 | IEngine |
 | storage.ts | 11 | IEngine |
+| auth.ts | 2 | IEngine (extension-required) |
 | shadow.ts | 2 | IEngine |
-| frames.ts | 3 | IEngine |
+| frames.ts | 2 | IEngine |
 | permissions.ts | 6 | IEngine |
 | clipboard.ts | 2 | IEngine |
 | service-workers.ts | 2 | IEngine |
@@ -474,7 +483,13 @@ Every tool declares `requirements.idempotent: boolean` (required field — no de
 | extension-diagnostics.ts | 2 | DaemonEngine (read-only) |
 | server.ts (direct) | 2 | N/A (health_check, emergency_stop) |
 
-**`extension-diagnostics.ts`** adds 2 observability tools: `safari_extension_health` and `safari_extension_debug_dump`. Both are idempotent, read-only, and route through the daemon's `extension_health` dispatch (Task 5). When the daemon is unavailable the tools return a degraded response (`degradedReason: 'daemon_unavailable'`) instead of throwing. At 1a the two tools overlap closely; at 1b `safari_extension_debug_dump` will additionally proxy extension-side `storage.local` state.
+**`extension-diagnostics.ts`** adds 2 observability tools: `safari_extension_health` and `safari_extension_debug_dump`. Both are idempotent, read-only, and route through the daemon's `extension_health` dispatch.
+
+**`auth.ts`** (5A.9, 2026-05-02) adds `safari_authenticate` and `safari_clear_authentication`. HTTP Basic auth via DNR `modifyHeaders` rule registration; requires `declarativeNetRequestWithHostAccess` manifest permission. Stable rule id from `urlPattern` hash so re-issue replaces and clear targets by pattern. EXTENSION_REQUIRED before dispatch for non-extension engines.
+
+**`network.ts` HAR additions** (5A.7, 2026-05-02): `safari_dump_har` produces HAR 1.2 from the interceptor buffer (with optional filter); `safari_route_from_har` translates HAR back into safari_mock_request rules. Both pure transformers in `src/tools/har.ts`; no extension change required (network.ts interceptor was extended to capture request/response headers — see commit `1addfe1` and TRACES iter 49).
+
+**`file-upload.ts`** (5A.1 / T41, 2026-05-03) adds `safari_file_upload` for programmatic upload to `<input type=file>` elements. Approach 3 architecture: TS handler reads bytes via Node fs → daemon `stage_file` NDJSON command → token-keyed `FileStagingStore` actor (60s TTL) → extension `content-isolated.js` fetches `GET http://127.0.0.1:19475/file-bytes/<token>` → constructs `File` objects in extension context → `window.postMessage` ISOLATED→MAIN with bytes intact via structured clone → `content-main.js` builds `DataTransfer`, calls `input.files = dt.files` (spec-compliant setter; `Object.defineProperty` does NOT update WebKit's internal `[[Files]]` slot that `FormData(form)` reads). 25 MiB / file × 4 / call. Phase 0 architectural gate validated empirically against fixture origin; gate test scaffolding stays in tree as permanent diagnostic. NOT supported: drag-and-drop dropzones, custom pickers, native OS dialogs, label/role/text/placeholder locator types in v1 extension JS (only `selector`/`xpath`/`ref`).
 
 ---
 
@@ -509,10 +524,15 @@ Carve-outs (files that intentionally do NOT use the shared client):
 | `security-ownership.test.ts` | 9 | T1/T2/T5/T7/T8 — ownership registry, schema-required tabUrl, fail-closed on unknown URL, no fake switch_frame envelope |
 | `signal-shutdown.test.ts` | 2 | T10 — SIGTERM/SIGINT close the session window (asserts on `visible of window id`, not `exists`) |
 
-### Daemon Tests (daemon/Tests/) — 116 tests
-- ExtensionSocketServer, ExtensionBridge, CommandDispatcher, HealthStore, SleepWakeMemoryRecovery, ExtensionHTTPServer
+### Daemon Tests (daemon/Tests/) — 153 tests
+- ExtensionSocketServer, ExtensionBridge, CommandDispatcher, HealthStore, SleepWakeMemoryRecovery, ExtensionHTTPServer, FileStagingStore (5A.1)
 - Real Swift tests against real types, with I/O-isolation mocks at the NSAppleScript boundary
-- The MockExecutor / StubExecutor / SequencedMockExecutor types substitute the external NSAppleScript → Safari boundary so tests run without a live Safari, but the SUT (CommandDispatcher, ExtensionBridge, HealthStore, ExtensionHTTPServer) is the real production code. Per the test rubric this is acceptable: mocks at the I/O boundary, real types at the SUT boundary.
+- The MockExecutor / StubExecutor / SequencedMockExecutor types substitute the external NSAppleScript → Safari boundary so tests run without a live Safari, but the SUT (CommandDispatcher, ExtensionBridge, HealthStore, ExtensionHTTPServer, FileStagingStore) is the real production code. Per the test rubric this is acceptable: mocks at the I/O boundary, real types at the SUT boundary.
+
+### Unit Tests (test/unit/) — 398 tests
+- Pure-logic coverage for `src/`: tool handlers, security layers, engine selector, error shapes, escape contract.
+- Per CLAUDE.md unit-test policy: may mock Node boundaries (`fs`, `net`, `child_process`, `AbortSignal`, timers); MUST NOT mock internal modules.
+- T67's `t67-storage-quota-blocks-reconcile.test.ts` is illustrative: structural source-text invariants on `extension/background.js` plus one behavioral test that extracts `writePending` source via regex and eval-sandboxes it with a stubbed `browser.storage.local` to verify quota recovery without escaping.
 
 ### Trace Capture (mandatory)
 All test runs capture structured JSONL traces for the recipe system's learning pipeline. See CLAUDE.md "Trace capture" section for format and rules.
@@ -564,3 +584,21 @@ All 1470 mock-based tests deleted. Initialization system: MCP init blocks until 
 
 ### v0.1.6 (Commit 2) — 2026-04-18
 HTTP short-poll IPC pivot: sendNativeMessage → fetch() to daemon HTTP:19475 (Hummingbird). Reconcile protocol (5-case classification: acked/uncertain/reQueued/inFlight/pushNew). executedLog with 5-min TTL. Disconnect detection (15s poll-gap timeout). Handler stripped to stub. TCP:19474 preserved for DaemonEngine/health-checks/benchmarks. Extension version 0.1.6. HTTP observability: `httpBindFailureCount` (persisted), `httpRequestErrorCount1h` (rolling 1h), `HTTP_READY` / `HTTP_SELF_TEST` startup logs, `onServerRunning` callback. Test result capture: JUnit XML + JSON to `test-results/` (last 10 runs retained via vitest globalSetup). Benchmark data: `benchmark/history.json` + `benchmark/reports/` + `benchmark/traces/` (unchanged).
+
+### v0.1.18 — 2026-05-02 (T55a frame-aware storage bus)
+Manifest gains `webNavigation` permission + `all_frames: true` on both content_scripts entries. Storage migrates from single-slot `sp_cmd`/`sp_result` to commandId-keyed `sp_cmd_<id>`/`sp_result_<id>`. Lazy `sp_getFrameId` handshake state machine in `extension/lib/handshake-machine.js`. Pure routing helper `shouldProcess` in `extension/lib/route-command.js` (inlined into content-isolated.js). Shared `routeFrameAware` (`src/tools/_frame-routing-helper.ts`) is the single source of truth across 6 frame-aware tool handlers. `safari_list_frames` returns frameId via `webNavigation.getAllFrames` intercepted in background.js by the `__SP_LIST_FRAMES__` sentinel. Frame validation at dispatch (FRAME_NOT_FOUND), document-mutation guard via cmd.frameUrl vs location.href (FRAME_NAVIGATED), 10s frame-targeted timeout (FRAME_UNREACHABLE), capability gating in routeFrameAware (FRAME_NOT_SUPPORTED for non-extension engines). 4 new error classes in `src/errors.ts`. 22 new unit tests + 9 e2e tests at `test/e2e/t55a-*.test.ts`.
+
+### v0.1.19 — 2026-05-02 (T60 pollLoop decoupling)
+Extension dormancy bug — alarm fires but no `/connect` or `/poll` reach the daemon. Root cause: `initialize()` wrapped both wakeSequence-setup AND `pollLoop` in `isWakeRunning`. `pollLoop` is a forever-loop; once Safari's MV3 event-page suspended a `/poll` fetch into an unresolvable pending state, `isWakeRunning` stayed `true` permanently and every subsequent alarm-driven `initialize()` bailed at the early-return. Fix: `pollLoop` decoupled — `wakeSequence` runs the BOUNDED setup phase only, `pollLoop` is supervised OUTSIDE the lock by `supersedePollLoop()` which aborts the prior pollLoop's `AbortController` (releasing wedged fetches) and starts a fresh one. `pollLoop(abortSignal)` combines an external AbortSignal with `AbortSignal.timeout(10000)` via `AbortSignal.any`. Verified empirically: v0.1.19 install produced `init_proceeding` → `setup_completed` → `pollloop_started` traces followed by sustained POLLs every 5s. Guarded by `test/unit/extension/t60-pollloop-decouple.test.ts` (7 structural invariants).
+
+### v0.1.21 — 2026-05-02 (Phase 5A · Group A · Chunk 1: cookies HTTPOnly + saveAs + HTTP basic auth)
+- **5A.8 cookies HTTPOnly:** `__SP_COOKIE_GET_ALL__/SET/REMOVE` sentinels route through `browser.cookies` API which sees httpOnly. document.cookie path preserved as AppleScript fallback. Discovery: `browser.cookies.getAll({})` empty filter returns only HttpOnly cookies in Safari — fix passes `url: tabUrl` (or `domain` if specified) filter.
+- **5A.2 download saveAs:** Pure-TS post-process via `applySaveAs(metadata, saveAs?)` helper. Threaded through 4 `makeSuccessResponse` call sites in downloads.ts. Typed `DownloadSourceMissingError`.
+- **5A.9 HTTP basic auth:** New `auth.ts` module + `__SP_DNR_ADD_RULE__`/`REMOVE_RULE__` sentinels routing to existing DNR handlers. Stable rule id from `urlPattern` hash. Manifest gains `declarativeNetRequestWithHostAccess` permission (without it, `modifyHeaders` rule registration succeeds but action silently no-ops at the network layer — empirical discovery).
+
+### v0.1.23 — 2026-05-03 (5A.1 safari_file_upload — T41)
+Programmatic file upload to standard `<input type=file>` elements via Approach 3 architecture (out-of-band byte fetch). Daemon NDJSON `stage_file` command + token-keyed `FileStagingStore` actor (60s TTL) + Hummingbird routes `GET/DELETE /file-bytes/<token>`. Extension `content-isolated.js` fetches bytes, constructs `File` objects, posts to `content-main.js` (structured-clone preserves File with bytes intact). content-main.js builds `DataTransfer` and uses spec-compliant `input.files = dt.files` setter (NOT `Object.defineProperty`, which shadows JS reads but doesn't update WebKit's internal `[[Files]]` slot that `FormData(form)` reads at submit). 200ms validation probe reads `input.validationMessage` + sibling `[role=alert]` / `[aria-invalid]`. 10 new error codes in `src/errors.ts`; `paths: []` rejected with `FILE_UPLOAD_EMPTY_PATHS` (use `clear: true` for explicit clearing — removes agent-`.filter()` foot-gun). 25 MiB / file × 4 / call. Phase 0 architectural gate (`test/e2e/5A1-phase0-spike.test.ts`) empirically validated against fixture origin: content-script `fetch('http://127.0.0.1:19475/...')` works under Safari WebExt CSP, `File` survives ISOLATED→MAIN structured-clone with bytes intact. 11/14 5A.1 e2e PASS + 3 SKIPPED (RHF label-locator gap, detached-element race, concurrent multi-MB pipe atomicity — all documented). Fixture-server origin has permissive CSP so the e2e suite cannot exercise strict-CSP-site failure mode (filed as T66 follow-up after Gmail smoke test surfaced it).
+
+### v0.1.24 — 2026-05-03 (T67 storage-quota recovery + release SOP codification)
+- **T67 fix:** `extension/background.js` `wakeSequence` reordered so `connectAndReconcile()` runs second (after read-only `loadTabCache`); housekeeping (`gcPendingStorage`, `cleanupStaleStorageBus`) becomes best-effort and runs after. Each step in its own try/catch with step-tagged trace event (`wake_load_error`, `wake_reconcile_error`, `wake_gc_error`, `wake_cleanup_error`). `writePending` gains quota recovery mirroring `saveTabCache`. Existing wedged installs auto-recover on first wake. Guarded by 6 unit tests in `test/unit/extension/t67-storage-quota-blocks-reconcile.test.ts`.
+- **Release SOP codified:** `scripts/pre-tag-check.sh` — 9 local checks mirroring every CI verify step (working tree clean, version lockstep, app+appex codesign+entitlements+stapler, zip free of AppleDouble, extracted-bundle codesign, daemon binary, unit tests, tag uniqueness, prepublish hook short-circuits on CI). `hooks/pre-publish-verify.sh` short-circuits on `CI=true` / `GITHUB_ACTIONS=true` (CI's T47 verify is the equivalent gate). `scripts/build-extension.sh` `ditto` invocations now use `--norsrc --noextattr --noqtn --noacl` to produce zips free of AppleDouble (`._*`) metadata that previously broke `codesign --verify --deep --strict` in CI. CLAUDE.md "Extension Build: Hard Rules" extended with rules #8 (ditto flags), #9 (mandatory pre-tag-check.sh), #10 (CI must skip local prepublish hook).
