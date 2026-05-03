@@ -31,7 +31,7 @@ export class McpTestClient {
   private stderrStream: WriteStream;
   private toolLog: WriteStream;
 
-  constructor(serverPath: string) {
+  constructor(serverPath: string, options: { env?: Record<string, string> } = {}) {
     this.traceDir = makeRunDir();
     this.stderrStream = createWriteStream(join(this.traceDir, 'stderr.log'));
     this.toolLog = createWriteStream(join(this.traceDir, 'tool-calls.jsonl'));
@@ -39,6 +39,7 @@ export class McpTestClient {
     this.proc = spawn('node', [serverPath], {
       stdio: ['pipe', 'pipe', 'pipe'],
       cwd: join(import.meta.dirname, '../..'),
+      env: { ...process.env, ...(options.env ?? {}) },
     });
 
     // Capture stderr to file (init progress, warnings, errors)
@@ -129,8 +130,12 @@ export class McpTestClient {
   }
 }
 
-export async function initClient(serverPath: string, startId = 1): Promise<{ client: McpTestClient; nextId: number }> {
-  const client = new McpTestClient(serverPath);
+export async function initClient(
+  serverPath: string,
+  startId = 1,
+  options: { env?: Record<string, string> } = {},
+): Promise<{ client: McpTestClient; nextId: number }> {
+  const client = new McpTestClient(serverPath, options);
   let nextId = startId;
 
   await client.send({
