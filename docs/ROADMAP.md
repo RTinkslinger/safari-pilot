@@ -239,13 +239,38 @@ GROUP B — after Group A closes
                                                               GROUP B COMPLETE
                                                               GROUP A COMPLETE
                                                               PHASE 5A COMPLETE
-  5A.12  NDJSON line-split fix (ROADMAP-flake)   [infra]
-  5A.11  SD-32-followup concurrent MCP e2e       [Phase 4.4 closure]
-  5A.10  T42 recovery / degradation e2e          [Phase 5 hardening]
-  5A.13  Cluster 1–7 e2e sweep (final)           [closure verification]
 ```
 
 **Decisions confirmed (2026-05-02):** Accept the three structural ceilings and document them. Defer the two agent-irrelevant items. Pragmatic strictness — exit criteria above are the bar, not "every row green."
+
+---
+
+## Next-sprint queue (ordered, set 2026-05-04)
+
+Locked priority order for post–Phase 5A work:
+
+```
+1. T70    sweep-observed flakes (4 items)        [low-risk triage]
+            - 5A3 right-click MCP timeout
+            - 5A9 basic auth MCP timeout
+            - 5A8 httpOnly cookies fixture conn (×2 tests)
+            - initialization safari_new_tab engine selector
+
+2. T65    phase3-3.1 form submission flake       [pre-existing]
+            httpbin.org/forms/post → /post navigation
+            cache miss before click reaches extension
+
+3. T59    ScreenshotPolicy domain-block          [security pipeline]
+            seed-list domain blocking; test-design vs product-design
+            decision pending
+
+4. T43    61 untested tools sub-sprint           [multi-week, Phase 6]
+            full e2e coverage for the residual tool registry
+
+5. T66    Gmail-class strict-CSP file-upload     [structural-adjacent]
+            content-isolated → daemon byte-fetch rejected by Trusted
+            Types CSP. Decide: fix or accept-with-limitation.
+```
 
 ---
 
