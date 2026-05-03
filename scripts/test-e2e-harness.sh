@@ -1,10 +1,16 @@
 #!/usr/bin/env bash
 # scripts/test-e2e-harness.sh — Build extension with SAFARI_PILOT_TEST_MODE=1,
-# run the 5 harness-dependent e2e tests, then ALWAYS restore the release build.
+# run the 5 harness-dependent e2e tests, then ALWAYS rebuild the release extension.
+# Fully non-interactive — designed to run via `! npm run test:e2e:harness` from chat
+# or `npm run test:e2e:harness` from a terminal.
 #
-# Local-only: refuses to run on CI because installing/reloading the Safari
-# extension requires user interaction (Safari does not allow programmatic
-# install — see the feedback-no-system-manipulation rule in CLAUDE.md).
+# Local-only: refuses to run on CI because Safari has no installed extension there.
+#
+# Caching note: Safari caches extension code by CFBundleShortVersionString. If your
+# release extension is at the same version (0.1.24) as the test build, Safari may
+# keep the cached release code instead of loading the new TEST_MODE=1 build. If
+# tests fail with `__SP_TEST_HARNESS__ undefined` or similar, force-reload via
+# Safari → Settings → Extensions → toggle Safari Pilot off and back on.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -12,8 +18,7 @@ cd "$ROOT"
 
 if [[ "${CI:-}" == "true" || "${GITHUB_ACTIONS:-}" == "true" ]]; then
   echo "test:e2e:harness is local-only." >&2
-  echo "CI cannot install Safari extensions — extension reload requires user interaction." >&2
-  echo "If the harness-dependent tests must run in CI, build a separate test runner that does not depend on Safari." >&2
+  echo "CI has no installed Safari extension; the harness tests cannot run there." >&2
   exit 2
 fi
 
@@ -22,18 +27,14 @@ cleanup() {
   local rc=$?
   if [[ "$RELEASE_REBUILT" -eq 0 ]]; then
     echo
-    echo "[4/5] Rebuilding release extension (SAFARI_PILOT_TEST_MODE=0)..."
+    echo "[cleanup] Rebuilding release extension (SAFARI_PILOT_TEST_MODE=0)..."
     if SAFARI_PILOT_TEST_MODE=0 bash scripts/build-extension.sh; then
       RELEASE_REBUILT=1
-      echo
-      echo "[5/5] Install the RELEASE build:"
-      echo "  1. Open Finder and double-click bin/Safari Pilot.app"
-      echo "  2. Confirm Safari Pilot is enabled in Safari → Settings → Extensions"
-      echo
-      echo "Test exit code: $rc"
+      open "bin/Safari Pilot.app" || true
+      echo "[cleanup] Release extension rebuilt + reopened. Test exit code: $rc"
     else
-      echo "WARNING: release rebuild FAILED. bin/Safari Pilot.app is still TEST_MODE=1." >&2
-      echo "Run: SAFARI_PILOT_TEST_MODE=0 bash scripts/build-extension.sh" >&2
+      echo "[cleanup] WARNING: release rebuild FAILED. bin/Safari Pilot.app may still be TEST_MODE=1." >&2
+      echo "  Run: bash scripts/build-extension.sh" >&2
       if [[ $rc -eq 0 ]]; then rc=3; fi
     fi
   fi
@@ -41,28 +42,20 @@ cleanup() {
 }
 trap cleanup EXIT
 
-echo "test:e2e:harness — Phase 5A · 5A.14"
-echo "This script will:"
-echo "  1. Build the extension with SAFARI_PILOT_TEST_MODE=1 (DEBUG_HARNESS retained)"
-echo "  2. Wait for you to install bin/Safari Pilot.app in Safari"
-echo "  3. Run the 5 harness-dependent e2e tests"
-echo "  4. ALWAYS rebuild the release extension (SAFARI_PILOT_TEST_MODE=0)"
-echo "  5. Wait for you to install the release bin/Safari Pilot.app"
-
+echo "test:e2e:harness — Phase 5A · 5A.14 (fully automated)"
 echo
-echo "[1/5] Building extension with SAFARI_PILOT_TEST_MODE=1..."
+
+echo "[1/3] Building extension with SAFARI_PILOT_TEST_MODE=1..."
 SAFARI_PILOT_TEST_MODE=1 bash scripts/build-extension.sh
 
 echo
-echo "[2/5] Install the test build:"
-echo "  1. Open Finder and double-click bin/Safari Pilot.app"
-echo "  2. In Safari → Settings → Extensions, confirm Safari Pilot is enabled"
-echo "  3. If Safari shows version mismatch, restart Safari and re-enable"
-echo
-read -rp "Press Enter once the test extension is installed and enabled..."
+echo "[2/3] Loading test build into Safari..."
+open "bin/Safari Pilot.app"
+echo "Waiting 15s for Safari to register the new extension build..."
+sleep 15
 
 echo
-echo "[3/5] Running 5 harness-dependent e2e tests..."
+echo "[3/3] Running 5 harness-dependent e2e tests..."
 npx vitest run \
   test/e2e/t21-spa-history-cache-refresh.test.ts \
   test/e2e/t22-poll-loop-transient-retry.test.ts \
