@@ -312,6 +312,7 @@ npm run test:unit           # alias for above
 
 # Real Safari required (production stack must be running)
 npm run test:e2e            # ~30 e2e tests across 12+ files
+npm run test:e2e:harness    # 5 tests requiring DEBUG_HARNESS build (auto-rebuilds release after)
 
 # Both
 npm run test:all            # unit + e2e
@@ -323,6 +324,7 @@ cd daemon && swift test     # 153 tests
 **Test policy:**
 - Unit tests (`test/unit/`) cover pure logic; can mock Node boundaries (`fs`, `net`, `child_process`) but never internal modules.
 - E2E tests (`test/e2e/`) spawn a real MCP server, drive Safari through the real stack, and use ZERO mocks (enforced by pre-commit hook). They fail closed on any `vi.mock` or direct `import from '../../src/'`.
+- The harness-dependent tests (`t21`, `t22`, `t27`, `t44`, `t55a`) require `SAFARI_PILOT_TEST_MODE=1` build markers stripped from production. `npm run test:e2e:harness` automates the test build → run → release-rebuild flow. Local-only (refuses on CI).
 - See `CLAUDE.md` "End-to-End Testing (HARD RULES)" for the full contract.
 
 ### Adding a New Tool

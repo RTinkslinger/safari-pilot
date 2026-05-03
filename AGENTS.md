@@ -74,6 +74,7 @@ Use the narrowest useful command for the claim being reviewed.
 - Typecheck/Lint gate: `npm run lint`
 - Full test entrypoint: `npm test`
 - E2E suite: `npm run test:e2e`
+- E2E harness suite (TEST_MODE build, local-only): `npm run test:e2e:harness`
 - Single test file: `npx vitest run test/e2e/<file>.test.ts`
 - Single test by name: `npx vitest run -t "<name>"`
 - Build daemon: `bash scripts/update-daemon.sh`
