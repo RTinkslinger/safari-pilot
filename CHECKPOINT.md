@@ -1,96 +1,134 @@
 # Checkpoint
-*Written: 2026-05-03 — 5A.1 SHIPPED at v0.1.23*
+*Written: 2026-05-03 18:50 — v0.1.24 SHIPPED*
 
 ## Current Task
-Phase 5A · 5A.1 `safari_file_upload` — **SHIPPED at v0.1.23**. Plan execution complete: **20 of 21 tasks done**. Only the 5-site manual smoke flow remains (gated on the user, who has the authenticated sessions). Phase 0 architectural gate empirically PASSED on real Safari. 11/14 file-upload e2e green; 3 SKIPPED with documented architectural limits (label-locator, detached race, concurrent multi-MB pipe atomicity). 392/392 unit + 153/153 daemon green.
+Phase 5A · Group A **COMPLETE** (9/9 shipped through v0.1.23+v0.1.24). T67 storage-quota wedge fix shipped and verified live. Release SOP codified. Documentation canonicalized. Standing by for Group B kickoff (next: 5A.14 test:e2e:harness automation).
 
 ## Progress
 
-### Phase 5A · 5A.1
-- [x] **Tasks 1–14** — Phases 0–5 (spike scaffolding, error codes, mime, path-resolve, handler, daemon Swift, extension JS, fixture endpoints). See iteration 51.
-- [x] **Task 15** Core e2e — `6a69eef`
-- [x] **Task 16** RHF e2e — `ca60664`
-- [x] **Task 17** Detached + shadow + validation surface e2e — `840d59f`
-- [x] **Task 18** Concurrent multi-MB e2e — `dbf7091`
-- [x] **Task 19** v0.1.22 → v0.1.23 release (rebuild + user install confirmed) — `7f30638`
-  - Two real bugs caught + fixed during verification (extraction.ts isHarness gap; content-main.js internal-slot vs property-shadow)
-- [x] **Task 20 (changelog half)** — `docs/changelogs/v0.1.23.md` written
-- [ ] **Task 20 (5-site smoke)** — **USER GATE** — manual flow against Notion / Slack / GitHub / Gmail / Linear
-- [ ] **Task 21** TRACES + CHECKPOINT commit — TRACES.md iter 52 + this file written; commit pending
+### Phase 5A Group A — closed
+- [x] **5A.3** Right-click + middle-click (TS-only)
+- [x] **5A.6** Multi-element extraction (TS-only)
+- [x] **5A.4** XPath as first-class locator (TS-only)
+- [x] **5A.5** Locator chaining nth/filter (TS-only)
+- [x] **5A.8** Cookies HttpOnly via `browser.cookies` — v0.1.21
+- [x] **5A.2** Download saveAs — v0.1.21
+- [x] **5A.9** HTTP basic auth via DNR — v0.1.21
+- [x] **5A.7** HAR record + replay — TS-only, no rebuild
+- [x] **5A.1 (T41)** `safari_file_upload` — v0.1.23, 11/14 e2e PASS + 3 documented skips, smoke-tested
 
-## Key Decisions (already persisted in TRACES.md iter 52)
+### Today's session (2026-05-03)
+- [x] **T67** storage-quota wedge fix — shipped v0.1.24 (`f05265b` fix + `fda884f` release)
+- [x] **CI ditto AppleDouble fix** — shipped v0.1.24 (`d55fb18`)
+- [x] **Release SOP codified** — `c1effb2` (scripts/pre-tag-check.sh + hooks/pre-publish-verify.sh CI short-circuit + CLAUDE.md hard rules #8/#9/#10 + Release SOP subsection)
+- [x] **Documentation canonicalization** — `30a5e81` (README + ARCHITECTURE + SKILL + AGENTS + v0.1.24 changelog)
+- [x] **v0.1.24 SHIPPED** — tag pushed, GitHub Release `Safari.Pilot.zip` + `SafariPilotd-universal.tar.gz` live, npm `safari-pilot@0.1.24` published
+- [x] **T67 fix verified live** — `lastReconcileTimestamp` advanced 17ms after first v0.1.24 alarm fire on previously-wedged install
 
-- **Phase 0 architecture validated empirically.** content-script `fetch('http://127.0.0.1:19475/...')` works under Safari Web Extension CSP; `File` objects survive ISOLATED→MAIN structured-clone with bytes intact (8-byte SPFUBYTE signature verified).
-- **`extraction.ts` `isHarness` extension** — added `__SP_FILE_UPLOAD_PROBE_TEST__` to the IIFE-bypass list. Latent bug; would have shipped broken without the spike e2e.
-- **`content-main.js` direct `input.files = dt.files`** — `Object.defineProperty` shadows the prototype getter for JS reads but does NOT update WebKit's internal `[[Files]]` slot. `FormData(form)` reads the internal slot. defineProperty kept as fallback.
-- **3 documented test skips, NOT regressions.** RHF label-locator (only `selector`/`xpath`/`ref` in extension JS), detached-element race (re-resolves at inject time), concurrent multi-MB (NDJSON pipe-write atomicity at daemon stdin, PIPE_BUF=4096).
-- **API divergence retained:** `paths: []` rejected with `FILE_UPLOAD_EMPTY_PATHS`; `clear: true` is the explicit clear path. Removes agent-`.filter()` foot-gun.
-- **Plan target was v0.1.22; ship is v0.1.23.** Intermediate v0.1.22 was rebuilt during the fix bundle; v0.1.23 is the actually-shipped release. Changelog reflects v0.1.23.
+### Phase 5A Group B — pending
+- [ ] **5A.14** `npm run test:e2e:harness` automation (next, infra-only)
+- [ ] **5A.12** NDJSON line-split fix (ROADMAP-flake)
+- [ ] **5A.11** Concurrent MCP sessions e2e (SD-32-followup, closes Phase 4.4)
+- [ ] **5A.10** Recovery/degradation e2e (T42)
+- [ ] **5A.13** Cluster 1–7 e2e sweep (final closure verification)
+
+### Open follow-ups (not in Group B)
+- [ ] **T66** site-CSP blocks content-isolated→daemon fetch on strict-CSP origins (Gmail). Documented as known limitation in v0.1.23 changelog. Next-sprint scope decision: fix or accept.
+- [ ] **T65** phase3-3.1 httpbin form-submission flake. Investigate during 5A.13 sweep.
+- [ ] **TRACKER row T66** says "Blocks merge of feat/file-upload" — STALE. Branch already merged. Minor cleanup.
+
+## Key Decisions (not yet persisted)
+
+All decisions persisted. Today's session committed:
+- T67 root cause + fix (commit `f05265b` + ARCHITECTURE.md Event-Page Lifecycle section + v0.1.24 changelog)
+- Release SOP rules #8/#9/#10 (CLAUDE.md commit `c1effb2`)
+- Tool count 78→82, macOS 12→14+ recommended (README + ARCHITECTURE)
+- 5A.1 ship-with-limitation status (TRACKER T41 + changelog v0.1.23.md)
+
+Pending TRACES iter 53 entry — captured in this checkpoint, will be folded into TRACES.md as part of step 2.
 
 ## Next Steps
 
-### 1. User runs the 5-site smoke flow
+### Group B kickoff — 5A.14 first
 
-For each site, manually navigate to the upload UI in the user's authenticated Safari session and verify `safari_file_upload` works end-to-end:
+5A.14 = `npm run test:e2e:harness` automation. Auto-build with `SAFARI_PILOT_TEST_MODE=1` before running harness-dependent tests, restore release build after. Infra-only, no extension changes.
 
-| Site | Suggested upload surface |
-|------|--------------------------|
-| **Notion** | page → drag-drop block → file attach |
-| **Slack** | DM compose → paperclip / "+" attach |
-| **GitHub** | issue / PR comment → "Attach files" |
-| **Gmail** | compose → paperclip "Attach files" |
-| **Linear** | issue → attachment area |
+Per UPP and tracker method:
+1. Branch: `feat/5A.14-test-e2e-harness`
+2. `upp:writing-plans` — small plan (likely <10 tasks)
+3. `upp:executing-plans` (subagent mode if 4+ tasks)
+4. Single npm script + small wrapper around `scripts/build-extension.sh`
+5. ff-merge to main once green
 
-For each: `verified` / `failed: <reason>` / `not-applicable`. Update the table in `docs/changelogs/v0.1.23.md`.
+Subsequent locked order: 5A.12 → 5A.11 → 5A.10 → 5A.13.
 
-### 2. Commit Task 21
+### Pre-Group-B housekeeping (low priority)
+- Update TRACKER T66 row — remove the stale "Blocks merge of feat/file-upload" sentence; branch is merged with limitation documented.
+- Refresh parity-matrix PDF (`/Users/Aakash/Claude Projects/Documents/safari-pilot-vs-playwright-parity.pdf`) showing Group A closure (5A.1/2/3/4/5/6/7/8/9 all green; 5A.X1/X2/X3 annotated structural).
 
-```bash
-git add TRACES.md CHECKPOINT.md docs/changelogs/v0.1.23.md
-git commit -m "docs(5A.1 phase-8): v0.1.23 changelog + TRACES iter 52 + CHECKPOINT"
+### Stale root-level scratch files (cleanup candidate, not blocking)
 ```
-
-### 3. Branch lifecycle — REVIEW + SHIP (after smoke is filled)
-
-```bash
-git diff main..feat/file-upload | less        # REVIEW gate
-git checkout main
-git merge feat/file-upload
-git branch -d feat/file-upload
+e2e-harness-best-practices-2026.md
+EXTENSION_DEBUGGING_ISSUE.md
+safari-extension-tab-execution-patterns.md
+safari-extension-tabs-api-issues.md
+safari-mv3-alternatives-2026-04-17.md
+safari-mv3-event-page-native-messaging-2026-04-17.md
+safari-mv3-event-page-wake-2026-04-17.md
+safari-sendnativemessage-limits.md
 ```
-
-Update Build Roadmap: 5A.1 Status `Verifying`. Sprint roll-forward: chunk 2 closed. Next: Phase 5A · Group B (5A.10–5A.14) per `docs/ROADMAP.md`.
+Already covered by `docs/research/*`. Recommend moving to `docs/archive/` or deleting after grep confirms no canonical doc references them. Surfaced to user; awaiting decision.
 
 ## Context
 
 ### Branch state
-- on `feat/file-upload`, **27 commits ahead of `main`**
-- last commit: `7f30638 chore(5A.1 phase-7): bump v0.1.21 → v0.1.23; daemon + extension rebuilt; e2e green`
-- working tree dirty: TRACES.md + CHECKPOINT.md + docs/changelogs/v0.1.23.md (all expected — Task 21 about to commit)
-- pre-existing untracked: `daemon/CLAUDE.md`, `daemon/TRACES.md`, `handoffs/`, `.claude/scheduled_tasks.lock` — leave alone
+- on `main`
+- pushed: `30a5e81 docs: canonicalize all user-facing documentation against current state`
+- v0.1.24 tag live; GitHub Release + npm registry both have artifacts
+- working tree dirty only in untracked files (none of which should be committed):
+  - `.claude/scheduled_tasks.lock`
+  - `daemon/CLAUDE.md`, `daemon/TRACES.md` (sub-project files, not part of main project)
+  - `handoffs/` (session handoff notes)
 
 ### Active extension version
-- **v0.1.23** installed and confirmed by user
-- daemon `bin/SafariPilotd` (universal binary) rebuilt + atomic-swapped via `scripts/update-daemon.sh`
+- **v0.1.24** installed and confirmed by user
+- Live verification: `lastReconcileTimestamp` advancing every 60s; T67 fix working
+- Storage auto-recovered on first wake — no manual cleanup needed
 
-### Test state at SHIP
-- TS unit: 392 / 392 PASS (`npm run test:unit`)
-- Swift daemon: 153 / 153 PASS (`swift test --package-path daemon`)
-- 5A.1 phase-0 spike: 2 / 2 PASS
-- 5A.1 file-upload e2e: 11 / 14 PASS, 3 SKIPPED (documented)
-- Full e2e: 88 / 14 / 3 in single run; full-suite cascade flake matches pre-existing T65 (5A.8 cookies passes 4/4 in isolation)
+### Test state at end of session
+- 398/398 unit tests PASS (npm run test:unit)
+- 153/153 Swift daemon tests PASS (cd daemon && swift test)
+- 11/14 5A.1 file_upload e2e PASS + 3 documented skip
+- 2/2 Phase 0 spike e2e PASS
+- 31/31 extension structural unit tests PASS (T55a + T60 + T67 + route-command + storage-keys)
 
-### Memory rules (still load-bearing)
+### Documentation canonicalization (this session)
+| File | Status |
+|---|---|
+| `README.md` | ✓ tool count 74→82, macOS 12→14+ recommended, full catalog rewrite, test counts, release SOP pointer |
+| `ARCHITECTURE.md` | ✓ date refreshed, tool count 78→82, modules table updated, T60+T67 paragraphs added, version history through v0.1.24 |
+| `skills/safari-pilot/SKILL.md` | ✓ 7 tools added to allowed-tools, 1 non-existent removed, File Upload section added |
+| `AGENTS.md` | ✓ pre-tag-check.sh command added |
+| `docs/changelogs/v0.1.24.md` | ✓ NEW — T67 forensics + SOP codification + verification + carried-forward limitations |
+
+### Memory rules (load-bearing for next session)
 - `feedback-no-system-manipulation` — never invoke pluginkit/lsregister/pkill
-- `feedback-extension-version-both-fields` — bump package.json AND extension/manifest.json
+- `feedback-extension-version-both-fields` — bump package.json AND extension/manifest.json in lockstep
 - `feedback-never-open-app-without-version-bump`
 - `feedback-distribution-builds`
 - `feedback-e2e-means-e2e` — zero mocks in test/e2e/
 - `feedback-e2e-tests-must-close-tabs` — URL markers `?sp_t<N>=`
 - `feedback-never-switch-user-tabs`
-- `feedback-no-scheduled-health-checks` — tests + telemetry only; no `/schedule` agents to "monitor" shipped code
+- `feedback-no-scheduled-health-checks` — tests + telemetry only
+- **NEW today:** Release SOP — always run `bash scripts/pre-tag-check.sh` before any tag push (CLAUDE.md hard rule #9)
 
-### Plan + spec locations
-- Spec: `docs/upp/specs/2026-05-03-safari-file-upload-design.md` (commit `8a670e7`)
-- Plan: `docs/upp/plans/2026-05-03-safari-file-upload-plan.md` (commit `6a974bf`, 21 tasks)
-- Changelog: `docs/changelogs/v0.1.23.md` (smoke rows pending)
+### Known stale items
+- TRACKER T66 row claims "Blocks merge of feat/file-upload" — branch already merged, sentence is stale.
+- `bin/SafariPilotd` was replaced locally with the universal binary downloaded from GitHub Release v0.1.24 (for the manual npm publish). It's gitignored, won't be committed; on next `npm ci` it'll be replaced by the postinstall flow.
+
+### Plan + spec locations (for resumption)
+- 5A.1 spec: `docs/upp/specs/2026-05-03-safari-file-upload-design.md`
+- 5A.1 plan: `docs/upp/plans/2026-05-03-safari-file-upload-plan.md`
+- T67 unit tests: `test/unit/extension/t67-storage-quota-blocks-reconcile.test.ts`
+- Pre-tag check: `scripts/pre-tag-check.sh`
+- Release SOP doc: `CLAUDE.md` "Release SOP" subsection
