@@ -65,21 +65,75 @@ public final class ExtensionSocketServer: @unchecked Sendable {
 
     // MARK: - Connection Handling
 
+    /// T69a: per-connection accumulation cap. Long click JS payloads observed
+    /// up to ~100 KB; anything past 4 MB indicates a misbehaving / malicious
+    /// client and we refuse rather than buffer indefinitely.
+    private static let maxAccumulatedBytes = 4 * 1024 * 1024
+
     private func handleConnection(_ connection: NWConnection) {
         connection.start(queue: queue)
+        receiveLoop(connection: connection, accumulated: Data())
+    }
 
-        connection.receive(minimumIncompleteLength: 1, maximumLength: 1_048_576) { [weak self] data, _, _, error in
-            guard let self = self, let data = data, !data.isEmpty else {
+    /// T69a — accumulate-until-newline. Pre-fix the receive callback fired
+    /// once per connection with `minimumIncompleteLength: 1` and immediately
+    /// dispatched whatever bytes had arrived so far. Any TCP-segmented
+    /// message (long click JS payloads >~64KB observed in production traces)
+    /// got dispatched as the truncated first segment → JSONSerialization
+    /// fails → PARSE_ERROR with id="unknown" → originating pending request
+    /// times out with no diagnostic. Post-fix we recurse the receive call,
+    /// appending bytes to a per-connection buffer until \n arrives, then
+    /// dispatch the complete line. Client request-response contract
+    /// unchanged: one command per connection, server cancels after sending
+    /// response.
+    private func receiveLoop(connection: NWConnection, accumulated: Data) {
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 65_536) { [weak self] data, _, isComplete, error in
+            guard let self = self else {
+                connection.cancel()
+                return
+            }
+            if let error = error {
+                Logger.warning("ExtensionSocketServer: receive error: \(error)")
                 connection.cancel()
                 return
             }
 
-            Task {
-                let responseData = await self.dispatchMessage(data: data)
-                connection.send(content: responseData, completion: .contentProcessed { _ in
+            var buffer = accumulated
+            if let data = data, !data.isEmpty {
+                buffer.append(data)
+            }
+
+            // Look for the end of the first complete line. The TS client
+            // contract is one NDJSON message per connection terminated by \n.
+            if let nlIndex = buffer.firstIndex(of: UInt8(ascii: "\n")) {
+                // Slice off the line (without the newline) and dispatch.
+                let lineData = buffer.prefix(upTo: nlIndex)
+                Task {
+                    let responseData = await self.dispatchMessage(data: Data(lineData))
+                    connection.send(content: responseData, completion: .contentProcessed { _ in
+                        connection.cancel()
+                    })
+                }
+                return
+            }
+
+            // No newline yet. If the buffer crossed the safety cap, refuse.
+            if buffer.count > Self.maxAccumulatedBytes {
+                let fallback = #"{"id":"unknown","ok":false,"error":{"code":"PARSE_ERROR","message":"Message exceeded max accumulated bytes without newline"}}"# + "\n"
+                connection.send(content: Data(fallback.utf8), completion: .contentProcessed { _ in
                     connection.cancel()
                 })
+                return
             }
+
+            // If the peer half-closed without sending a newline, give up.
+            if isComplete {
+                connection.cancel()
+                return
+            }
+
+            // More to come — recurse to read the next chunk.
+            self.receiveLoop(connection: connection, accumulated: buffer)
         }
     }
 
