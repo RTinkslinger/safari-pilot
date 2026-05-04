@@ -9,7 +9,7 @@
  */
 import { spawn, type ChildProcess } from 'node:child_process';
 import { join } from 'node:path';
-import { mkdirSync, createWriteStream, copyFileSync, existsSync, type WriteStream } from 'node:fs';
+import { mkdirSync, createWriteStream, copyFileSync, existsSync, appendFileSync, readFileSync, type WriteStream } from 'node:fs';
 import { homedir } from 'node:os';
 
 const TRACE_BASE = join(import.meta.dirname, '../../test-results/traces');
@@ -76,10 +76,50 @@ export class McpTestClient {
     if (id === undefined) {
       throw new Error('McpTestClient.send() requires a message with an id field');
     }
+    const sentAt = Date.now();
 
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
+        // T71 diagnostic — capture state at timeout to a sibling file so the
+        // next investigator can see WHY id=N stalled. Best-effort: never
+        // throws into the reject path.
+        try {
+          const elapsed = Date.now() - sentAt;
+          const params = (msg['params'] as Record<string, unknown> | undefined) ?? {};
+          const toolName = (params['name'] as string) ?? String(msg['method'] ?? 'unknown');
+          const toolArgs = (params['arguments'] as Record<string, unknown> | undefined) ?? {};
+          const pendingIds = Array.from(this.pending.keys());
+          const recentToolCalls = (() => {
+            try {
+              const lines = readFileSync(join(this.traceDir, 'tool-calls.jsonl'), 'utf-8')
+                .split('\n').filter((l) => l.trim());
+              return lines.slice(-5).map((l) => {
+                try {
+                  const o = JSON.parse(l) as Record<string, unknown>;
+                  return { ts: o['ts'], tool: o['tool'], engine: o['engine'], latencyMs: o['latencyMs'] };
+                } catch { return { raw: l.slice(0, 120) }; }
+              });
+            } catch { return [] as unknown[]; }
+          })();
+          const dump = {
+            event: 'mcp_send_timeout_T71',
+            ts: new Date().toISOString(),
+            id,
+            method: msg['method'],
+            tool: toolName,
+            args: toolArgs,
+            timeoutMs,
+            elapsedMs: elapsed,
+            pendingIdsAtTimeout: pendingIds,
+            pendingCount: pendingIds.length,
+            recentToolCalls,
+            traceDir: this.traceDir,
+          };
+          appendFileSync(join(this.traceDir, 'timeouts.jsonl'), JSON.stringify(dump) + '\n');
+          // Also surface a stderr breadcrumb so test logs show where to look.
+          process.stderr.write(`[T71-timeout] id=${id} tool=${toolName} elapsed=${elapsed}ms pending=${pendingIds.length} traceDir=${this.traceDir}\n`);
+        } catch { /* best-effort */ }
         reject(new Error(`MCP response timeout (${timeoutMs}ms) for id=${id}, method=${msg['method']}`));
       }, timeoutMs);
 
