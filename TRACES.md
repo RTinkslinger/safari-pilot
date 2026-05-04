@@ -14,6 +14,18 @@
 
 ## Current Work
 
+### Iteration 58 - 2026-05-04
+**What:** T77 A-5 fix — `and` branch role-path silently dropped `name` filter. Added `__andCands` variable + `if (__cop.locator.name)` guard (parity with `or` branch). 1 new regression test in `chain-logical.test.ts`.
+**Changes:** `src/locator.ts` (and-branch role path: inline querySelectorAll → __andCands with name filter), `test/unit/locators/chain-logical.test.ts` (1 new test: "emits intersection with role+name filter")
+**Context:** Gate review caught MAJOR: `{op:'and', locator:{role:'button', name:'Submit'}}` was getting unfiltered role intersection. Fix mirrors `or` branch pattern exactly. TDD: RED (new test fails on `__andCands`) → fix → GREEN (11/11). Full suite 475/475, lint clean.
+---
+
+### Iteration 57 - 2026-05-04
+**What:** T77 A-5 — added `or` (union with dedup) and `and` (intersection) branches to `generateLocatorJs` chain-op for-loop. Both ops resolve a secondary locator using `testId` or `role` (with optional `name`). 10 new unit tests in `test/unit/locators/chain-logical.test.ts`.
+**Changes:** `src/locator.ts` (or/and branches after descendant, before empty-break guard), `test/unit/locators/chain-logical.test.ts` (NEW — 10 tests)
+**Context:** Prescription test assertions had a systematic escaping bug — expected `"key"` (bare quotes) but `escapeForJs()` emits `\"key\"` (escaped). The advisor caught this before commit. Fixed by using `'\\"key\\":\\"value\\"'` form in the 5 affected assertions and adding `.replace(/\\"/g, '"')` to the composition-test decoder. Suite grew 464 → 474 (10 new, 0 regressions). Lint clean.
+---
+
 ### Iteration 56 - 2026-05-04
 **What:** T77 A-3 — added `filter` chain op to `generateLocatorJs` chain-op for-loop in `src/locator.ts`; supports `hasText`, `hasNotText`, `has` (nested: role/text/testId), `hasNot` (nested: role/testId). 10 new unit tests in `test/unit/locators/chain-filter.test.ts`.
 **Changes:** `src/locator.ts` (filter branch after nth in chain-op loop), `test/unit/locators/chain-filter.test.ts` (NEW — 10 tests)

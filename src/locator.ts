@@ -655,8 +655,49 @@ export function generateLocatorJs(
         }
       }
       matched = __next;
+    } else if (__cop.op === 'or') {
+        var __orMatches = [];
+        if (__cop.locator) {
+          if (__cop.locator.testId) {
+            var __orSel = '[data-testid="' + String(__cop.locator.testId).replace(/"/g, '\\\\"') + '"]';
+            __orMatches = Array.prototype.slice.call(document.querySelectorAll(__orSel));
+          } else if (__cop.locator.role) {
+            var __orRoleSel = '[role="' + __cop.locator.role + '"]';
+            var __orCands = Array.prototype.slice.call(document.querySelectorAll(__orRoleSel));
+            if (__cop.locator.name) {
+              __orCands = __orCands.filter(function (e) {
+                var n = (typeof e.computedName === 'string') ? e.computedName : (e.getAttribute('aria-label') || (e.textContent || '').trim());
+                return n && n.toLowerCase().indexOf(String(__cop.locator.name).toLowerCase()) !== -1;
+              });
+            }
+            __orMatches = __orCands;
+          }
+        }
+        var __orSet = matched.slice();
+        for (var __oi = 0; __oi < __orMatches.length; __oi++) {
+          if (__orSet.indexOf(__orMatches[__oi]) === -1) __orSet.push(__orMatches[__oi]);
+        }
+        matched = __orSet;
+      } else if (__cop.op === 'and') {
+        var __andMatches = [];
+        if (__cop.locator) {
+          if (__cop.locator.testId) {
+            var __andSel = '[data-testid="' + String(__cop.locator.testId).replace(/"/g, '\\\\"') + '"]';
+            __andMatches = Array.prototype.slice.call(document.querySelectorAll(__andSel));
+          } else if (__cop.locator.role) {
+            var __andRoleSel = '[role="' + __cop.locator.role + '"]';
+            var __andCands = Array.prototype.slice.call(document.querySelectorAll(__andRoleSel));
+            if (__cop.locator.name) {
+              __andCands = __andCands.filter(function (e) {
+                var n = (typeof e.computedName === 'string') ? e.computedName : (e.getAttribute('aria-label') || (e.textContent || '').trim());
+                return n && n.toLowerCase().indexOf(String(__cop.locator.name).toLowerCase()) !== -1;
+              });
+            }
+            __andMatches = __andCands;
+          }
+        }
+        matched = matched.filter(function (e) { return __andMatches.indexOf(e) !== -1; });
     }
-    // and / or ops added in A-5
     if (matched.length === 0) break;
   }
   `
