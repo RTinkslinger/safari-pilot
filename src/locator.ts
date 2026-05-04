@@ -617,8 +617,46 @@ export function generateLocatorJs(
         }
         return true;
       });
+    } else if (__cop.op === 'descendant') {
+      var __next = [];
+      for (var __mi = 0; __mi < matched.length; __mi++) {
+        var __parent = matched[__mi];
+        var __nestedRole = __cop.locator && __cop.locator.role;
+        var __nestedName = __cop.locator && __cop.locator.name;
+        var __nestedTestId = __cop.locator && __cop.locator.testId;
+        var __nestedText = __cop.locator && __cop.locator.text;
+        if (__nestedTestId) {
+          var __byId = __parent.querySelectorAll('[data-testid="' + String(__nestedTestId).replace(/"/g, '\\\\"') + '"]');
+          for (var __bi = 0; __bi < __byId.length; __bi++) __next.push(__byId[__bi]);
+        } else if (__nestedRole) {
+          var __sel = '[role="' + __nestedRole + '"]';
+          var __maybe = __parent.querySelectorAll(__sel);
+          for (var __ri = 0; __ri < __maybe.length; __ri++) {
+            var __cand = __maybe[__ri];
+            if (__nestedName) {
+              var __an = (typeof __cand.computedName === 'string')
+                ? __cand.computedName
+                : (__cand.getAttribute('aria-label') || (__cand.textContent || '').trim());
+              if (__an && __an.toLowerCase().indexOf(String(__nestedName).toLowerCase()) !== -1) {
+                __next.push(__cand);
+              }
+            } else {
+              __next.push(__cand);
+            }
+          }
+        } else if (typeof __nestedText === 'string') {
+          var __all = __parent.querySelectorAll('*');
+          for (var __ti = 0; __ti < __all.length; __ti++) {
+            var __et = (__all[__ti].innerText !== undefined ? __all[__ti].innerText : __all[__ti].textContent) || '';
+            if (__et.toLowerCase().indexOf(__nestedText.toLowerCase()) !== -1) {
+              __next.push(__all[__ti]);
+            }
+          }
+        }
+      }
+      matched = __next;
     }
-    // and / or / descendant ops added in A-4, A-5
+    // and / or ops added in A-5
     if (matched.length === 0) break;
   }
   `
