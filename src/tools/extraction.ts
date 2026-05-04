@@ -106,6 +106,14 @@ export class ExtractionTools {
             testId: { type: 'string', description: 'data-testid attribute value (exact match)' },
             placeholder: { type: 'string', description: 'placeholder attribute value' },
             exact: { type: 'boolean', description: 'Use exact matching instead of substring', default: false },
+            chain: {
+              type: 'array',
+              items: { type: 'object' },
+              description:
+                'T77: multi-step locator chain ops (Playwright-style). Each entry is one of: ' +
+                '{op:"filter", hasText|hasNotText|has|hasNot}, {op:"nth", n}, {op:"first"}, {op:"last"}, ' +
+                '{op:"and"|"or"|"descendant", locator}. Applied in order against the base locator match set.',
+            },
             maxLength: { type: 'number', description: 'Maximum characters to return', default: 50000 },
             multi: { type: 'boolean', description: 'When true, returns {matches: string[], count} for ALL matching elements via querySelectorAll. Default false returns first match only.', default: false },
             frameId: { type: 'number', description: 'Optional: target a specific iframe by frameId from safari_list_frames (cross-origin requires extension engine)' },
@@ -130,6 +138,14 @@ export class ExtractionTools {
             testId: { type: 'string', description: 'data-testid attribute value (exact match)' },
             placeholder: { type: 'string', description: 'placeholder attribute value' },
             exact: { type: 'boolean', description: 'Use exact matching instead of substring', default: false },
+            chain: {
+              type: 'array',
+              items: { type: 'object' },
+              description:
+                'T77: multi-step locator chain ops (Playwright-style). Each entry is one of: ' +
+                '{op:"filter", hasText|hasNotText|has|hasNot}, {op:"nth", n}, {op:"first"}, {op:"last"}, ' +
+                '{op:"and"|"or"|"descendant", locator}. Applied in order against the base locator match set.',
+            },
             outer: {
               type: 'boolean',
               description: 'true = outerHTML (includes the element itself), false = innerHTML (just contents)',
@@ -158,6 +174,14 @@ export class ExtractionTools {
             testId: { type: 'string', description: 'data-testid attribute value (exact match)' },
             placeholder: { type: 'string', description: 'placeholder attribute value' },
             exact: { type: 'boolean', description: 'Use exact matching instead of substring', default: false },
+            chain: {
+              type: 'array',
+              items: { type: 'object' },
+              description:
+                'T77: multi-step locator chain ops (Playwright-style). Each entry is one of: ' +
+                '{op:"filter", hasText|hasNotText|has|hasNot}, {op:"nth", n}, {op:"first"}, {op:"last"}, ' +
+                '{op:"and"|"or"|"descendant", locator}. Applied in order against the base locator match set.',
+            },
             attribute: { type: 'string', description: 'Attribute name: href, src, data-id, aria-label, etc.' },
             multi: { type: 'boolean', description: 'When true, returns {matches: (string|null)[], count} for ALL matching elements via querySelectorAll. null entries indicate the attribute is missing on that element. Default false returns first match only.', default: false },
             frameId: { type: 'number', description: 'Optional: target a specific iframe by frameId from safari_list_frames (cross-origin requires extension engine)' },

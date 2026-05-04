@@ -41,6 +41,7 @@ export const ERROR_CODES = {
   FILE_UPLOAD_ELEMENT_DETACHED: 'FILE_UPLOAD_ELEMENT_DETACHED',
   FILE_UPLOAD_MULTIPLE_NOT_ALLOWED: 'FILE_UPLOAD_MULTIPLE_NOT_ALLOWED',
   FILE_UPLOAD_INVALID_PARAMS: 'FILE_UPLOAD_INVALID_PARAMS',
+  STRICTNESS_VIOLATION: 'STRICTNESS_VIOLATION',
 } as const;
 // SD-22 (2026-04-25): removed 4 dead codes (ELEMENT_NOT_INTERACTABLE,
 // CROSS_ORIGIN_FRAME, DIALOG_UNEXPECTED, FRAME_NOT_FOUND) — declared but
@@ -634,6 +635,37 @@ export class FileUploadInvalidParamsError extends SafariPilotError {
   constructor(issue: string) {
     super(`Invalid parameters: ${issue}`);
     this.hints = [];
+  }
+}
+
+// ─── Strict-Mode Error (T77 / T80) ───────────────────────────────────────────
+
+/**
+ * T77 / T80: thrown by action tools (click/fill/hover/select_option/type/
+ * press_key/double_click/drag) when locator resolution yields >1 candidate
+ * elements without disambiguation (no first/last/nth/testId/xpath, no flat
+ * `nth`). Read tools (get_text/get_html/get_attribute) keep pick-first
+ * behavior to preserve v1 read semantics.
+ *
+ * Matches Playwright's strict-mode contract: actions must target exactly
+ * one element. Multi-match is a caller-side spec issue, not retryable.
+ */
+export class StrictnessViolationError extends SafariPilotError {
+  readonly code = ERROR_CODES.STRICTNESS_VIOLATION;
+  readonly retryable = false;
+  readonly hints: string[];
+  readonly matchCount: number;
+
+  constructor(matchCount: number, locatorDescription: string) {
+    super(
+      `Locator matched ${matchCount} elements, expected exactly 1: ${locatorDescription}`,
+    );
+    this.matchCount = matchCount;
+    this.hints = [
+      'Add .first(), .last(), or .nth(N) to the chain to disambiguate',
+      'Or refine the locator with filter:{hasText} / .filter() / role+name',
+      'Or use safari_query_all to act on all matches deliberately',
+    ];
   }
 }
 

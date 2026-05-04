@@ -34,7 +34,29 @@ export interface LocatorDescriptor {
    */
   filter?: { hasText?: string };
   exact?: boolean; // default false (substring, case-insensitive)
+  /**
+   * T77: Playwright-style locator chain. Each entry is a post-resolution
+   * operation (filter, nth/first/last positional pick, descendant re-rooting,
+   * and/or set composition). A-1 only defines the type and param extractor;
+   * A-2 through A-5 implement the in-page resolution logic in
+   * `generateLocatorJs`. Chain ops compose left-to-right.
+   */
+  chain?: ChainOp[];
 }
+
+/**
+ * T77: Discriminated union of locator chain operations. Mirrors Playwright's
+ * `locator.filter()`, `.nth()`, `.first()`, `.last()`, `.and()`, `.or()`,
+ * and descendant re-rooting (Playwright's `locator.locator()`).
+ */
+export type ChainOp =
+  | { op: 'filter'; hasText?: string; has?: LocatorDescriptor; hasNot?: LocatorDescriptor; hasNotText?: string }
+  | { op: 'nth'; n: number }
+  | { op: 'first' }
+  | { op: 'last' }
+  | { op: 'and'; locator: LocatorDescriptor }
+  | { op: 'or'; locator: LocatorDescriptor }
+  | { op: 'descendant'; locator: LocatorDescriptor };
 
 export interface LocatorOptions {
   /** Narrow search to descendants of this CSS selector. */
@@ -142,6 +164,18 @@ export function extractLocatorFromParams(
     if (typeof f.hasText === 'string') desc.filter = { hasText: f.hasText };
   }
   if (typeof params.exact === 'boolean') desc.exact = params.exact;
+  // T77: chain — array of ChainOp entries. Filter malformed entries (must be
+  // an object with a string `op` discriminator). Don't set `chain` if no
+  // valid entries survive.
+  if (Array.isArray(params.chain)) {
+    const chain: ChainOp[] = [];
+    for (const raw of params.chain as unknown[]) {
+      if (raw && typeof raw === 'object' && 'op' in raw && typeof (raw as { op: unknown }).op === 'string') {
+        chain.push(raw as ChainOp);
+      }
+    }
+    if (chain.length > 0) desc.chain = chain;
+  }
   return desc;
 }
 
@@ -511,20 +545,193 @@ export function generateLocatorJs(
     });
   }
 
-  // ── 5A.5: nth picker — index into matched, negative = from end ──
+  // ── 5A.5: nth picker (flat-param backward-compat — applies BEFORE chain) ──
   var nth = ${typeof locator.nth === 'number' ? locator.nth : 0};
-  var idx = nth < 0 ? matched.length + nth : nth;
-  if (idx < 0 || idx >= matched.length) {
+  if (typeof nth === 'number' && nth !== 0 && matched.length > 0) {
+    var idx = nth < 0 ? matched.length + nth : nth;
+    if (idx < 0 || idx >= matched.length) {
+      return JSON.stringify({
+        found: false,
+        locator: locatorDesc,
+        candidateCount: matched.length,
+        hint: 'nth=' + nth + ' is out of range (matched.length=' + matched.length + ')'
+      });
+    }
+    matched = [matched[idx]];
+  }
+
+  // ── T77: chain ops ──
+  ${locator.chain && locator.chain.length > 0
+    ? `
+  var __chainOps = JSON.parse('${escapeForJs(JSON.stringify(locator.chain))}');
+  for (var __ci = 0; __ci < __chainOps.length; __ci++) {
+    var __cop = __chainOps[__ci];
+    if (__cop.op === 'first') {
+      matched = matched.length > 0 ? [matched[0]] : [];
+    } else if (__cop.op === 'last') {
+      matched = matched.length > 0 ? [matched[matched.length - 1]] : [];
+    } else if (__cop.op === 'nth') {
+      var __chainIdx = __cop.n;
+      var __resolvedIdx = __chainIdx < 0 ? matched.length + __chainIdx : __chainIdx;
+      matched = (__resolvedIdx >= 0 && __resolvedIdx < matched.length) ? [matched[__resolvedIdx]] : [];
+    } else if (__cop.op === 'filter') {
+      matched = matched.filter(function (el) {
+        if (typeof __cop.hasText === 'string') {
+          var t = (el.innerText !== undefined ? el.innerText : el.textContent) || '';
+          if (t.toLowerCase().indexOf(__cop.hasText.toLowerCase()) === -1) return false;
+        }
+        if (typeof __cop.hasNotText === 'string') {
+          var tn = (el.innerText !== undefined ? el.innerText : el.textContent) || '';
+          if (tn.toLowerCase().indexOf(__cop.hasNotText.toLowerCase()) !== -1) return false;
+        }
+        if (__cop.has && typeof __cop.has === 'object') {
+          var hasMatch = false;
+          var probe = el.querySelectorAll('*');
+          for (var __pi = 0; __pi < probe.length; __pi++) {
+            if (__cop.has.role) {
+              var r = probe[__pi].getAttribute('role') || '';
+              if (r === __cop.has.role) { hasMatch = true; break; }
+            } else if (typeof __cop.has.text === 'string') {
+              var pt = (probe[__pi].innerText !== undefined ? probe[__pi].innerText : probe[__pi].textContent) || '';
+              if (pt.toLowerCase().indexOf(__cop.has.text.toLowerCase()) !== -1) { hasMatch = true; break; }
+            } else if (__cop.has.testId) {
+              var tid = probe[__pi].getAttribute('data-testid') || '';
+              if (tid === __cop.has.testId) { hasMatch = true; break; }
+            }
+          }
+          if (!hasMatch) return false;
+        }
+        if (__cop.hasNot && typeof __cop.hasNot === 'object') {
+          var hasNotMatch = false;
+          var nprobe = el.querySelectorAll('*');
+          for (var __npi = 0; __npi < nprobe.length; __npi++) {
+            if (__cop.hasNot.role) {
+              var nr = nprobe[__npi].getAttribute('role') || '';
+              if (nr === __cop.hasNot.role) { hasNotMatch = true; break; }
+            } else if (__cop.hasNot.testId) {
+              var ntid = nprobe[__npi].getAttribute('data-testid') || '';
+              if (ntid === __cop.hasNot.testId) { hasNotMatch = true; break; }
+            }
+          }
+          if (hasNotMatch) return false;
+        }
+        return true;
+      });
+    } else if (__cop.op === 'descendant') {
+      var __next = [];
+      for (var __mi = 0; __mi < matched.length; __mi++) {
+        var __parent = matched[__mi];
+        var __nestedRole = __cop.locator && __cop.locator.role;
+        var __nestedName = __cop.locator && __cop.locator.name;
+        var __nestedTestId = __cop.locator && __cop.locator.testId;
+        var __nestedText = __cop.locator && __cop.locator.text;
+        if (__nestedTestId) {
+          var __byId = __parent.querySelectorAll('[data-testid="' + String(__nestedTestId).replace(/"/g, '\\\\"') + '"]');
+          for (var __bi = 0; __bi < __byId.length; __bi++) __next.push(__byId[__bi]);
+        } else if (__nestedRole) {
+          var __sel = '[role="' + __nestedRole + '"]';
+          var __maybe = __parent.querySelectorAll(__sel);
+          for (var __ri = 0; __ri < __maybe.length; __ri++) {
+            var __cand = __maybe[__ri];
+            if (__nestedName) {
+              var __an = (typeof __cand.computedName === 'string')
+                ? __cand.computedName
+                : (__cand.getAttribute('aria-label') || (__cand.textContent || '').trim());
+              if (__an && __an.toLowerCase().indexOf(String(__nestedName).toLowerCase()) !== -1) {
+                __next.push(__cand);
+              }
+            } else {
+              __next.push(__cand);
+            }
+          }
+        } else if (typeof __nestedText === 'string') {
+          var __all = __parent.querySelectorAll('*');
+          for (var __ti = 0; __ti < __all.length; __ti++) {
+            var __et = (__all[__ti].innerText !== undefined ? __all[__ti].innerText : __all[__ti].textContent) || '';
+            if (__et.toLowerCase().indexOf(__nestedText.toLowerCase()) !== -1) {
+              __next.push(__all[__ti]);
+            }
+          }
+        }
+      }
+      matched = __next;
+    } else if (__cop.op === 'or') {
+        var __orMatches = [];
+        if (__cop.locator) {
+          if (__cop.locator.testId) {
+            var __orSel = '[data-testid="' + String(__cop.locator.testId).replace(/"/g, '\\\\"') + '"]';
+            __orMatches = Array.prototype.slice.call(document.querySelectorAll(__orSel));
+          } else if (__cop.locator.role) {
+            var __orRoleSel = '[role="' + __cop.locator.role + '"]';
+            var __orCands = Array.prototype.slice.call(document.querySelectorAll(__orRoleSel));
+            if (__cop.locator.name) {
+              __orCands = __orCands.filter(function (e) {
+                var n = (typeof e.computedName === 'string') ? e.computedName : (e.getAttribute('aria-label') || (e.textContent || '').trim());
+                return n && n.toLowerCase().indexOf(String(__cop.locator.name).toLowerCase()) !== -1;
+              });
+            }
+            __orMatches = __orCands;
+          }
+        }
+        var __orSet = matched.slice();
+        for (var __oi = 0; __oi < __orMatches.length; __oi++) {
+          if (__orSet.indexOf(__orMatches[__oi]) === -1) __orSet.push(__orMatches[__oi]);
+        }
+        matched = __orSet;
+      } else if (__cop.op === 'and') {
+        var __andMatches = [];
+        if (__cop.locator) {
+          if (__cop.locator.testId) {
+            var __andSel = '[data-testid="' + String(__cop.locator.testId).replace(/"/g, '\\\\"') + '"]';
+            __andMatches = Array.prototype.slice.call(document.querySelectorAll(__andSel));
+          } else if (__cop.locator.role) {
+            var __andRoleSel = '[role="' + __cop.locator.role + '"]';
+            var __andCands = Array.prototype.slice.call(document.querySelectorAll(__andRoleSel));
+            if (__cop.locator.name) {
+              __andCands = __andCands.filter(function (e) {
+                var n = (typeof e.computedName === 'string') ? e.computedName : (e.getAttribute('aria-label') || (e.textContent || '').trim());
+                return n && n.toLowerCase().indexOf(String(__cop.locator.name).toLowerCase()) !== -1;
+              });
+            }
+            __andMatches = __andCands;
+          }
+        }
+        matched = matched.filter(function (e) { return __andMatches.indexOf(e) !== -1; });
+    }
+    if (matched.length === 0) break;
+  }
+  `
+    : ''}
+
+  if (matched.length === 0) {
     return JSON.stringify({
       found: false,
       locator: locatorDesc,
-      candidateCount: matched.length,
-      hint: 'nth=' + nth + ' is out of range (matched.length=' + matched.length + ')'
+      candidateCount: 0,
+      hint: 'No elements matched after chain ops'
     });
   }
 
-  // Stamp the picked match with a data-sp-ref for subsequent tool calls
-  var target = matched[idx];
+  // T80: compute strictnessSatisfied flag.
+  // True when: matched.length === 1, OR base locator is testId/xpath
+  // (single-match by definition), OR flat nth was set, OR chain terminates
+  // with first/last/nth.
+  var __strictnessSatisfied = matched.length === 1;
+  if (!__strictnessSatisfied) {
+    if (locatorDesc.testId || locatorDesc.xpath) __strictnessSatisfied = true;
+  }
+  if (!__strictnessSatisfied && typeof locatorDesc.nth === 'number') __strictnessSatisfied = true;
+  if (!__strictnessSatisfied && locatorDesc.chain && locatorDesc.chain.length > 0) {
+    var __lastOp = locatorDesc.chain[locatorDesc.chain.length - 1];
+    if (__lastOp && (__lastOp.op === 'first' || __lastOp.op === 'last' || __lastOp.op === 'nth')) {
+      __strictnessSatisfied = true;
+    }
+  }
+
+  // Always pick first for the legacy single-result envelope (read tools rely on this).
+  // Action tools inspect matchCount + strictnessSatisfied at the handler level
+  // and throw STRICTNESS_VIOLATION when matchCount > 1 && !strictnessSatisfied.
+  var target = matched[0];
   var refId = 'sp-' + Math.random().toString(36).substring(2, 8);
   target.setAttribute('data-sp-ref', refId);
 
@@ -536,6 +743,7 @@ export function generateLocatorJs(
       id: target.id || '',
       textContent: normalizeWhitespace((target.textContent || '').substring(0, 200))
     },
-    matchCount: matched.length
+    matchCount: matched.length,
+    strictnessSatisfied: __strictnessSatisfied
   });`;
 }

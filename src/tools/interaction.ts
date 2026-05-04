@@ -6,6 +6,7 @@ import { buildRefSelector } from '../aria.js';
 import { generateAutoWaitJs, ACTION_CHECKS } from '../auto-wait.js';
 import { hasLocatorParams, extractLocatorFromParams, generateLocatorJs } from '../locator.js';
 import { escapeForJsSingleQuote } from '../escape.js';
+import { StrictnessViolationError } from '../errors.js';
 
 export interface ToolDefinition {
   name: string;
@@ -50,6 +51,7 @@ export class InteractionTools {
   private async resolveElement(
     tabUrl: string,
     params: Record<string, unknown>,
+    strict = false,
   ): Promise<string> {
     const ref = params['ref'] as string | undefined;
     if (ref) return buildRefSelector(ref);
@@ -60,7 +62,13 @@ export class InteractionTools {
       const result = await this.engine.executeJsInTab(tabUrl, locatorJs);
       if (result.ok && result.value) {
         const parsed = JSON.parse(result.value);
-        if (parsed.found && parsed.selector) return parsed.selector;
+        if (parsed.found && parsed.selector) {
+          // T80: action tools enforce strict mode — multi-match without disambiguation throws.
+          if (strict && parsed.matchCount > 1 && parsed.strictnessSatisfied === false) {
+            throw new StrictnessViolationError(parsed.matchCount, JSON.stringify(locator));
+          }
+          return parsed.selector;
+        }
         throw new Error(parsed.hint || 'Locator did not match any element');
       }
       throw new Error('Locator resolution failed');
@@ -125,6 +133,15 @@ export class InteractionTools {
       xpath: { type: 'string', description: "XPath expression (e.g. '//button[@id=\"submit\"]'). Takes priority over every other locator key — the most explicit target wins." },
       exact: { type: 'boolean', description: 'Use exact matching instead of substring', default: false },
       force: { type: 'boolean', description: 'Skip auto-wait actionability checks', default: false },
+      chain: {
+        type: 'array',
+        items: { type: 'object' },
+        description:
+          'T77: multi-step locator chain ops (Playwright-style). Each entry is one of: ' +
+          '{op:"filter", hasText|hasNotText|has|hasNot}, {op:"nth", n}, {op:"first"}, {op:"last"}, ' +
+          '{op:"and"|"or"|"descendant", locator}. Applied in order against the base locator match set. ' +
+          'Action tools throw STRICTNESS_VIOLATION on multi-match unless chain ends in first/last/nth.',
+      },
     };
 
     return [
@@ -281,6 +298,11 @@ export class InteractionTools {
             role: { type: 'string', description: "ARIA role to target (e.g. 'textbox')" },
             name: { type: 'string', description: 'Accessible name to match (with role)' },
             testId: { type: 'string', description: 'data-testid attribute value' },
+            chain: {
+              type: 'array',
+              items: { type: 'object' },
+              description: 'T77: multi-step locator chain ops. Same envelope as elementTargetingParams.chain.',
+            },
           },
           required: ['tabUrl', 'key'],
         },
@@ -394,7 +416,7 @@ export class InteractionTools {
     // middle is "open in new tab" which our automation cannot replicate via JS.
     const followLinks = buttonNum === 0 ? 'true' : 'false';
 
-    const selector = await this.resolveElement(tabUrl, params);
+    const selector = await this.resolveElement(tabUrl, params, true);
     const escapedSelector = escapeForJsSingleQuote(selector);
 
     const actionJs = `
@@ -483,7 +505,7 @@ export class InteractionTools {
     const timeout = typeof params['timeout'] === 'number' ? params['timeout'] : 5000;
     const force = params['force'] === true;
 
-    const selector = await this.resolveElement(tabUrl, params);
+    const selector = await this.resolveElement(tabUrl, params, true);
     const escapedSelector = escapeForJsSingleQuote(selector);
 
     const actionJs = `
@@ -520,7 +542,7 @@ export class InteractionTools {
     const timeout = typeof params['timeout'] === 'number' ? params['timeout'] : 10000;
     const force = params['force'] === true;
 
-    const selector = await this.resolveElement(tabUrl, params);
+    const selector = await this.resolveElement(tabUrl, params, true);
     const escapedSelector = escapeForJsSingleQuote(selector);
     const escapedValue = escapeForJsSingleQuote(value);
 
@@ -592,7 +614,7 @@ export class InteractionTools {
     const optionLabel = params['optionLabel'] as string | undefined;
     const optionIndex = params['optionIndex'] as number | undefined;
 
-    const selector = await this.resolveElement(tabUrl, params);
+    const selector = await this.resolveElement(tabUrl, params, true);
     const escapedSelector = escapeForJsSingleQuote(selector);
 
     const actionJs = `
@@ -625,7 +647,7 @@ export class InteractionTools {
     const timeout = typeof params['timeout'] === 'number' ? params['timeout'] : 5000;
     const force = params['force'] === true;
 
-    const selector = await this.resolveElement(tabUrl, params);
+    const selector = await this.resolveElement(tabUrl, params, true);
     const escapedSelector = escapeForJsSingleQuote(selector);
 
     const actionJs = `
@@ -651,7 +673,7 @@ export class InteractionTools {
     const timeout = typeof params['timeout'] === 'number' ? params['timeout'] : 5000;
     const force = params['force'] === true;
 
-    const selector = await this.resolveElement(tabUrl, params);
+    const selector = await this.resolveElement(tabUrl, params, true);
     const escapedSelector = escapeForJsSingleQuote(selector);
 
     const actionJs = `
@@ -679,7 +701,7 @@ export class InteractionTools {
     // 'content' avoids collision with locator 'text' param
     const content = params['content'] as string;
 
-    const selector = await this.resolveElement(tabUrl, params);
+    const selector = await this.resolveElement(tabUrl, params, true);
     const escapedSelector = escapeForJsSingleQuote(selector);
     const escapedText = escapeForJsSingleQuote(content);
 
@@ -718,7 +740,7 @@ export class InteractionTools {
     const hasTarget = params['ref'] || params['selector'] || hasLocatorParams(params);
     let escapedSelector = '';
     if (hasTarget) {
-      const selector = await this.resolveElement(tabUrl, params);
+      const selector = await this.resolveElement(tabUrl, params, true);
       escapedSelector = escapeForJsSingleQuote(selector);
     }
 

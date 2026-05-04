@@ -360,6 +360,24 @@ function makeHandler() {
       return;
     }
 
+    // T77 — locator chaining + T80 strict mode fixture.
+    // Three list items with per-item Add-to-cart buttons, one Cancel button,
+    // and one Cancel link. Used by T77 chaining tests and T80 strictness tests.
+    if (url === '/t77-list') {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(`<!doctype html>
+<html><head><title>T77 list</title></head><body>
+  <ul id="products">
+    <li data-product="p1">Product 1 <button>Add to cart</button></li>
+    <li data-product="p2">Product 2 <button>Add to cart</button></li>
+    <li data-product="p3">Product 3 <button>Add to cart</button></li>
+  </ul>
+  <button data-testid="cancel">Cancel</button>
+  <a href="#" data-testid="cancel-link">Cancel</a>
+</body></html>`);
+      return;
+    }
+
     if (url === '/t65-form') {
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
       res.end(`<!DOCTYPE html><html><body>

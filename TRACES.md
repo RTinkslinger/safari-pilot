@@ -14,6 +14,50 @@
 
 ## Current Work
 
+### Iteration 60 - 2026-05-04 — Cluster A SHIPPED (T77 + T80)
+**What:** T77 locator chaining + T80 strict-mode action enforcement merged. Cluster A of locator-system v2 plan complete (11/11 tasks). Iters 56-59 covered the per-task work; this iter is the cluster-merge milestone.
+
+**Final commit chain on `feat/T77-locator-chaining`:** A-0 tracker entries → A-1 ChainOp type + chain field → A-2 nth/first/last → A-3 filter → A-4 descendant → A-5 and/or (+ name-filter parity fix) → A-6 STRICTNESS_VIOLATION error → A-7+A-8 inputSchema chain wiring → A-9/T80 strict-mode action enforcement → A-10 e2e against real Safari (10/10 PASS).
+
+**Quantitative deltas:**
+- Unit suite: 415 → **504** (+89 across 7 new test files in `test/unit/locators/` + `test/unit/errors/` + `test/unit/tools/`)
+- E2E: 19 → **29** (+10 in T77-locator-chaining.test.ts; 10/10 PASS, no flake on real Safari)
+- New error code: STRICTNESS_VIOLATION (22 codes total)
+- Locator descriptor extends from 9 fields → 10 (added `chain?: ChainOp[]`)
+- 7 new chain ops shipped: filter (with hasText/hasNotText/has/hasNot), nth, first, last, and, or, descendant
+
+**Context preserved for Cluster B/C:**
+- Single-element envelope from `generateLocatorJs` returns `{found, selector, element, matchCount, strictnessSatisfied}` — query_all (T78) will replace the result section with multi-element payload reusing the same chain-resolution machinery.
+- Ref scheme `data-sp-ref="sp-xxxxxx"` stamped on `matched[0]` — T78 will stamp every element in the matched set with the same scheme so refs flow through every existing action tool unchanged.
+- Strict mode in interaction.ts handlers via shared `resolveElement(strict=true)` — read tools (extraction.ts) deliberately do NOT import StrictnessViolationError to preserve pick-first behavior. T78 query_all is multi-element by design and bypasses strict mode entirely.
+
+**Cluster B (T78) and Cluster C (T79) pending — separate branches per plan.**
+---
+
+### Iteration 59 - 2026-05-04
+**What:** T77 A-9 / T80 — strict-mode action enforcement. Action tools now throw `StrictnessViolationError` on multi-match without disambiguation; read tools keep pick-first behavior.
+**Changes:** `src/locator.ts` (result block: added `__strictnessSatisfied` computation + `strictnessSatisfied` field in JSON envelope, `matchCount` already present), `src/tools/interaction.ts` (import `StrictnessViolationError`; `resolveElement` gains `strict = false` param; 8 action handlers pass `true`; scroll handler stays default), `test/unit/locators/chain-strict-action.test.ts` (NEW — 9 tests: 5 JS-string-generation + 4 handler-level)
+**Context:** Shared `resolveElement` pattern made the "add check to each handler" prescription simpler as one `strict` param — passes all 9 paths without duplication. `safari_drag` uses its own resolution (sourceRef/sourceSelector), not locators, so not in scope. Suite grew 492 → 501 (9 new, 0 regressions). Lint clean.
+---
+
+### Iteration 58 - 2026-05-04
+**What:** T77 A-5 fix — `and` branch role-path silently dropped `name` filter. Added `__andCands` variable + `if (__cop.locator.name)` guard (parity with `or` branch). 1 new regression test in `chain-logical.test.ts`.
+**Changes:** `src/locator.ts` (and-branch role path: inline querySelectorAll → __andCands with name filter), `test/unit/locators/chain-logical.test.ts` (1 new test: "emits intersection with role+name filter")
+**Context:** Gate review caught MAJOR: `{op:'and', locator:{role:'button', name:'Submit'}}` was getting unfiltered role intersection. Fix mirrors `or` branch pattern exactly. TDD: RED (new test fails on `__andCands`) → fix → GREEN (11/11). Full suite 475/475, lint clean.
+---
+
+### Iteration 57 - 2026-05-04
+**What:** T77 A-5 — added `or` (union with dedup) and `and` (intersection) branches to `generateLocatorJs` chain-op for-loop. Both ops resolve a secondary locator using `testId` or `role` (with optional `name`). 10 new unit tests in `test/unit/locators/chain-logical.test.ts`.
+**Changes:** `src/locator.ts` (or/and branches after descendant, before empty-break guard), `test/unit/locators/chain-logical.test.ts` (NEW — 10 tests)
+**Context:** Prescription test assertions had a systematic escaping bug — expected `"key"` (bare quotes) but `escapeForJs()` emits `\"key\"` (escaped). The advisor caught this before commit. Fixed by using `'\\"key\\":\\"value\\"'` form in the 5 affected assertions and adding `.replace(/\\"/g, '"')` to the composition-test decoder. Suite grew 464 → 474 (10 new, 0 regressions). Lint clean.
+---
+
+### Iteration 56 - 2026-05-04
+**What:** T77 A-3 — added `filter` chain op to `generateLocatorJs` chain-op for-loop in `src/locator.ts`; supports `hasText`, `hasNotText`, `has` (nested: role/text/testId), `hasNot` (nested: role/testId). 10 new unit tests in `test/unit/locators/chain-filter.test.ts`.
+**Changes:** `src/locator.ts` (filter branch after nth in chain-op loop), `test/unit/locators/chain-filter.test.ts` (NEW — 10 tests)
+**Context:** Prescription assertion patterns used plain `"` chars but generated JS has `\"` (escapeForJs). Fixed 5 assertions to use `'\\"key\\":\\"value\\"'` form, mirroring A-2 precedent at chain-positional.test.ts:46. Suite grew 442 → 452 (10 new, 0 regressions).
+---
+
 ### Iteration 55 - 2026-05-04
 **What:** Post–Phase-5A queue execution session. Closed 5 tracker items end-to-end, drove multi-file e2e sweep flake rate from 80% to 0%, achieved 100% MCP-tool e2e coverage (was 40%). Two extension releases shipped locally (v0.1.25 + v0.1.26, signed/notarized/stapled). 5 new tracker items filed honestly with reproduction recipes. ~20 commits ahead of origin/main, pushing to publish v0.1.26.
 
