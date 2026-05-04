@@ -64,6 +64,14 @@ const ACCOUNT_SETTINGS_PATTERNS: RegExp[] = [
   /\/security\/two-factor/i,
 ];
 
+/** T79: Sensitive tool actions that ALWAYS require approval, regardless of URL or params.
+ *  These are tool calls whose mere invocation is a security-relevant decision —
+ *  e.g., registering a custom JS-injection selector engine. */
+const SENSITIVE_TOOL_ACTIONS: Record<string, string> = {
+  safari_register_selector:
+    'Custom selector engine registration is a JS injection surface — body is wrapped in new Function() in page context',
+};
+
 /** Sensitive field names in form submissions. */
 const SENSITIVE_FORM_FIELDS: RegExp[] = [
   /^password$/i,
@@ -106,6 +114,16 @@ export class HumanApproval {
     url: string,
     params?: Record<string, unknown>,
   ): ApprovalResult {
+    // 0. Sensitive tool actions — fire regardless of URL/params (T79).
+    const sensitiveReason = SENSITIVE_TOOL_ACTIONS[action];
+    if (sensitiveReason !== undefined) {
+      return {
+        required: true,
+        category: 'tool_action',
+        reason: sensitiveReason,
+      };
+    }
+
     // 1. OAuth / SSO flows
     if (matchesAny(url, OAUTH_URL_PATTERNS)) {
       return {
