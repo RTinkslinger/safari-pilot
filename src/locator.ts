@@ -34,7 +34,29 @@ export interface LocatorDescriptor {
    */
   filter?: { hasText?: string };
   exact?: boolean; // default false (substring, case-insensitive)
+  /**
+   * T77: Playwright-style locator chain. Each entry is a post-resolution
+   * operation (filter, nth/first/last positional pick, descendant re-rooting,
+   * and/or set composition). A-1 only defines the type and param extractor;
+   * A-2 through A-5 implement the in-page resolution logic in
+   * `generateLocatorJs`. Chain ops compose left-to-right.
+   */
+  chain?: ChainOp[];
 }
+
+/**
+ * T77: Discriminated union of locator chain operations. Mirrors Playwright's
+ * `locator.filter()`, `.nth()`, `.first()`, `.last()`, `.and()`, `.or()`,
+ * and descendant re-rooting (Playwright's `locator.locator()`).
+ */
+export type ChainOp =
+  | { op: 'filter'; hasText?: string; has?: LocatorDescriptor; hasNot?: LocatorDescriptor; hasNotText?: string }
+  | { op: 'nth'; n: number }
+  | { op: 'first' }
+  | { op: 'last' }
+  | { op: 'and'; locator: LocatorDescriptor }
+  | { op: 'or'; locator: LocatorDescriptor }
+  | { op: 'descendant'; locator: LocatorDescriptor };
 
 export interface LocatorOptions {
   /** Narrow search to descendants of this CSS selector. */
@@ -142,6 +164,18 @@ export function extractLocatorFromParams(
     if (typeof f.hasText === 'string') desc.filter = { hasText: f.hasText };
   }
   if (typeof params.exact === 'boolean') desc.exact = params.exact;
+  // T77: chain — array of ChainOp entries. Filter malformed entries (must be
+  // an object with a string `op` discriminator). Don't set `chain` if no
+  // valid entries survive.
+  if (Array.isArray(params.chain)) {
+    const chain: ChainOp[] = [];
+    for (const raw of params.chain as unknown[]) {
+      if (raw && typeof raw === 'object' && 'op' in raw && typeof (raw as { op: unknown }).op === 'string') {
+        chain.push(raw as ChainOp);
+      }
+    }
+    if (chain.length > 0) desc.chain = chain;
+  }
   return desc;
 }
 
