@@ -125,6 +125,15 @@ export class InteractionTools {
       xpath: { type: 'string', description: "XPath expression (e.g. '//button[@id=\"submit\"]'). Takes priority over every other locator key — the most explicit target wins." },
       exact: { type: 'boolean', description: 'Use exact matching instead of substring', default: false },
       force: { type: 'boolean', description: 'Skip auto-wait actionability checks', default: false },
+      chain: {
+        type: 'array',
+        items: { type: 'object' },
+        description:
+          'T77: multi-step locator chain ops (Playwright-style). Each entry is one of: ' +
+          '{op:"filter", hasText|hasNotText|has|hasNot}, {op:"nth", n}, {op:"first"}, {op:"last"}, ' +
+          '{op:"and"|"or"|"descendant", locator}. Applied in order against the base locator match set. ' +
+          'Action tools throw STRICTNESS_VIOLATION on multi-match unless chain ends in first/last/nth.',
+      },
     };
 
     return [
@@ -281,6 +290,11 @@ export class InteractionTools {
             role: { type: 'string', description: "ARIA role to target (e.g. 'textbox')" },
             name: { type: 'string', description: 'Accessible name to match (with role)' },
             testId: { type: 'string', description: 'data-testid attribute value' },
+            chain: {
+              type: 'array',
+              items: { type: 'object' },
+              description: 'T77: multi-step locator chain ops. Same envelope as elementTargetingParams.chain.',
+            },
           },
           required: ['tabUrl', 'key'],
         },
