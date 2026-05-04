@@ -8,6 +8,10 @@
 // synchronous, no external dependencies, uses `var` for Safari compat.
 // ─────────────────────────────────────────────────────────────────────────────
 
+import type { IEngine } from './engines/engine.js';
+import { routeFrameAware } from './tools/_frame-routing-helper.js';
+import { escapeForJsSingleQuote } from './escape.js';
+
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 export interface LocatorDescriptor {
@@ -810,4 +814,73 @@ export function generateQueryAllJs(
     limit: __limit,
     truncated: __truncated,
   });`;
+}
+
+/**
+ * T79 C-6: parse a `pack:<name>` or `pack:<name>=<arg>` selector reference.
+ *
+ * Returns null for any selector that doesn't start with `pack:` so callers
+ * can safely fall through to CSS / locator processing on a null result.
+ */
+export function parsePackSelector(selector: string): { name: string; arg: string } | null {
+  if (!selector.startsWith('pack:')) return null;
+  const rest = selector.slice(5);
+  const eqIdx = rest.indexOf('=');
+  if (eqIdx === -1) return { name: rest, arg: '' };
+  return { name: rest.slice(0, eqIdx), arg: rest.slice(eqIdx + 1) };
+}
+
+/**
+ * T79 C-7: If `selector` is a `pack:<name>` or `pack:<name>=<arg>` reference,
+ * call the registered in-page pack function (`window.__sp_pack[name]`), stamp
+ * the returned element with `data-sp-ref`, and return the new `[data-sp-ref="..."]`
+ * selector. If `selector` is undefined or not a pack prefix, return it unchanged.
+ *
+ * Throws when:
+ * - The engine call fails (propagates engine error message).
+ * - The pack is not registered in the page (`found: false`).
+ * - The pack threw an exception or returned a non-element.
+ *
+ * Frame routing: uses `routeFrameAware` so cross-origin frame targeting (when
+ * `frameId > 0`) is handled consistently with other frame-aware tools.
+ * Note: frame support for selectorPack is a v1 best-effort — the pack function
+ * runs in the top frame when frameId is undefined/0, and in the specified frame
+ * when frameId > 0 and the extension engine is active.
+ */
+export async function resolveMaybePackSelector(
+  engine: IEngine,
+  routeParams: { tabUrl: string; frameId?: number },
+  selector: string | undefined,
+): Promise<string | undefined> {
+  if (!selector) return selector;
+  const parsed = parsePackSelector(selector);
+  if (!parsed) return selector;
+
+  const escapedName = escapeForJsSingleQuote(parsed.name);
+  const escapedArg = escapeForJsSingleQuote(parsed.arg);
+  const packJs = `
+    (function () {
+      if (!window.__sp_pack || !window.__sp_pack['${escapedName}']) {
+        return JSON.stringify({ found: false, hint: 'selectorPack ${escapedName} not registered' });
+      }
+      try {
+        var fn = window.__sp_pack['${escapedName}'];
+        var el = fn(document, '${escapedArg}');
+        if (!el || el.nodeType !== 1) return JSON.stringify({ found: false, hint: 'pack returned non-element' });
+        var ref = 'sp-' + Math.random().toString(36).substring(2, 8);
+        el.setAttribute('data-sp-ref', ref);
+        return JSON.stringify({ found: true, selector: '[data-sp-ref="' + ref + '"]' });
+      } catch (e) {
+        return JSON.stringify({ found: false, hint: 'pack threw: ' + (e && e.message ? e.message : String(e)) });
+      }
+    })();
+  `;
+
+  const result = await routeFrameAware(engine, routeParams, packJs);
+  if (!result.ok) throw new Error(result.error?.message ?? 'selectorPack resolution failed');
+  const parsedResult = result.value ? JSON.parse(result.value) : { found: false, hint: 'no result' };
+  if (!parsedResult.found || !parsedResult.selector) {
+    throw new Error(parsedResult.hint || 'selectorPack did not match');
+  }
+  return parsedResult.selector as string;
 }

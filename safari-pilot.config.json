@@ -40,5 +40,9 @@
   "extension": {
     "enabled": true,
     "killSwitchVersion": "0.1.5"
+  },
+
+  "selectorPack": {
+    "enabled": false
   }
 }

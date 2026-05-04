@@ -378,6 +378,19 @@ function makeHandler() {
       return;
     }
 
+    // T79 — selectorPack custom engines fixture.
+    // 3 rows with data-status; pack engines query by status value.
+    if (url === '/t79-pack') {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(`<!doctype html>
+<html><head><title>T79 pack</title></head><body>
+  <div data-status="approved">Row A</div>
+  <div data-status="pending">Row B</div>
+  <div data-status="approved">Row C</div>
+</body></html>`);
+      return;
+    }
+
     // T78 — safari_query_all multi-element extraction fixture.
     // 4 cells, each with a Buy button. Used to verify rich-payload shape, limit
     // capping, and ref flow into action tools.

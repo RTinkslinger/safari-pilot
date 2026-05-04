@@ -20,6 +20,7 @@ import { ClipboardTools } from './tools/clipboard.js';
 import { ServiceWorkerTools } from './tools/service-workers.js';
 import { PerformanceTools } from './tools/performance.js';
 import { StructuredExtractionTools } from './tools/structured-extraction.js';
+import { SelectorPackTools } from './tools/selector-pack.js';
 import { WaitTools } from './tools/wait.js';
 import { CompoundTools } from './tools/compound.js';
 import { DownloadTools } from './tools/downloads.js';
@@ -335,6 +336,7 @@ export class SafariPilotServer {
     const compoundTools = new CompoundTools(engine);
     const downloadTools = new DownloadTools(this);
     const pdfTools = new PdfTools(this);
+    const selectorPackTools = new SelectorPackTools(proxy, this.config.selectorPack);
     const extensionDiagnosticsTools = new ExtensionDiagnosticsTools(
       daemonAvailable ? daemonEngine : null,
     );
@@ -371,6 +373,7 @@ export class SafariPilotServer {
       downloadTools,
       pdfTools,
       extensionDiagnosticsTools,
+      selectorPackTools,
     ];
 
     for (const module of modules) {

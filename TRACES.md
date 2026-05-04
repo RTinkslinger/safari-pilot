@@ -14,6 +14,38 @@
 
 ## Current Work
 
+### Iteration 62 - 2026-05-04 — Cluster C SHIPPED (T79 selectorPack)
+**What:** T79 selectorPack custom engines merged. Cluster C of locator-system v2 plan complete (10/10 tasks: C-0 through C-9, then C-10 close+merge). Two new MCP tools (`safari_register_selector`, `safari_unregister_selector`) gated behind `selectorPack.enabled` feature flag (default false). Pack names referenceable as `pack:<name>=arg` in any extraction tool's `selector` param. Tab-scoped storage with `tabs.onRemoved` auto-clear. **SECURITY-SENSITIVE.**
+
+**Final commit chain on `feat/T79-selector-pack`:** `748765d` (C-0 tracker) → `e93feb0` (C-1 validators: name regex, body 32KB cap, eval/Function/import substring rejection) → `706f625` (C-2 feature flag with strict-bool coercion) → `f87227e` (C-3 SelectorPackTools register+unregister handlers) → `0cc32cc` (C-4 server.ts wiring) → `50bd04c` (C-5 HumanApproval gate via SENSITIVE_TOOL_ACTIONS map) → `f96eee3` (C-6 parsePackSelector parser) → `90de441` (C-7 resolveMaybePackSelector helper + 4 extraction.ts insertions) → `6456cb5` (C-8 extension/background.js onRemoved listener) → `8d5e79a` (C-9 e2e + harness opt-in via SAFARI_PILOT_CONFIG).
+
+**Quantitative deltas:**
+- Unit suite: 513 → **551** (+38 across 9 new test files: validator, flag, tools, wiring, human-approval, parser, helper, onRemoved, plus C-3's 5-test file)
+- E2E: 35 → **38** (+3 in T79-selector-pack.test.ts; 3/3 PASS, no flake on real Safari with v0.1.26 extension)
+- New MCP tools: `safari_register_selector` + `safari_unregister_selector` (79 tools total, but feature-flagged off by default)
+- New ref scheme: `pack:<name>=arg` selector prefix, resolved via `resolveMaybePackSelector` in `src/locator.ts`
+
+**Security stance — locked, end-to-end verified:**
+- Feature flag default off (strict-bool coercion in loadConfig defends against truthy-non-bool config injection)
+- Two-layer defense: validators (C-1) reject eval/Function/import substrings + 32KB body cap + name regex; HumanApproval gate (C-5) fires on `safari_register_selector` regardless of URL/params (C-9 e2e proves the gate fires).
+- Body wrapped in `new Function('root', 'arg', body)` — never eval. C-3 reviewer confirmed.
+- Both `name` and `arg` escaped via `escapeForJsSingleQuote` before single-quote interpolation (defense-in-depth even after validation).
+- Tab-scoped storage `sp_pack_<tabId>_<name>` cleared on `tabs.onRemoved` (C-8 — extension change ships at v0.1.27 rebuild).
+
+**Plan defects fixed during execution:**
+- C-2 plan signature `loadConfig({input})` — actual API is `loadConfig(path?)`. Tests use real temp-file boundary, no mocks.
+- C-5 plan assumed per-tool sensitive-action map exists — actual `HumanApproval` is heuristic. Adapted by adding `SENSITIVE_TOOL_ACTIONS` map at top of `requiresApproval`.
+- C-9 plan used `McpTestClient.start({configOverride})` API that doesn't exist — actual is shared singleton. Adapted by adding `SAFARI_PILOT_CONFIG` env in shared-client.ts → test-config.json. Existing e2e tests unaffected (flag only enables NEW tools).
+- C-9 plan tested validator rejection at e2e level — but HumanApproval fires first, so validators never reach the e2e layer. Validator behavior is fully unit-tested in C-1 and C-3.
+
+**Context preserved for FINAL release (v0.1.27):**
+- Extension `tabs.onRemoved` listener (C-8) requires extension rebuild at FINAL-1. Until then, the v0.1.26 extension is fully compatible — selectorPack feature works against it for register/use/unregister within a single tab session; tab-close cleanup just won't fire until v0.1.27 lands.
+- All architectural decisions persisted in this iteration entry, the plan, research docs, and TRACKER.
+
+**Cluster A (T77 + T80), B (T78), and C (T79) all SHIPPED.** FINAL release pending: version bump v0.1.27 + extension rebuild + pre-tag-check + tag push (irreversible — confirm with user first).
+
+---
+
 ### Iteration 61 - 2026-05-04 — Cluster B SHIPPED (T78 safari_query_all)
 **What:** T78 multi-element extraction merged. Cluster B of locator-system v2 plan complete (5/5 tasks: B-0 branch, B-1 generateQueryAllJs, B-2 buildRefSelector sp- prefix, B-3 tool registration, B-4 e2e). Reuses Cluster A's chain-aware resolver via a new splice marker `// ── T78 splice point ──` placed after the post-chain empty-exit, before the T80 strictness block.
 

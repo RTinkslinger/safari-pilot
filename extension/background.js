@@ -88,6 +88,22 @@ browser.tabs.onRemoved.addListener((tabId) => {
   saveTabCache();
 });
 
+// T79: clear tab-scoped selectorPack storage on tab close. Keys live under
+// prefix `sp_pack_<tabId>_<name>`. Multiple listeners can be added to the
+// same event; this one runs independently of the tab-cache listener above.
+browser.tabs.onRemoved.addListener(async (tabId) => {
+  try {
+    const all = await browser.storage.local.get(null);
+    const toRemove = Object.keys(all).filter((k) => k.startsWith('sp_pack_' + tabId + '_'));
+    if (toRemove.length > 0) {
+      await browser.storage.local.remove(toRemove);
+      emitTrace('__cleanup__', 'selector_pack_cleared', { layer: 'extension-bg', data: { tabId, count: toRemove.length } });
+    }
+  } catch (e) {
+    emitTrace('__cleanup__', 'selector_pack_clear_failed', { layer: 'extension-bg', data: { tabId, error: e && e.message ? e.message : String(e) } });
+  }
+});
+
 // ─── HTTP IPC to daemon ─────────────────────────────────────────────────────
 const HTTP_URL = 'http://127.0.0.1:19475';
 

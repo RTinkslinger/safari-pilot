@@ -28,7 +28,14 @@
  * Trace-scanning assertions MUST filter by a unique-per-test identifier —
  * `~/.safari-pilot/trace.ndjson` is shared across the whole run.
  */
+import { resolve } from 'node:path';
 import { initClient, type McpTestClient } from './mcp-client.js';
+
+// T79 C-9: e2e harness opts into the selectorPack feature flag globally so
+// tests that exercise safari_register_selector / pack:<name> work. Existing
+// e2e tests use only baseline tools; the flag only enables NEW tools, so
+// regression risk is zero. Production stays default-off via safari-pilot.config.json.
+const TEST_CONFIG_PATH = resolve(process.cwd(), 'test/helpers/test-config.json');
 
 interface SharedState {
   client: McpTestClient;
@@ -56,7 +63,7 @@ export async function getSharedClient(): Promise<{ client: McpTestClient; nextId
   if (!initPromise) {
     initPromise = (async () => {
       try {
-        const { client, nextId } = await initClient('dist/index.js');
+        const { client, nextId } = await initClient('dist/index.js', 1, { env: { SAFARI_PILOT_CONFIG: TEST_CONFIG_PATH } });
         shared = { client, counter: nextId };
         return shared;
       } catch (err) {
