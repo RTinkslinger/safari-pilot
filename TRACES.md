@@ -14,6 +14,26 @@
 
 ## Current Work
 
+### Iteration 60 - 2026-05-04 — Cluster A SHIPPED (T77 + T80)
+**What:** T77 locator chaining + T80 strict-mode action enforcement merged. Cluster A of locator-system v2 plan complete (11/11 tasks). Iters 56-59 covered the per-task work; this iter is the cluster-merge milestone.
+
+**Final commit chain on `feat/T77-locator-chaining`:** A-0 tracker entries → A-1 ChainOp type + chain field → A-2 nth/first/last → A-3 filter → A-4 descendant → A-5 and/or (+ name-filter parity fix) → A-6 STRICTNESS_VIOLATION error → A-7+A-8 inputSchema chain wiring → A-9/T80 strict-mode action enforcement → A-10 e2e against real Safari (10/10 PASS).
+
+**Quantitative deltas:**
+- Unit suite: 415 → **504** (+89 across 7 new test files in `test/unit/locators/` + `test/unit/errors/` + `test/unit/tools/`)
+- E2E: 19 → **29** (+10 in T77-locator-chaining.test.ts; 10/10 PASS, no flake on real Safari)
+- New error code: STRICTNESS_VIOLATION (22 codes total)
+- Locator descriptor extends from 9 fields → 10 (added `chain?: ChainOp[]`)
+- 7 new chain ops shipped: filter (with hasText/hasNotText/has/hasNot), nth, first, last, and, or, descendant
+
+**Context preserved for Cluster B/C:**
+- Single-element envelope from `generateLocatorJs` returns `{found, selector, element, matchCount, strictnessSatisfied}` — query_all (T78) will replace the result section with multi-element payload reusing the same chain-resolution machinery.
+- Ref scheme `data-sp-ref="sp-xxxxxx"` stamped on `matched[0]` — T78 will stamp every element in the matched set with the same scheme so refs flow through every existing action tool unchanged.
+- Strict mode in interaction.ts handlers via shared `resolveElement(strict=true)` — read tools (extraction.ts) deliberately do NOT import StrictnessViolationError to preserve pick-first behavior. T78 query_all is multi-element by design and bypasses strict mode entirely.
+
+**Cluster B (T78) and Cluster C (T79) pending — separate branches per plan.**
+---
+
 ### Iteration 59 - 2026-05-04
 **What:** T77 A-9 / T80 — strict-mode action enforcement. Action tools now throw `StrictnessViolationError` on multi-match without disambiguation; read tools keep pick-first behavior.
 **Changes:** `src/locator.ts` (result block: added `__strictnessSatisfied` computation + `strictnessSatisfied` field in JSON envelope, `matchCount` already present), `src/tools/interaction.ts` (import `StrictnessViolationError`; `resolveElement` gains `strict = false` param; 8 action handlers pass `true`; scroll handler stays default), `test/unit/locators/chain-strict-action.test.ts` (NEW — 9 tests: 5 JS-string-generation + 4 handler-level)
