@@ -17,7 +17,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { generateSnapshotJs, buildRefSelector } from '../aria.js';
 import { escapeForJsSingleQuote } from '../escape.js';
-import { generateQueryAllJs, hasLocatorParams, extractLocatorFromParams, generateLocatorJs } from '../locator.js';
+import { generateQueryAllJs, hasLocatorParams, extractLocatorFromParams, generateLocatorJs, resolveMaybePackSelector } from '../locator.js';
 import type { IEngine } from '../engines/engine.js';
 import type { Engine, ToolResponse, ToolRequirements } from '../types.js';
 import { ScreenshotPolicy } from '../security/screenshot-policy.js';
@@ -327,6 +327,7 @@ export class ExtractionTools {
     if (ref) {
       selector = buildRefSelector(ref);
     }
+    selector = await resolveMaybePackSelector(this.engine, { tabUrl, frameId }, selector);
     if (!selector && hasLocatorParams(params)) {
       const locator = extractLocatorFromParams(params)!;
       const locatorJs = generateLocatorJs(locator);
@@ -383,6 +384,7 @@ export class ExtractionTools {
     if (ref) {
       selector = buildRefSelector(ref);
     }
+    selector = await resolveMaybePackSelector(this.engine, { tabUrl, frameId }, selector);
     if (!selector && hasLocatorParams(params)) {
       const locator = extractLocatorFromParams(params)!;
       const locatorJs = generateLocatorJs(locator);
@@ -436,6 +438,7 @@ export class ExtractionTools {
     if (ref) {
       selector = buildRefSelector(ref);
     }
+    selector = await resolveMaybePackSelector(this.engine, { tabUrl, frameId }, selector);
     if (!selector && hasLocatorParams(params)) {
       const locator = extractLocatorFromParams(params)!;
       const locatorJs = generateLocatorJs(locator);
@@ -611,7 +614,8 @@ export class ExtractionTools {
     const limit = typeof params['limit'] === 'number' ? Math.max(1, Math.min(1000, params['limit'])) : 100;
 
     // Selector path: bypass locator, use querySelectorAll directly with the same payload shape
-    const selector = params['selector'] as string | undefined;
+    let selector = params['selector'] as string | undefined;
+    selector = await resolveMaybePackSelector(this.engine, { tabUrl, frameId }, selector);
     if (selector) {
       const escaped = escapeForJsSingleQuote(selector);
       const js = `
