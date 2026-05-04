@@ -22,6 +22,12 @@ let wakePending = false;
 // initialize() is awaiting a fetch promise that will never resolve, and
 // its `finally` never runs to clear isWakeRunning).
 let pollLoopController = null;
+// T73: timestamp of the last successful httpPoll resolution. Updated inside
+// pollLoop's success try-block, read by supersedePollLoop to skip the abort
+// cascade when the prior pollLoop is healthy. Default 0 → first supersede
+// after extension load always runs (correct: there's nothing to be healthy
+// about yet).
+let lastSuccessfulPoll = 0;
 
 // ─── Tab Cache ──────────────────────────────────────────────────────────────
 // Safari's browser.tabs.query({}) returns [] when called from alarm-triggered
@@ -820,6 +826,11 @@ async function pollLoop(abortSignal) {
   while (!(abortSignal && abortSignal.aborted)) {
     try {
       const data = await inflightPoll;
+      // T73: mark this pollLoop as healthy. supersedePollLoop reads this
+      // timestamp on each keepalive alarm and skips the abort cascade when
+      // recent (<30s). Set BEFORE the next-fetch reassignment so a successful
+      // resolution is recorded even if the next httpPoll throws synchronously.
+      lastSuccessfulPoll = Date.now();
       // T72: kick the NEXT /poll fetch IMMEDIATELY — before processing this
       // batch's commands — so a fetch is in flight while executeCommand
       // runs. The MV3 event page stays alive on the in-flight fetch even
@@ -878,7 +889,32 @@ async function pollLoop(abortSignal) {
 // T60: idempotent supersede. Aborts any prior pollLoop instance (releasing
 // stuck fetches) and starts a fresh one with a new AbortController. The
 // previous loop returns via its AbortError catch; this one runs free.
+//
+// T73: skip the abort cascade when the prior pollLoop is healthy. A healthy
+// pollLoop has resolved an httpPoll within the last 30s — its in-flight
+// /poll is registered in the daemon's waitingPolls and ready to fast-path
+// the next execute. Aborting it kills that registration; commands queued
+// during the supersede transition wait until the new pollLoop establishes
+// a fresh waitingPoll AND a new execute arrives — observed as a 10s gap in
+// e2e sweeps (T72-partial validation, 40% residual flake rate). Skipping
+// preserves the daemon-side registration through the keepalive nudge.
+//
+// 30s threshold rationale: daemon long-poll holds 5s normally; bursts of
+// activity reset lastSuccessfulPoll on every resolution. Idle systems with
+// no commands resolve every 5s (TimeoutError doesn't update the timestamp,
+// but the SUCCESS try-block does — and 204 responses count as success here:
+// they reach the resolution point in pollLoop). 30s gives 6x headroom.
 function supersedePollLoop(reason) {
+  // T73 health check — skip when prior pollLoop is alive AND has resolved
+  // recently. Only the unhealthy path (wedged fetch, never-resolved poll,
+  // or first-load) goes through the abort+restart cascade.
+  if (pollLoopController && lastSuccessfulPoll > 0 && Date.now() - lastSuccessfulPoll < 30_000) {
+    emitTrace('__pollloop__', 'pollloop_supersede_skipped', {
+      reason,
+      sinceLastPollMs: Date.now() - lastSuccessfulPoll,
+    });
+    return;
+  }
   if (pollLoopController) {
     try { pollLoopController.abort(); } catch { /* ignore */ }
   }
