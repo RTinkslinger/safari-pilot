@@ -806,12 +806,27 @@ async function pollLoop(abortSignal) {
   const BACKOFF_MS = [0, 250, 500, 1000, 2000];
   const MAX_ATTEMPTS = 5;
   let attempts = 0;
+  // T72: pre-launch the FIRST /poll fetch BEFORE entering the while loop so
+  // a fetch is always in flight by the time the loop body runs. Combined
+  // with the in-loop reassignment below, this guarantees that MV3's event
+  // page never sees an idle moment between iterations — preventing the
+  // suspension that drove T71's 80% multi-file e2e sweep flake rate. The
+  // in-flight variable is awaited inside the existing BACKOFF_MS retry
+  // ladder so cold-start fetch errors still hit the retry path.
+  let inflightPoll = httpPoll(abortSignal);
   // T60: honor the abort signal threaded from pollLoopController so a fresh
   // alarm wake can forcibly stop a prior pollLoop instance — even one whose
   // fetch is wedged from event-page suspension recovery.
   while (!(abortSignal && abortSignal.aborted)) {
     try {
-      const data = await httpPoll(abortSignal);
+      const data = await inflightPoll;
+      // T72: kick the NEXT /poll fetch IMMEDIATELY — before processing this
+      // batch's commands — so a fetch is in flight while executeCommand
+      // runs. The MV3 event page stays alive on the in-flight fetch even
+      // when a tool call takes seconds (e.g. safari_navigate waiting for
+      // page load). Without this, a long-running executeCommand can let
+      // the page suspend before the next /poll iteration starts.
+      inflightPoll = httpPoll(abortSignal);
       if (attempts > 0) {
         emitTrace('__pollloop__', 'pollloop_recovered', { attempts });
         attempts = 0;
@@ -832,8 +847,13 @@ async function pollLoop(abortSignal) {
       // TimeoutError = the per-fetch 10 s timeout fired with no command —
       // this is the NORMAL idle case (the daemon long-polls up to 5 s).
       // Pre-T22 this killed the loop, requiring an alarm to re-arm: bug.
+      // T72: re-arm the inflight fetch before continuing so the next iter
+      // has a fetch to await (otherwise we'd await a stale resolved value).
       if (err.name === 'TimeoutError') {
         attempts = 0;
+        if (!(abortSignal && abortSignal.aborted)) {
+          inflightPoll = httpPoll(abortSignal);
+        }
         continue;
       }
       attempts++;
@@ -845,6 +865,11 @@ async function pollLoop(abortSignal) {
       const baseMs = BACKOFF_MS[Math.min(attempts, BACKOFF_MS.length - 1)];
       const jitter = Math.random() * 250;
       await new Promise((r) => setTimeout(r, baseMs + jitter));
+      // T72: re-arm after backoff so the next iter awaits a fresh fetch
+      // rather than the (already-rejected) prior one.
+      if (!(abortSignal && abortSignal.aborted)) {
+        inflightPoll = httpPoll(abortSignal);
+      }
     }
   }
   emitTrace('__pollloop__', 'pollloop_aborted', { reason: 'signal_aborted_pre_iter' });
