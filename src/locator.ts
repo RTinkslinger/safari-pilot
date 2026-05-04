@@ -545,20 +545,54 @@ export function generateLocatorJs(
     });
   }
 
-  // ── 5A.5: nth picker — index into matched, negative = from end ──
+  // ── 5A.5: nth picker (flat-param backward-compat — applies BEFORE chain) ──
   var nth = ${typeof locator.nth === 'number' ? locator.nth : 0};
-  var idx = nth < 0 ? matched.length + nth : nth;
-  if (idx < 0 || idx >= matched.length) {
+  if (typeof nth === 'number' && nth !== 0 && matched.length > 0) {
+    var idx = nth < 0 ? matched.length + nth : nth;
+    if (idx < 0 || idx >= matched.length) {
+      return JSON.stringify({
+        found: false,
+        locator: locatorDesc,
+        candidateCount: matched.length,
+        hint: 'nth=' + nth + ' is out of range (matched.length=' + matched.length + ')'
+      });
+    }
+    matched = [matched[idx]];
+  }
+
+  // ── T77: chain ops ──
+  ${locator.chain && locator.chain.length > 0
+    ? `
+  var __chainOps = JSON.parse('${escapeForJs(JSON.stringify(locator.chain))}');
+  for (var __ci = 0; __ci < __chainOps.length; __ci++) {
+    var __cop = __chainOps[__ci];
+    if (__cop.op === 'first') {
+      matched = matched.length > 0 ? [matched[0]] : [];
+    } else if (__cop.op === 'last') {
+      matched = matched.length > 0 ? [matched[matched.length - 1]] : [];
+    } else if (__cop.op === 'nth') {
+      var __chainIdx = __cop.n;
+      var __resolvedIdx = __chainIdx < 0 ? matched.length + __chainIdx : __chainIdx;
+      matched = (__resolvedIdx >= 0 && __resolvedIdx < matched.length) ? [matched[__resolvedIdx]] : [];
+    }
+    // filter / and / or / descendant ops added in A-3, A-4, A-5
+    if (matched.length === 0) break;
+  }
+  `
+    : ''}
+
+  if (matched.length === 0) {
     return JSON.stringify({
       found: false,
       locator: locatorDesc,
-      candidateCount: matched.length,
-      hint: 'nth=' + nth + ' is out of range (matched.length=' + matched.length + ')'
+      candidateCount: 0,
+      hint: 'No elements matched after chain ops'
     });
   }
 
-  // Stamp the picked match with a data-sp-ref for subsequent tool calls
-  var target = matched[idx];
+  // T77 strict mode: caller decides; we always pick first for legacy single-element envelope.
+  // Multi-element callers use generateQueryAllJs (ships in T78).
+  var target = matched[0];
   var refId = 'sp-' + Math.random().toString(36).substring(2, 8);
   target.setAttribute('data-sp-ref', refId);
 
