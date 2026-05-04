@@ -512,7 +512,13 @@ export class ExtractionTools {
     // reaches background.js's executeCommand prefix-match.)
     const isSentinelBypass = typeof script === 'string' && (
       script.startsWith('__SP_TEST_HARNESS__:') ||
-      script.startsWith('__SP_FILE_UPLOAD_PROBE_TEST__')
+      script.startsWith('__SP_FILE_UPLOAD_PROBE_TEST__') ||
+      // T79 Cluster D: pack register/unregister sentinels are intercepted in
+      // extension/background.js (executeCommand prefix match). The IIFE
+      // wrapping below would prefix the script with `return (async () => {...`
+      // and break the `cmd.script.startsWith('__SP_PACK_')` check upstream.
+      script.startsWith('__SP_PACK_REGISTER__:') ||
+      script.startsWith('__SP_PACK_UNREGISTER__:')
     );
     const js = isSentinelBypass ? script : `
       return (async () => {

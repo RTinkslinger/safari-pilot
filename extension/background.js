@@ -124,9 +124,14 @@ browser.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
     const name = key.slice(prefix.length);
     const body = stored[key];
     if (typeof body !== 'string' || !body) continue;
-    const injectionScript = '(function(){window.__sp_pack=window.__sp_pack||{};try{window.__sp_pack[' +
-      JSON.stringify(name) + ']=new Function(\'root\',\'arg\',' + JSON.stringify(body) + ');}' +
-      'catch(e){}})();';
+    const injectionScript =
+      'window.__sp_pack=window.__sp_pack||{};' +
+      'try{' +
+        'window.__sp_pack[' + JSON.stringify(name) + ']=new Function(\'root\',\'arg\',' + JSON.stringify(body) + ');' +
+        'return JSON.stringify({ok:true,rehydrated:true});' +
+      '}catch(e){' +
+        'return JSON.stringify({ok:false,error:e&&e.message?e.message:String(e)});' +
+      '}';
     const rehydrateCmdId = '__rehydrate_' + tabId + '_' + name + '_' + Date.now();
     const cmdKey = 'sp_cmd_' + rehydrateCmdId;
     const storageCmd = {
@@ -602,15 +607,20 @@ async function executeCommand(cmd) {
         await updatePendingEntry(commandId, { status: 'completed', result });
         return result;
       }
-      // Inject into page now via the standard storage-bus execute path. Build
-      // a self-contained IIFE so the page side gets `__sp_pack[name] = new
-      // Function('root','arg', body)` — exactly what resolveMaybePackSelector
-      // expects to find. Embed name + body via JSON.stringify so quotes /
-      // backslashes survive the round-trip without bespoke escaping.
-      const injectionScript = '(function(){window.__sp_pack=window.__sp_pack||{};try{window.__sp_pack[' +
-        JSON.stringify(name) + ']=new Function(\'root\',\'arg\',' +
-        JSON.stringify(body) + ');return JSON.stringify({ok:true,name:' + JSON.stringify(name) + '});}' +
-        'catch(e){return JSON.stringify({ok:false,error:e&&e.message?e.message:String(e)});}})();';
+      // Inject into page now via the standard storage-bus execute path. The
+      // page-side evaluator (content-main.js) wraps scripts in `new
+      // Function(script)()`, so the script must use a top-level `return` —
+      // an IIFE expression statement would have its result discarded.
+      // Embed name + body via JSON.stringify so quotes / backslashes survive
+      // the round-trip without bespoke escaping.
+      const injectionScript =
+        'window.__sp_pack=window.__sp_pack||{};' +
+        'try{' +
+          'window.__sp_pack[' + JSON.stringify(name) + ']=new Function(\'root\',\'arg\',' + JSON.stringify(body) + ');' +
+          'return JSON.stringify({ok:true,name:' + JSON.stringify(name) + '});' +
+        '}catch(e){' +
+          'return JSON.stringify({ok:false,error:e&&e.message?e.message:String(e)});' +
+        '}';
       // Replace cmd.script and fall through to the regular execute path so
       // the inject runs through the storage-bus content-script flow.
       cmd.script = injectionScript;
@@ -624,9 +634,13 @@ async function executeCommand(cmd) {
         await updatePendingEntry(commandId, { status: 'completed', result });
         return result;
       }
-      const removalScript = '(function(){if(window.__sp_pack&&window.__sp_pack[' +
-        JSON.stringify(name) + '])delete window.__sp_pack[' + JSON.stringify(name) +
-        '];return JSON.stringify({ok:true,removed:true});})();';
+      const removalScript =
+        'var __removed=false;' +
+        'if(window.__sp_pack&&window.__sp_pack[' + JSON.stringify(name) + ']){' +
+          'delete window.__sp_pack[' + JSON.stringify(name) + '];' +
+          '__removed=true;' +
+        '}' +
+        'return JSON.stringify({ok:true,removed:__removed});';
       cmd.script = removalScript;
       emitTrace(commandId, 'pack_unregistered', { layer: 'extension-bg', data: { tabId: tab.id, name } });
       // Fall through — regular execute path runs the removal.

@@ -858,22 +858,25 @@ export async function resolveMaybePackSelector(
 
   const escapedName = escapeForJsSingleQuote(parsed.name);
   const escapedArg = escapeForJsSingleQuote(parsed.arg);
+  // Page-side eval is `new Function(script)()` — the script body IS the
+  // function body, so it must use top-level `return`. An IIFE expression
+  // statement would have its result discarded and the resolver would always
+  // see undefined. (Cluster C unit tests passed because they stubbed the
+  // engine; the IIFE bug only surfaces against a real page eval.)
   const packJs = `
-    (function () {
-      if (!window.__sp_pack || !window.__sp_pack['${escapedName}']) {
-        return JSON.stringify({ found: false, hint: 'selectorPack ${escapedName} not registered' });
-      }
-      try {
-        var fn = window.__sp_pack['${escapedName}'];
-        var el = fn(document, '${escapedArg}');
-        if (!el || el.nodeType !== 1) return JSON.stringify({ found: false, hint: 'pack returned non-element' });
-        var ref = 'sp-' + Math.random().toString(36).substring(2, 8);
-        el.setAttribute('data-sp-ref', ref);
-        return JSON.stringify({ found: true, selector: '[data-sp-ref="' + ref + '"]' });
-      } catch (e) {
-        return JSON.stringify({ found: false, hint: 'pack threw: ' + (e && e.message ? e.message : String(e)) });
-      }
-    })();
+    if (!window.__sp_pack || !window.__sp_pack['${escapedName}']) {
+      return JSON.stringify({ found: false, hint: 'selectorPack ${escapedName} not registered' });
+    }
+    try {
+      var fn = window.__sp_pack['${escapedName}'];
+      var el = fn(document, '${escapedArg}');
+      if (!el || el.nodeType !== 1) return JSON.stringify({ found: false, hint: 'pack returned non-element' });
+      var ref = 'sp-' + Math.random().toString(36).substring(2, 8);
+      el.setAttribute('data-sp-ref', ref);
+      return JSON.stringify({ found: true, selector: '[data-sp-ref="' + ref + '"]' });
+    } catch (e) {
+      return JSON.stringify({ found: false, hint: 'pack threw: ' + (e && e.message ? e.message : String(e)) });
+    }
   `;
 
   const result = await routeFrameAware(engine, routeParams, packJs);
