@@ -811,3 +811,17 @@ export function generateQueryAllJs(
     truncated: __truncated,
   });`;
 }
+
+/**
+ * T79 C-6: parse a `pack:<name>` or `pack:<name>=<arg>` selector reference.
+ *
+ * Returns null for any selector that doesn't start with `pack:` so callers
+ * can safely fall through to CSS / locator processing on a null result.
+ */
+export function parsePackSelector(selector: string): { name: string; arg: string } | null {
+  if (!selector.startsWith('pack:')) return null;
+  const rest = selector.slice(5);
+  const eqIdx = rest.indexOf('=');
+  if (eqIdx === -1) return { name: rest, arg: '' };
+  return { name: rest.slice(0, eqIdx), arg: rest.slice(eqIdx + 1) };
+}
