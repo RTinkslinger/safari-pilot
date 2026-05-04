@@ -266,11 +266,10 @@ Locked priority order for post–Phase 5A work:
             installed locally. Branch: fix/T72-mv3-pollloop-keepalive,
             commit 0180e82.
 
-   T73    alarm supersede aborts healthy poll      [extension-side]
-            Residual 40% from T72: keepalive alarm unconditionally calls
-            supersedePollLoop every minute, killing in-flight /poll even
-            when pollLoop is healthy. Fix: skip supersede when last
-            successful /poll was recent (e.g. <30s). P2.
+   ~~T73~~ ✓ RESOLVED 2026-05-04 — supersedePollLoop now skips abort
+            cascade when pollLoop is healthy (last /poll <30s ago).
+            **Validation: 10/10 sweeps PASS, flake rate 0%.** Branch:
+            fix/T73-supersede-skip-when-healthy, commit 90a3f08. v0.1.26.
 
 2. T65    phase3-3.1 form submission flake       [pre-existing]
             httpbin.org/forms/post → /post navigation
