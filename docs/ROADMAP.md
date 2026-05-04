@@ -254,11 +254,17 @@ Locked priority order for post–Phase 5A work:
             in the 5A.13 sweep; 1 sub-item was a stale test predating T63.
             Branch: fix/T70-flake-sweep, commit 08164c3.
 
-   T71    sweep-load migrating flake             [observability-first]
-            Discovered during T70 phase-1: ~1 in 2 multi-file sweep runs
-            surfaces a single test failure, but NOT the same test each time.
-            All affected tests pass 3-for-3 in isolation. Add per-test
-            trace markers + MCP pending-request snapshots before fixing.
+   ~~T71~~ ✓ RESOLVED-PARTIAL 2026-05-04 — Phase 1 found two root causes:
+            (1) per-file shared-client teardown (architectural bug — fixed
+            in commit 64b192c on research/T71-sweep-flake-observability);
+            (2) MV3 event-page suspension during pollloop transitions —
+            filed as T72.
+
+   T72    MV3 event-page suspension                [extension-side]
+            Extension event page suspends with a queued command in the
+            daemon bridge; ~10s gap until next chrome.alarms tick wakes
+            it. Three remediation options, leading: overlapping /poll
+            fetches so a fetch is always in flight. P2.
 
 2. T65    phase3-3.1 form submission flake       [pre-existing]
             httpbin.org/forms/post → /post navigation
