@@ -250,11 +250,15 @@ GROUP B — after Group A closes
 Locked priority order for post–Phase 5A work:
 
 ```
-1. T70    sweep-observed flakes (4 items)        [low-risk triage]
-            - 5A3 right-click MCP timeout
-            - 5A9 basic auth MCP timeout
-            - 5A8 httpOnly cookies fixture conn (×2 tests)
-            - initialization safari_new_tab engine selector
+1. ~~T70~~ ✓ RESOLVED 2026-05-04 — 3 of 4 sub-items were stale-dist artifacts
+            in the 5A.13 sweep; 1 sub-item was a stale test predating T63.
+            Branch: fix/T70-flake-sweep, commit 08164c3.
+
+   T71    sweep-load migrating flake             [observability-first]
+            Discovered during T70 phase-1: ~1 in 2 multi-file sweep runs
+            surfaces a single test failure, but NOT the same test each time.
+            All affected tests pass 3-for-3 in isolation. Add per-test
+            trace markers + MCP pending-request snapshots before fixing.
 
 2. T65    phase3-3.1 form submission flake       [pre-existing]
             httpbin.org/forms/post → /post navigation

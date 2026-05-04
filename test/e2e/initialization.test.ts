@@ -40,7 +40,7 @@ describe('Initialization system', () => {
     expect(result.init.initDurationMs).toBeGreaterThan(0);
   }, 15000);
 
-  it('safari_new_tab routes through extension engine', async () => {
+  it('safari_new_tab routes through applescript engine (per T63)', async () => {
     const unique = `https://example.com/?sp_init_new=${Date.now()}`;
     const raw = await rawCallTool(
       client, 'safari_new_tab',
@@ -50,8 +50,10 @@ describe('Initialization system', () => {
     );
     try {
       expect(raw.payload.tabUrl).toContain('example.com');
-      // new_tab goes through extension engine (not AppleScript fallback)
-      expect(raw.meta?.engine).toBe('extension');
+      // T63 (commit 589a5ee) made navigation tools declare requiresApplescript:true
+      // for engine-telemetry honesty. The companion test below covers the
+      // extension-routing path via safari_evaluate.
+      expect(raw.meta?.engine).toBe('applescript');
     } finally {
       try { await callTool(client, 'safari_close_tab', { tabUrl: raw.payload.tabUrl as string }, nextId()); } catch { /* ignore */ }
     }
