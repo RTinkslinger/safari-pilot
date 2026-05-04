@@ -288,8 +288,12 @@ Locked priority order for post–Phase 5A work:
             row; commits 796cc83, 64385aa, 43dc2d6). Original roadmap
             entry was stale. Skipped.
 
-4. T43    61 untested tools sub-sprint           [multi-week, Phase 6]
-            full e2e coverage for the residual tool registry
+4. ~~T43~~ ✓ RESOLVED 2026-05-04 — 52 e2e tests covering 48 previously
+            untested tools across 7 new files. **100% tool coverage** (80/80).
+            Authored in one session; the original "multi-week" label
+            overestimated the work. Spawned T75 (idb keyshape) and T76
+            (permission script-parse). Branch: feat/T43-e2e-coverage,
+            commit 8f1f287.
 
 5. T66    Gmail-class strict-CSP file-upload     [structural-adjacent]
             content-isolated → daemon byte-fetch rejected by Trusted
