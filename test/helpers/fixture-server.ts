@@ -156,6 +156,46 @@ function makeHandler() {
     // 5A.1 — React Hook Form fixture page (Task 16).
     // Renders a controlled <input type=file> registered via RHF useForm().
     // Hidden behind a <label>, so the label locator must unwrap to the inner input.
+    // T65 — local replacement for httpbin.org/forms/post. The phase3 3.1 test
+    // discriminates on a real-MouseEvent click being dispatched (SD-03 strict
+    // oracle). The pre-T65 test used httpbin.org's `/forms/post` and asserted
+    // a pathname change post-click. Both httpbin AND a local equivalent
+    // exhibit an unidentified browser-side behaviour where filling
+    // `input[name="custname"]` causes the tab to navigate BEFORE the test's
+    // explicit click — dropping the original tabUrl from the extension cache
+    // and surfacing TAB_NOT_FOUND on click. Root cause filed as T74.
+    //
+    // Workaround: discriminator switched from pathname change to a state
+    // variable set by an explicit `click` event handler on the submit
+    // button. The form `preventDefault`s on submit so the page does NOT
+    // navigate, sidestepping the T74 navigation. The oracle stays strong:
+    // a stub `safari_click` that fabricates `{clicked:true}` without
+    // dispatching a real MouseEvent does not fire the handler, so
+    // `window.__t65_clicked` stays undefined and the test fails.
+    if (url === '/t65-form') {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(`<!DOCTYPE html><html><body>
+    <form id="t65-form" action="/t65-result" method="POST">
+      <input id="custname" name="custname" type="text" autocomplete="off" />
+      <input id="custtel" name="custtel" type="tel" autocomplete="off" />
+      <button id="submit" type="submit">Submit</button>
+    </form>
+    <script>
+      // Capture an explicit click event before the form's submit default.
+      // window.__t65_clicked is the test's discriminator — set ONLY when a
+      // real MouseEvent reaches the button.
+      document.getElementById('submit').addEventListener('click', function (e) {
+        window.__t65_clicked = { ts: Date.now(), button: e.button, isTrusted: e.isTrusted };
+      });
+      // Suppress navigation so the tab URL stays put for the verify-eval call.
+      document.getElementById('t65-form').addEventListener('submit', function (e) {
+        e.preventDefault();
+      });
+    </script>
+  </body></html>`);
+      return;
+    }
+
     if (url === '/rhf-upload-form') {
       try {
         const body = readFileSync(resolve(FIXTURE_DIR, 'rhf-upload-form.html'));

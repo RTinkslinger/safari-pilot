@@ -10,30 +10,39 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { callTool, rawCallTool, type McpTestClient } from '../helpers/mcp-client.js';
 import { getSharedClient } from '../helpers/shared-client.js';
+import { startFixtureServer, type FixtureServer } from '../helpers/fixture-server.js';
 
 describe('Phase 3: Interaction', () => {
   let client: McpTestClient;
   let nextId: () => number;
   let tabUrl: string;
+  let fixture: FixtureServer;
 
   beforeAll(async () => {
+    fixture = await startFixtureServer();
     const s = await getSharedClient();
     client = s.client;
     nextId = s.nextId;
 
-    // httpbin.org doesn't support arbitrary query strings for sp_p3 marker
-    // on every path (the /forms/post endpoint ignores them but keeps them
-    // in the URL), so this is safe. Using ?sp_p3=<ts> for sweepability.
-    const unique = `https://httpbin.org/forms/post?sp_p3=${Date.now()}`;
+    // T65 (2026-05-04): switched from httpbin.org/forms/post to local fixture.
+    // Pre-T65 used httpbin.org which (a) is external + flaky, (b) exhibited an
+    // unidentified browser-side behaviour where filling `input[name=custname]`
+    // caused the tab to navigate before 3.1's explicit click, dropping the
+    // original tabUrl from the extension cache and surfacing TAB_NOT_FOUND.
+    // Local fixture (test/helpers/fixture-server.ts → /t65-form) serves the
+    // same surface (text input + submit button) but does NOT navigate on fill —
+    // only on the explicit click. Deterministic.
+    const unique = `http://127.0.0.1:${fixture.hostPort}/t65-form?sp_p3=${Date.now()}`;
     const tab = await callTool(client, 'safari_new_tab', { url: unique }, nextId());
-    tabUrl = tab.tabUrl;
-    await new Promise(r => setTimeout(r, 4000));
+    tabUrl = tab.tabUrl as string;
+    await new Promise(r => setTimeout(r, 2000));
   }, 35000);
 
   afterAll(async () => {
     if (client && tabUrl) {
       try { await callTool(client, 'safari_close_tab', { tabUrl }, nextId()); } catch { /* ignore */ }
     }
+    if (fixture) await fixture.close();
   });
 
   // ── 3.2 Fill input ──────────────────────────────────────────────────────
@@ -59,14 +68,20 @@ describe('Phase 3: Interaction', () => {
   }, 30000);
 
   // ── 3.1 Click element ──────────────────────────────────────────────────
-  it('3.1 safari_click triggers form submission, navigating /forms/post → /post', async () => {
-    // SD-03 strict oracle. Original asserted JSON.stringify(result).toContain('clicked')
-    // — any envelope containing the substring 'clicked' satisfied it. The
-    // production click handler dispatches MouseEvent('click'); on httpbin's
-    // submit button this triggers WebKit's native form-submission default
-    // action, navigating /forms/post → /post. We discriminate on that URL
-    // change: a stub that fabricates {clicked:true} without dispatching the
-    // event cannot navigate the tab.
+  it('3.1 safari_click dispatches a real MouseEvent that reaches the page handler', async () => {
+    // SD-03 strict oracle, T65 update. Original asserted on `pathname` change
+    // post-form-submission, which depended on the page navigating from
+    // /forms/post → /post. That setup hit a navigation race (filed as T74 —
+    // safari_fill on a text input causes the tab to navigate before this test
+    // runs, dropping the tabUrl from the extension cache).
+    //
+    // T65 fix: discriminate on a state variable set ONLY by a real MouseEvent
+    // reaching the page-side click handler. The fixture (test/helpers/
+    // fixture-server.ts → /t65-form) registers an explicit `click` listener
+    // on the submit button that writes `window.__t65_clicked = { ... }` and
+    // preventDefaults the form's submit so the tab does not navigate. A stub
+    // safari_click that fabricates `{clicked: true}` without dispatching the
+    // real MouseEvent leaves __t65_clicked undefined and fails the test.
     const clickResult = await callTool(
       client, 'safari_click',
       { tabUrl, selector: '[type="submit"], button' },
@@ -78,27 +93,30 @@ describe('Phase 3: Interaction', () => {
     expect(element).toBeDefined();
     expect(element!.tagName).toMatch(/^(BUTTON|INPUT)$/);
 
-    // Allow form submission + page load to settle.
-    await new Promise(r => setTimeout(r, 2000));
+    // Settle so the page-side click handler has run.
+    await new Promise(r => setTimeout(r, 200));
 
-    // Discriminator: pathname must be /post after the form submits. The
-    // post-execution path of this safari_evaluate also refreshes the ownership
-    // registry from `?sp_p3=...` to the new URL (server.ts:802-805 — extension
-    // engine reports `_meta.tabUrl`, server calls tabOwnership.updateUrl).
+    // Discriminator: a real MouseEvent reached the page-side handler.
     const verify = await callTool(
       client, 'safari_evaluate',
-      { tabUrl, script: 'return document.location.pathname' },
+      { tabUrl, script: 'return JSON.stringify(window.__t65_clicked || null);' },
       nextId(),
       15000,
     );
-    const pathname = (verify as { value: string }).value;
-    expect(pathname).toBe('/post');
-
-    // Update test-scope tabUrl: the registry now tracks the post-submission
-    // URL (httpbin.org/post is deterministic), so subsequent tests in this
-    // file must use it. Without this line, 3.9 below would pass `?sp_p3=...`
-    // to safari_navigate and hit TabUrlNotRecognizedError.
-    tabUrl = 'https://httpbin.org/post';
+    const raw = (verify as { value?: string; _rawText?: string }).value
+      ?? (verify as { _rawText?: string })._rawText;
+    expect(raw, 'verify call returned no value').toBeDefined();
+    const parsed = JSON.parse(raw as string) as
+      | null
+      | { ts: number; button: number; isTrusted: boolean };
+    expect(parsed, 'page-side __t65_clicked must be set — proves a real ' +
+      'MouseEvent was dispatched, not a stubbed envelope').not.toBeNull();
+    // button=0 = primary; isTrusted=false because synthetic events from
+    // dispatchEvent are never trusted (only true user input is). Both
+    // values prove the click came from JS-dispatched MouseEvent, exactly
+    // matching the production handler's behaviour.
+    expect(parsed!.button).toBe(0);
+    expect(typeof parsed!.ts).toBe('number');
   }, 30000);
 
   // ── 3.9 Wait for condition ──────────────────────────────────────────────
@@ -110,7 +128,7 @@ describe('Phase 3: Interaction', () => {
       nextId(),
       15000,
     );
-    tabUrl = nav.url;
+    tabUrl = nav.url as string;
     await new Promise(r => setTimeout(r, 2000));
 
     // Wait for h1 to exist (should be immediate on example.com).
