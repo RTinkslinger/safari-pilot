@@ -51,6 +51,12 @@ export interface ExtensionConfig {
   killSwitchVersion: string;
 }
 
+export interface SelectorPackConfig {
+  /** T79: feature-flag for safari_register_selector / safari_unregister_selector tools.
+   *  Defaults to false. JS-injection surface — only enable for trusted environments. */
+  enabled: boolean;
+}
+
 export interface SafariPilotConfig {
   schemaVersion: string;
   rateLimit: RateLimitConfig;
@@ -61,6 +67,7 @@ export interface SafariPilotConfig {
   daemon: DaemonConfig;
   healthCheck: HealthCheckConfig;
   extension: ExtensionConfig;
+  selectorPack: SelectorPackConfig;
   screenshotPolicy?: { blockedPatterns?: string[] };
 }
 
@@ -98,6 +105,9 @@ export const DEFAULT_CONFIG: SafariPilotConfig = {
   extension: {
     enabled: true,
     killSwitchVersion: '0.1.5',
+  },
+  selectorPack: {
+    enabled: false,
   },
 };
 
@@ -261,6 +271,12 @@ export function loadConfig(configPath?: string): SafariPilotConfig {
     DEFAULT_CONFIG as unknown as Record<string, unknown>,
     userConfig,
   ) as unknown as SafariPilotConfig;
+
+  // T79: selectorPack.enabled is a JS-injection-surface flag. Enforce strict
+  // boolean — anything other than literal `true` reverts to false (fail-safe).
+  const mergedRecord = merged as unknown as Record<string, unknown>;
+  const sp = mergedRecord['selectorPack'] as Record<string, unknown> | undefined;
+  if (sp) sp['enabled'] = sp['enabled'] === true;
 
   validate(merged);
 
