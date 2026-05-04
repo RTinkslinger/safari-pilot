@@ -260,11 +260,17 @@ Locked priority order for post–Phase 5A work:
             (2) MV3 event-page suspension during pollloop transitions —
             filed as T72.
 
-   T72    MV3 event-page suspension                [extension-side]
-            Extension event page suspends with a queued command in the
-            daemon bridge; ~10s gap until next chrome.alarms tick wakes
-            it. Three remediation options, leading: overlapping /poll
-            fetches so a fetch is always in flight. P2.
+   ~~T72~~ ✓ RESOLVED-PARTIAL 2026-05-04 — implemented overlapping /poll
+            fetches in pollLoop; flake rate 80% → 40%. Test suite:
+            7 source-grep tests, two-pass test-reviewer gate. Built v0.1.25,
+            installed locally. Branch: fix/T72-mv3-pollloop-keepalive,
+            commit 0180e82.
+
+   T73    alarm supersede aborts healthy poll      [extension-side]
+            Residual 40% from T72: keepalive alarm unconditionally calls
+            supersedePollLoop every minute, killing in-flight /poll even
+            when pollLoop is healthy. Fix: skip supersede when last
+            successful /poll was recent (e.g. <30s). P2.
 
 2. T65    phase3-3.1 form submission flake       [pre-existing]
             httpbin.org/forms/post → /post navigation
