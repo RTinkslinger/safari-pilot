@@ -574,8 +574,51 @@ export function generateLocatorJs(
       var __chainIdx = __cop.n;
       var __resolvedIdx = __chainIdx < 0 ? matched.length + __chainIdx : __chainIdx;
       matched = (__resolvedIdx >= 0 && __resolvedIdx < matched.length) ? [matched[__resolvedIdx]] : [];
+    } else if (__cop.op === 'filter') {
+      matched = matched.filter(function (el) {
+        if (typeof __cop.hasText === 'string') {
+          var t = (el.innerText !== undefined ? el.innerText : el.textContent) || '';
+          if (t.toLowerCase().indexOf(__cop.hasText.toLowerCase()) === -1) return false;
+        }
+        if (typeof __cop.hasNotText === 'string') {
+          var tn = (el.innerText !== undefined ? el.innerText : el.textContent) || '';
+          if (tn.toLowerCase().indexOf(__cop.hasNotText.toLowerCase()) !== -1) return false;
+        }
+        if (__cop.has && typeof __cop.has === 'object') {
+          var hasMatch = false;
+          var probe = el.querySelectorAll('*');
+          for (var __pi = 0; __pi < probe.length; __pi++) {
+            if (__cop.has.role) {
+              var r = probe[__pi].getAttribute('role') || '';
+              if (r === __cop.has.role) { hasMatch = true; break; }
+            } else if (typeof __cop.has.text === 'string') {
+              var pt = (probe[__pi].innerText !== undefined ? probe[__pi].innerText : probe[__pi].textContent) || '';
+              if (pt.toLowerCase().indexOf(__cop.has.text.toLowerCase()) !== -1) { hasMatch = true; break; }
+            } else if (__cop.has.testId) {
+              var tid = probe[__pi].getAttribute('data-testid') || '';
+              if (tid === __cop.has.testId) { hasMatch = true; break; }
+            }
+          }
+          if (!hasMatch) return false;
+        }
+        if (__cop.hasNot && typeof __cop.hasNot === 'object') {
+          var hasNotMatch = false;
+          var nprobe = el.querySelectorAll('*');
+          for (var __npi = 0; __npi < nprobe.length; __npi++) {
+            if (__cop.hasNot.role) {
+              var nr = nprobe[__npi].getAttribute('role') || '';
+              if (nr === __cop.hasNot.role) { hasNotMatch = true; break; }
+            } else if (__cop.hasNot.testId) {
+              var ntid = nprobe[__npi].getAttribute('data-testid') || '';
+              if (ntid === __cop.hasNot.testId) { hasNotMatch = true; break; }
+            }
+          }
+          if (hasNotMatch) return false;
+        }
+        return true;
+      });
     }
-    // filter / and / or / descendant ops added in A-3, A-4, A-5
+    // and / or / descendant ops added in A-4, A-5
     if (matched.length === 0) break;
   }
   `

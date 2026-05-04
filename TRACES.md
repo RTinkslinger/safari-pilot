@@ -14,6 +14,12 @@
 
 ## Current Work
 
+### Iteration 56 - 2026-05-04
+**What:** T77 A-3 — added `filter` chain op to `generateLocatorJs` chain-op for-loop in `src/locator.ts`; supports `hasText`, `hasNotText`, `has` (nested: role/text/testId), `hasNot` (nested: role/testId). 10 new unit tests in `test/unit/locators/chain-filter.test.ts`.
+**Changes:** `src/locator.ts` (filter branch after nth in chain-op loop), `test/unit/locators/chain-filter.test.ts` (NEW — 10 tests)
+**Context:** Prescription assertion patterns used plain `"` chars but generated JS has `\"` (escapeForJs). Fixed 5 assertions to use `'\\"key\\":\\"value\\"'` form, mirroring A-2 precedent at chain-positional.test.ts:46. Suite grew 442 → 452 (10 new, 0 regressions).
+---
+
 ### Iteration 55 - 2026-05-04
 **What:** Post–Phase-5A queue execution session. Closed 5 tracker items end-to-end, drove multi-file e2e sweep flake rate from 80% to 0%, achieved 100% MCP-tool e2e coverage (was 40%). Two extension releases shipped locally (v0.1.25 + v0.1.26, signed/notarized/stapled). 5 new tracker items filed honestly with reproduction recipes. ~20 commits ahead of origin/main, pushing to publish v0.1.26.
 
