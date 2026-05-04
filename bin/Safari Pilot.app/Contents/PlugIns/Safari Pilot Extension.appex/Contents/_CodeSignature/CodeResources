@@ -6,7 +6,7 @@
 	<dict>
 		<key>Resources/background.js</key>
 		<data>
-		EfU46b8UhO6kbuDbXm4OmUTSPYA=
+		y3S7tV9IgCrZvGSXnFDdz2ex6Kg=
 		</data>
 		<key>Resources/build.config.js</key>
 		<data>
@@ -46,7 +46,7 @@
 		</data>
 		<key>Resources/manifest.json</key>
 		<data>
-		ddWr2VcPW3Z6yh+d9OYtkFXrbJI=
+		BEdpybWpoqD66vwPUt1F6j7B4lA=
 		</data>
 		<key>Resources/native/SafariWebExtensionHandler.swift</key>
 		<data>
@@ -59,7 +59,7 @@
 		<dict>
 			<key>hash2</key>
 			<data>
-			SQH/U7ba1WUn8mA/L86c18vZYkrgktstFu5rvfNWMK8=
+			MQ3BL8NUZ/aUiYk4BcMB5/h36ve8A1gLrwRwCh+m4TE=
 			</data>
 		</dict>
 		<key>Resources/build.config.js</key>
@@ -129,7 +129,7 @@
 		<dict>
 			<key>hash2</key>
 			<data>
-			Kz43qkUZwVRigVDVso531Bn1o1oW0TUoFfL7GF+oWpo=
+			zE1nyldK2YfhhKumAYTtBIvmD2NeQdshQqHOkEfsmBs=
 			</data>
 		</dict>
 		<key>Resources/native/SafariWebExtensionHandler.swift</key>
