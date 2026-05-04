@@ -14,6 +14,12 @@
 
 ## Current Work
 
+### Iteration 59 - 2026-05-04
+**What:** T77 A-9 / T80 — strict-mode action enforcement. Action tools now throw `StrictnessViolationError` on multi-match without disambiguation; read tools keep pick-first behavior.
+**Changes:** `src/locator.ts` (result block: added `__strictnessSatisfied` computation + `strictnessSatisfied` field in JSON envelope, `matchCount` already present), `src/tools/interaction.ts` (import `StrictnessViolationError`; `resolveElement` gains `strict = false` param; 8 action handlers pass `true`; scroll handler stays default), `test/unit/locators/chain-strict-action.test.ts` (NEW — 9 tests: 5 JS-string-generation + 4 handler-level)
+**Context:** Shared `resolveElement` pattern made the "add check to each handler" prescription simpler as one `strict` param — passes all 9 paths without duplication. `safari_drag` uses its own resolution (sourceRef/sourceSelector), not locators, so not in scope. Suite grew 492 → 501 (9 new, 0 regressions). Lint clean.
+---
+
 ### Iteration 58 - 2026-05-04
 **What:** T77 A-5 fix — `and` branch role-path silently dropped `name` filter. Added `__andCands` variable + `if (__cop.locator.name)` guard (parity with `or` branch). 1 new regression test in `chain-logical.test.ts`.
 **Changes:** `src/locator.ts` (and-branch role path: inline querySelectorAll → __andCands with name filter), `test/unit/locators/chain-logical.test.ts` (1 new test: "emits intersection with role+name filter")

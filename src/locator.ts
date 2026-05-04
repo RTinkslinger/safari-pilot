@@ -712,8 +712,25 @@ export function generateLocatorJs(
     });
   }
 
-  // T77 strict mode: caller decides; we always pick first for legacy single-element envelope.
-  // Multi-element callers use generateQueryAllJs (ships in T78).
+  // T80: compute strictnessSatisfied flag.
+  // True when: matched.length === 1, OR base locator is testId/xpath
+  // (single-match by definition), OR flat nth was set, OR chain terminates
+  // with first/last/nth.
+  var __strictnessSatisfied = matched.length === 1;
+  if (!__strictnessSatisfied) {
+    if (locatorDesc.testId || locatorDesc.xpath) __strictnessSatisfied = true;
+  }
+  if (!__strictnessSatisfied && typeof locatorDesc.nth === 'number') __strictnessSatisfied = true;
+  if (!__strictnessSatisfied && locatorDesc.chain && locatorDesc.chain.length > 0) {
+    var __lastOp = locatorDesc.chain[locatorDesc.chain.length - 1];
+    if (__lastOp && (__lastOp.op === 'first' || __lastOp.op === 'last' || __lastOp.op === 'nth')) {
+      __strictnessSatisfied = true;
+    }
+  }
+
+  // Always pick first for the legacy single-result envelope (read tools rely on this).
+  // Action tools inspect matchCount + strictnessSatisfied at the handler level
+  // and throw STRICTNESS_VIOLATION when matchCount > 1 && !strictnessSatisfied.
   var target = matched[0];
   var refId = 'sp-' + Math.random().toString(36).substring(2, 8);
   target.setAttribute('data-sp-ref', refId);
@@ -726,6 +743,7 @@ export function generateLocatorJs(
       id: target.id || '',
       textContent: normalizeWhitespace((target.textContent || '').substring(0, 200))
     },
-    matchCount: matched.length
+    matchCount: matched.length,
+    strictnessSatisfied: __strictnessSatisfied
   });`;
 }

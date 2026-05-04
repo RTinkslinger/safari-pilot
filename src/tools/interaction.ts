@@ -6,6 +6,7 @@ import { buildRefSelector } from '../aria.js';
 import { generateAutoWaitJs, ACTION_CHECKS } from '../auto-wait.js';
 import { hasLocatorParams, extractLocatorFromParams, generateLocatorJs } from '../locator.js';
 import { escapeForJsSingleQuote } from '../escape.js';
+import { StrictnessViolationError } from '../errors.js';
 
 export interface ToolDefinition {
   name: string;
@@ -50,6 +51,7 @@ export class InteractionTools {
   private async resolveElement(
     tabUrl: string,
     params: Record<string, unknown>,
+    strict = false,
   ): Promise<string> {
     const ref = params['ref'] as string | undefined;
     if (ref) return buildRefSelector(ref);
@@ -60,7 +62,13 @@ export class InteractionTools {
       const result = await this.engine.executeJsInTab(tabUrl, locatorJs);
       if (result.ok && result.value) {
         const parsed = JSON.parse(result.value);
-        if (parsed.found && parsed.selector) return parsed.selector;
+        if (parsed.found && parsed.selector) {
+          // T80: action tools enforce strict mode — multi-match without disambiguation throws.
+          if (strict && parsed.matchCount > 1 && parsed.strictnessSatisfied === false) {
+            throw new StrictnessViolationError(parsed.matchCount, JSON.stringify(locator));
+          }
+          return parsed.selector;
+        }
         throw new Error(parsed.hint || 'Locator did not match any element');
       }
       throw new Error('Locator resolution failed');
@@ -408,7 +416,7 @@ export class InteractionTools {
     // middle is "open in new tab" which our automation cannot replicate via JS.
     const followLinks = buttonNum === 0 ? 'true' : 'false';
 
-    const selector = await this.resolveElement(tabUrl, params);
+    const selector = await this.resolveElement(tabUrl, params, true);
     const escapedSelector = escapeForJsSingleQuote(selector);
 
     const actionJs = `
@@ -497,7 +505,7 @@ export class InteractionTools {
     const timeout = typeof params['timeout'] === 'number' ? params['timeout'] : 5000;
     const force = params['force'] === true;
 
-    const selector = await this.resolveElement(tabUrl, params);
+    const selector = await this.resolveElement(tabUrl, params, true);
     const escapedSelector = escapeForJsSingleQuote(selector);
 
     const actionJs = `
@@ -534,7 +542,7 @@ export class InteractionTools {
     const timeout = typeof params['timeout'] === 'number' ? params['timeout'] : 10000;
     const force = params['force'] === true;
 
-    const selector = await this.resolveElement(tabUrl, params);
+    const selector = await this.resolveElement(tabUrl, params, true);
     const escapedSelector = escapeForJsSingleQuote(selector);
     const escapedValue = escapeForJsSingleQuote(value);
 
@@ -606,7 +614,7 @@ export class InteractionTools {
     const optionLabel = params['optionLabel'] as string | undefined;
     const optionIndex = params['optionIndex'] as number | undefined;
 
-    const selector = await this.resolveElement(tabUrl, params);
+    const selector = await this.resolveElement(tabUrl, params, true);
     const escapedSelector = escapeForJsSingleQuote(selector);
 
     const actionJs = `
@@ -639,7 +647,7 @@ export class InteractionTools {
     const timeout = typeof params['timeout'] === 'number' ? params['timeout'] : 5000;
     const force = params['force'] === true;
 
-    const selector = await this.resolveElement(tabUrl, params);
+    const selector = await this.resolveElement(tabUrl, params, true);
     const escapedSelector = escapeForJsSingleQuote(selector);
 
     const actionJs = `
@@ -665,7 +673,7 @@ export class InteractionTools {
     const timeout = typeof params['timeout'] === 'number' ? params['timeout'] : 5000;
     const force = params['force'] === true;
 
-    const selector = await this.resolveElement(tabUrl, params);
+    const selector = await this.resolveElement(tabUrl, params, true);
     const escapedSelector = escapeForJsSingleQuote(selector);
 
     const actionJs = `
@@ -693,7 +701,7 @@ export class InteractionTools {
     // 'content' avoids collision with locator 'text' param
     const content = params['content'] as string;
 
-    const selector = await this.resolveElement(tabUrl, params);
+    const selector = await this.resolveElement(tabUrl, params, true);
     const escapedSelector = escapeForJsSingleQuote(selector);
     const escapedText = escapeForJsSingleQuote(content);
 
@@ -732,7 +740,7 @@ export class InteractionTools {
     const hasTarget = params['ref'] || params['selector'] || hasLocatorParams(params);
     let escapedSelector = '';
     if (hasTarget) {
-      const selector = await this.resolveElement(tabUrl, params);
+      const selector = await this.resolveElement(tabUrl, params, true);
       escapedSelector = escapeForJsSingleQuote(selector);
     }
 
