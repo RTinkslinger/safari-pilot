@@ -295,9 +295,11 @@ Locked priority order for post–Phase 5A work:
             (permission script-parse). Branch: feat/T43-e2e-coverage,
             commit 8f1f287.
 
-5. T66    Gmail-class strict-CSP file-upload     [structural-adjacent]
-            content-isolated → daemon byte-fetch rejected by Trusted
-            Types CSP. Decide: fix or accept-with-limitation.
+5. ~~T66~~ ✓ RESOLVED-AS-DOCUMENTED 2026-05-04 — option (2) per user
+            direction: ship with documented limitation. Strict-CSP origins
+            (Gmail-class) added to "NOT supported in v1" in
+            docs/changelogs/v0.1.23.md. Architectural fix deferred —
+            requires a strict-CSP fixture variant in e2e first.
 ```
 
 ---
