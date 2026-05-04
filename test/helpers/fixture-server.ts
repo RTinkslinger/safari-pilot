@@ -172,6 +172,194 @@ function makeHandler() {
     // a stub `safari_click` that fabricates `{clicked:true}` without
     // dispatching a real MouseEvent does not fire the handler, so
     // `window.__t65_clicked` stays undefined and the test fails.
+    // T43 — storage tools fixture. Seeds an IndexedDB database "t43db" with
+    // an object store "items" containing two records (id=1, id=2). All
+    // T43-storage e2e tests target this single page.
+    // T43 — observation fixture. Contains: an <img>, a <table> with header
+    // + 2 data rows, several <a>, a <meta description>, and an inline script
+    // that emits a known console.log seed string on load. All T43-observation
+    // e2e tests target this single page.
+    // T43 — interaction fixture. Exposes named target elements for
+    // hover / dblclick / drag / press_key / type / select / scroll / check
+    // tests; an inline script records events into window.__t43_int = [].
+    // T43 — network fixture. Issues a fetch on page load so the network
+    // log has at least one entry; exposes a #t43-monitor-target div for
+    // monitor_page DOM-watch.
+    // T43 — misc fixture. Has a <video>, a Shadow DOM host with an inner
+    // button, and basic structure for smart_scrape / paginate_scrape.
+    // T43 — download fixture. /t43-download-page serves a page with an
+    // anchor that downloads /t43-download-file (Content-Disposition: attachment).
+    if (url === '/t43-download-page') {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(`<!DOCTYPE html><html><body>
+    <a id="t43-dl" href="/t43-download-file" download="t43-download.txt">download</a>
+  </body></html>`);
+      return;
+    }
+    if (url.startsWith('/t43-download-file')) {
+      res.writeHead(200, {
+        'Content-Type': 'application/octet-stream',
+        'Content-Disposition': 'attachment; filename="t43-download.txt"',
+      });
+      res.end('T43 download payload — ' + new Date().toISOString());
+      return;
+    }
+
+    if (url === '/t43-misc') {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(`<!DOCTYPE html><html><body>
+    <h1>T43 misc fixture</h1>
+    <video id="t43-video" muted loop playsinline width="200" height="100" preload="auto">
+      <source src="data:video/mp4;base64,AAAA" type="video/mp4" />
+    </video>
+    <div id="t43-shadow-host"></div>
+    <p id="t43-misc-content">Some scrapeable content for smart_scrape.</p>
+    <script>
+      // Open shadow root with a button that records its click via a global
+      // window flag — proves safari_click_shadow pierces the boundary.
+      var host = document.getElementById('t43-shadow-host');
+      var root = host.attachShadow({ mode: 'open' });
+      var btn = document.createElement('button');
+      btn.id = 'shadow-btn';
+      btn.textContent = 'shadow click';
+      btn.addEventListener('click', function () {
+        window.__t43_shadow_clicked = true;
+      });
+      root.appendChild(btn);
+    </script>
+  </body></html>`);
+      return;
+    }
+
+    if (url === '/t43-network') {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(`<!DOCTYPE html><html><body>
+    <h1>T43 network fixture</h1>
+    <div id="t43-monitor-target">initial-content</div>
+    <script>
+      // Page-load fetch. Hits /t43-net-fixture-fetch (defined as a 200 OK
+      // route below) so list_network_requests + get_network_request have
+      // a stable entry to find.
+      fetch('/t43-net-fixture-fetch?ts=' + Date.now()).catch(function () {});
+    </script>
+  </body></html>`);
+      return;
+    }
+    if (url.startsWith('/t43-net-fixture-fetch')) {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end('{"ok":true,"marker":"t43-fixture-fetch"}');
+      return;
+    }
+
+    if (url === '/t43-interaction') {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(`<!DOCTYPE html><html><body>
+    <h1 id="page-title">T43 interaction fixture</h1>
+    <div id="t43-hover" style="padding:8px;background:#eee;">hover target</div>
+    <div id="t43-dblclick" style="padding:8px;background:#ddd;">dblclick target</div>
+    <div id="t43-drag-src" draggable="true" style="padding:8px;background:#cce;">drag source</div>
+    <div id="t43-drag-tgt" style="padding:8px;background:#ecc;">drop target</div>
+    <input id="t43-keys" type="text" style="margin:8px;" />
+    <input id="t43-type" type="text" style="margin:8px;" />
+    <select id="t43-select">
+      <option value="alpha">Alpha</option>
+      <option value="beta">Beta</option>
+      <option value="gamma">Gamma</option>
+    </select>
+    <input id="t43-check" type="checkbox" />
+    <div id="spacer" style="height:2000px;"></div>
+    <script>
+      window.__t43_int = [];
+      function record(ev, extra) {
+        window.__t43_int.push(Object.assign({ type: ev.type }, extra || {}));
+      }
+      var hover = document.getElementById('t43-hover');
+      hover.addEventListener('mouseover', function (e) { record(e); });
+      var dbl = document.getElementById('t43-dblclick');
+      dbl.addEventListener('dblclick', function (e) { record(e, { detail: e.detail }); });
+      var src = document.getElementById('t43-drag-src');
+      src.addEventListener('mousedown', function (e) { record(e); });
+      src.addEventListener('dragstart', function (e) { record(e); });
+      var tgt = document.getElementById('t43-drag-tgt');
+      tgt.addEventListener('mouseup', function (e) { record(e); });
+      tgt.addEventListener('drop', function (e) { record(e); });
+      // Use a body-level keydown listener so safari_press_key (which targets
+      // the active document) lands here regardless of focus.
+      document.addEventListener('keydown', function (e) {
+        record(e, { key: e.key });
+      });
+      // safari_select_option's change observer.
+      document.getElementById('t43-select').addEventListener('change', function (e) {
+        record(e, { selectedValue: e.target.value });
+      });
+    </script>
+  </body></html>`);
+      return;
+    }
+
+    if (url === '/t43-observation') {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(`<!DOCTYPE html><html>
+  <head>
+    <title>T43 observation fixture</title>
+    <meta name="description" content="seeded for safari_extract_metadata" />
+    <meta name="author" content="T43" />
+  </head>
+  <body>
+    <h1>T43 observation</h1>
+    <img src="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg'/>" alt="t43-observation-image" />
+    <table id="t43-table">
+      <thead><tr><th>Col A</th><th>Col B</th></tr></thead>
+      <tbody>
+        <tr><td>row1a</td><td>row1b</td></tr>
+        <tr><td>row2a</td><td>row2b</td></tr>
+      </tbody>
+    </table>
+    <a href="https://example.com/one">t43 anchor one</a>
+    <a href="https://example.com/two">t43 anchor two</a>
+    <script>
+      console.log('T43 console seed marker');
+      console.warn('T43 warn marker');
+    </script>
+  </body></html>`);
+      return;
+    }
+
+    if (url === '/t43-storage') {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(`<!DOCTYPE html><html><body>
+    <h1 id="t43-storage-page">T43 storage fixture</h1>
+    <script>
+      // Seed t43db on load. Every page navigation re-seeds — idempotent
+      // (records already present are overwritten with put()).
+      (function () {
+        var open = indexedDB.open('t43db_v2', 1);
+        open.onupgradeneeded = function (e) {
+          var db = e.target.result;
+          if (!db.objectStoreNames.contains('items')) {
+            db.createObjectStore('items', { keyPath: 'id' });
+          }
+        };
+        open.onsuccess = function (e) {
+          var db = e.target.result;
+          var tx = db.transaction(['items'], 'readwrite');
+          var store = tx.objectStore('items');
+          // Clear any prior-run data so the seeded set is deterministic.
+          store.clear();
+          store.put({ id: 1, name: 'first' });
+          store.put({ id: 2, name: 'second' });
+          tx.oncomplete = function () {
+            window.__t43_idb_seeded = true;
+            db.close();
+          };
+        };
+        open.onerror = function () { window.__t43_idb_error = true; };
+      })();
+    </script>
+  </body></html>`);
+      return;
+    }
+
     if (url === '/t65-form') {
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
       res.end(`<!DOCTYPE html><html><body>
