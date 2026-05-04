@@ -712,6 +712,8 @@ export function generateLocatorJs(
     });
   }
 
+  // ── T78 splice point ──
+
   // T80: compute strictnessSatisfied flag.
   // True when: matched.length === 1, OR base locator is testId/xpath
   // (single-match by definition), OR flat nth was set, OR chain terminates
@@ -745,5 +747,67 @@ export function generateLocatorJs(
     },
     matchCount: matched.length,
     strictnessSatisfied: __strictnessSatisfied
+  });`;
+}
+
+/**
+ * T78: Generate IIFE that resolves a locator to ALL matching elements
+ * (up to `limit`), stamps each with sp-xxxxxx, and returns rich payload.
+ *
+ * Reuses the same base-resolution + chain-op machinery as `generateLocatorJs`.
+ * Difference: the final result envelope returns `{items: [...], count, limit, truncated}`
+ * instead of a single `{found, selector, element}`.
+ */
+export function generateQueryAllJs(
+  locator: LocatorDescriptor,
+  options: { limit: number; scopeSelector?: string },
+): string {
+  // Build the same resolution body as generateLocatorJs, but replace everything
+  // from the dedicated `// ── T78 splice point ──` marker (sits AFTER the post-chain
+  // empty-exit, so chain ops are preserved in the preamble) with our multi-element
+  // payload generator.
+  const baseJs = generateLocatorJs(locator, { scopeSelector: options.scopeSelector });
+
+  const resultMarker = '// ── T78 splice point ──';
+  const idx = baseJs.indexOf(resultMarker);
+  if (idx === -1) {
+    throw new Error('generateQueryAllJs: T78 splice point marker not found in baseJs (locator.ts contract drift)');
+  }
+  const preamble = baseJs.slice(0, idx);
+
+  return `${preamble}
+  // ── T78 multi-element payload ──
+  var __limit = ${options.limit};
+  var __truncated = matched.length > __limit;
+  var __slice = matched.slice(0, __limit);
+  var __items = [];
+  for (var __i = 0; __i < __slice.length; __i++) {
+    var __el = __slice[__i];
+    var __ref = 'sp-' + Math.random().toString(36).substring(2, 8);
+    __el.setAttribute('data-sp-ref', __ref);
+    var __rect = __el.getBoundingClientRect();
+    var __attrs = {};
+    if (__el.attributes) {
+      for (var __ai = 0; __ai < __el.attributes.length; __ai++) {
+        var __a = __el.attributes[__ai];
+        if (__a.name && __a.name !== 'data-sp-ref') __attrs[__a.name] = __a.value;
+      }
+    }
+    var __style = window.getComputedStyle(__el);
+    var __visible = __style.display !== 'none' && __style.visibility !== 'hidden' && __rect.width > 0 && __rect.height > 0;
+    __items.push({
+      ref: __ref,
+      tagName: __el.tagName || '',
+      text: normalizeWhitespace((__el.innerText !== undefined ? __el.innerText : __el.textContent) || '').substring(0, 500),
+      attrs: __attrs,
+      boundingBox: { x: __rect.x, y: __rect.y, width: __rect.width, height: __rect.height },
+      visible: __visible,
+    });
+  }
+  return JSON.stringify({
+    items: __items,
+    count: matched.length,
+    limit: __limit,
+    truncated: __truncated,
   });`;
 }

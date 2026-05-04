@@ -378,6 +378,23 @@ function makeHandler() {
       return;
     }
 
+    // T78 — safari_query_all multi-element extraction fixture.
+    // 4 cells, each with a Buy button. Used to verify rich-payload shape, limit
+    // capping, and ref flow into action tools.
+    if (url === '/t78-grid') {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(`<!doctype html>
+<html><head><title>T78 grid</title></head><body>
+  <div id="grid">
+    <div class="cell" data-id="c1">Alpha <button>Buy</button></div>
+    <div class="cell" data-id="c2">Beta <button>Buy</button></div>
+    <div class="cell" data-id="c3">Gamma <button>Buy</button></div>
+    <div class="cell" data-id="c4">Delta <button>Buy</button></div>
+  </div>
+</body></html>`);
+      return;
+    }
+
     if (url === '/t65-form') {
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
       res.end(`<!DOCTYPE html><html><body>

@@ -17,7 +17,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { generateSnapshotJs, buildRefSelector } from '../aria.js';
 import { escapeForJsSingleQuote } from '../escape.js';
-import { hasLocatorParams, extractLocatorFromParams, generateLocatorJs } from '../locator.js';
+import { generateQueryAllJs, hasLocatorParams, extractLocatorFromParams, generateLocatorJs } from '../locator.js';
 import type { IEngine } from '../engines/engine.js';
 import type { Engine, ToolResponse, ToolRequirements } from '../types.js';
 import { ScreenshotPolicy } from '../security/screenshot-policy.js';
@@ -53,6 +53,7 @@ export class ExtractionTools {
     this.handlers.set('safari_evaluate', this.handleEvaluate.bind(this));
     this.handlers.set('safari_take_screenshot', this.handleTakeScreenshot.bind(this));
     this.handlers.set('safari_get_console_messages', this.handleGetConsoleMessages.bind(this));
+    this.handlers.set('safari_query_all', this.handleQueryAll.bind(this));
   }
 
   // ── Public API ──────────────────────────────────────────────────────────────
@@ -254,6 +255,35 @@ export class ExtractionTools {
           required: ['tabUrl'],
         },
         requirements: { idempotent: true },
+      },
+      {
+        name: 'safari_query_all',
+        description:
+          'Resolve a locator to ALL matching elements (default cap 100). Returns rich payload per element: ' +
+          '{ref, tagName, text, attrs, boundingBox, visible}. Each ref is reusable in any action tool that ' +
+          "accepts ref or selector (e.g. safari_click({ref: 'sp-xxx'})).",
+        inputSchema: {
+          type: 'object',
+          properties: {
+            tabUrl: { type: 'string', description: 'Current URL of the tab' },
+            selector: { type: 'string', description: 'CSS selector. If provided, used directly via querySelectorAll.' },
+            role: { type: 'string', description: 'ARIA role to search for' },
+            name: { type: 'string', description: 'Accessible name' },
+            text: { type: 'string', description: 'Visible text content to match' },
+            label: { type: 'string', description: 'Associated label text' },
+            testId: { type: 'string', description: 'data-testid attribute' },
+            placeholder: { type: 'string', description: 'placeholder attribute' },
+            xpath: { type: 'string', description: 'XPath expression' },
+            exact: { type: 'boolean', description: 'Exact text match', default: false },
+            filter: { type: 'object' },
+            nth: { type: 'number' },
+            chain: { type: 'array', items: { type: 'object' }, description: 'T77 chain ops' },
+            limit: { type: 'number', description: 'Maximum elements to return', default: 100 },
+            frameId: { type: 'number', description: 'Optional frame target' },
+          },
+          required: ['tabUrl'],
+        },
+        requirements: { idempotent: true, requiresFramesCrossOrigin: true },
       },
     ];
   }
@@ -572,6 +602,73 @@ export class ExtractionTools {
       result.value ? JSON.parse(result.value) : { messages: [], count: 0 },
       Date.now() - start,
     );
+  }
+
+  private async handleQueryAll(params: Record<string, unknown>): Promise<ToolResponse> {
+    const start = Date.now();
+    const tabUrl = params['tabUrl'] as string;
+    const frameId = params['frameId'] as number | undefined;
+    const limit = typeof params['limit'] === 'number' ? Math.max(1, Math.min(1000, params['limit'])) : 100;
+
+    // Selector path: bypass locator, use querySelectorAll directly with the same payload shape
+    const selector = params['selector'] as string | undefined;
+    if (selector) {
+      const escaped = escapeForJsSingleQuote(selector);
+      const js = `
+        var __limit = ${limit};
+        var __all = Array.prototype.slice.call(document.querySelectorAll('${escaped}'));
+        var __truncated = __all.length > __limit;
+        var __slice = __all.slice(0, __limit);
+        var __items = [];
+        for (var __i = 0; __i < __slice.length; __i++) {
+          var __el = __slice[__i];
+          var __ref = 'sp-' + Math.random().toString(36).substring(2, 8);
+          __el.setAttribute('data-sp-ref', __ref);
+          var __rect = __el.getBoundingClientRect();
+          var __attrs = {};
+          if (__el.attributes) {
+            for (var __ai = 0; __ai < __el.attributes.length; __ai++) {
+              var __a = __el.attributes[__ai];
+              if (__a.name && __a.name !== 'data-sp-ref') __attrs[__a.name] = __a.value;
+            }
+          }
+          var __style = window.getComputedStyle(__el);
+          var __visible = __style.display !== 'none' && __style.visibility !== 'hidden' && __rect.width > 0 && __rect.height > 0;
+          __items.push({
+            ref: __ref,
+            tagName: __el.tagName || '',
+            text: ((__el.innerText !== undefined ? __el.innerText : __el.textContent) || '').replace(/\\s+/g, ' ').trim().substring(0, 500),
+            attrs: __attrs,
+            boundingBox: { x: __rect.x, y: __rect.y, width: __rect.width, height: __rect.height },
+            visible: __visible,
+          });
+        }
+        return JSON.stringify({ items: __items, count: __all.length, limit: __limit, truncated: __truncated });
+      `;
+      const result = await routeFrameAware(this.engine, { tabUrl, frameId }, js);
+      if (!result.ok) throw new Error(result.error?.message ?? 'query_all (selector) failed');
+      const parsed = result.value ? JSON.parse(result.value) : { items: [], count: 0 };
+      const normalized = parsed.found === false
+        ? { items: [], count: 0, limit, truncated: false }
+        : parsed;
+      return this.makeResponse(normalized, Date.now() - start);
+    }
+
+    // Locator path
+    if (!hasLocatorParams(params)) {
+      throw new Error('safari_query_all requires either selector or a locator (role, text, label, testId, placeholder, xpath)');
+    }
+    const locator = extractLocatorFromParams(params)!;
+    const js = generateQueryAllJs(locator, { limit });
+
+    const result = await routeFrameAware(this.engine, { tabUrl, frameId }, js);
+    if (!result.ok) throw new Error(result.error?.message ?? 'query_all failed');
+
+    const parsed = result.value ? JSON.parse(result.value) : { items: [], count: 0 };
+    const normalized = parsed.found === false
+      ? { items: [], count: 0, limit, truncated: false }
+      : parsed;
+    return this.makeResponse(normalized, Date.now() - start);
   }
 
   // ── Private helpers ─────────────────────────────────────────────────────────
