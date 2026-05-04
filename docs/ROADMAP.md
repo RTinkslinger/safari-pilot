@@ -271,9 +271,17 @@ Locked priority order for post–Phase 5A work:
             **Validation: 10/10 sweeps PASS, flake rate 0%.** Branch:
             fix/T73-supersede-skip-when-healthy, commit 90a3f08. v0.1.26.
 
-2. T65    phase3-3.1 form submission flake       [pre-existing]
-            httpbin.org/forms/post → /post navigation
-            cache miss before click reaches extension
+2. ~~T65~~ ✓ RESOLVED 2026-05-04 — switched discriminator to state-based
+            (window.__t65_clicked) on local fixture; preventDefault keeps
+            tab URL stable. Validation: 5/5 PASS. Underlying mystery
+            (page navigates after fill+verify) filed as T74.
+            Branch: fix/T65-form-submit-flake, commit 9f47ce7.
+
+   T74    unidentified post-fill navigation       [extension-side]
+            Form page navigates ~388ms after a read-only verify-eval
+            following a safari_fill. T65 workaround sidesteps in test;
+            could surface in production when agent pauses between fill
+            and next action. P2.
 
 3. T59    ScreenshotPolicy domain-block          [security pipeline]
             seed-list domain blocking; test-design vs product-design
