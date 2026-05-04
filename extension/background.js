@@ -104,6 +104,56 @@ browser.tabs.onRemoved.addListener(async (tabId) => {
   }
 });
 
+// T79 Cluster D: re-inject persisted packs into window.__sp_pack on every
+// completed navigation. Runs purely from the extension-bg context — no MCP
+// command involved. Reads sp_pack_<tabId>_<name> keys and re-injects each
+// via the same storage-bus execute_script flow used everywhere else.
+browser.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
+  if (changeInfo.status !== 'complete') return;
+  let stored;
+  try {
+    stored = await browser.storage.local.get(null);
+  } catch (e) {
+    emitTrace('__rehydrate__', 'pack_rehydrate_storage_get_failed', { layer: 'extension-bg', data: { tabId, error: e && e.message ? e.message : String(e) } });
+    return;
+  }
+  const prefix = 'sp_pack_' + tabId + '_';
+  const keys = Object.keys(stored).filter((k) => k.startsWith(prefix));
+  if (keys.length === 0) return;
+  for (const key of keys) {
+    const name = key.slice(prefix.length);
+    const body = stored[key];
+    if (typeof body !== 'string' || !body) continue;
+    const injectionScript =
+      'window.__sp_pack=window.__sp_pack||{};' +
+      'try{' +
+        'window.__sp_pack[' + JSON.stringify(name) + ']=new Function(\'root\',\'arg\',' + JSON.stringify(body) + ');' +
+        'return JSON.stringify({ok:true,rehydrated:true});' +
+      '}catch(e){' +
+        'return JSON.stringify({ok:false,error:e&&e.message?e.message:String(e)});' +
+      '}';
+    const rehydrateCmdId = '__rehydrate_' + tabId + '_' + name + '_' + Date.now();
+    const cmdKey = 'sp_cmd_' + rehydrateCmdId;
+    const storageCmd = {
+      commandId: rehydrateCmdId,
+      tabId,
+      method: 'execute_script',
+      params: { script: injectionScript, commandId: rehydrateCmdId },
+      timestamp: Date.now(),
+      deadline: Date.now() + 5000,
+    };
+    try {
+      await browser.storage.local.set({ [cmdKey]: storageCmd });
+      emitTrace(rehydrateCmdId, 'pack_rehydrated', { layer: 'extension-bg', data: { tabId, name } });
+      // Fire-and-forget — content-isolated picks it up, runs the injection.
+      // Cleanup the cmd key after a short delay to keep storage lean.
+      setTimeout(() => { browser.storage.local.remove([cmdKey, 'sp_result_' + rehydrateCmdId]).catch(() => {}); }, 6000);
+    } catch (e) {
+      emitTrace(rehydrateCmdId, 'pack_rehydrate_failed', { layer: 'extension-bg', data: { tabId, name, error: e && e.message ? e.message : String(e) } });
+    }
+  }
+});
+
 // ─── HTTP IPC to daemon ─────────────────────────────────────────────────────
 const HTTP_URL = 'http://127.0.0.1:19475';
 
@@ -507,6 +557,98 @@ async function executeCommand(cmd) {
     }
     await updatePendingEntry(commandId, { status: 'completed', result });
     return result;
+  }
+
+  // T79 Cluster D: selectorPack register/unregister sentinels.
+  // Pack registration writes both to (a) page-scope window.__sp_pack[name] for
+  // immediate use AND (b) browser.storage.local sp_pack_<tabId>_<name>=body for
+  // persistence across navigations. The tabs.onUpdated listener below
+  // re-injects (a) from (b) on every navigation. The existing tabs.onRemoved
+  // listener cleans up (b) on tab close.
+  //
+  // Body must be a string already validated upstream by validatePackBody (the
+  // MCP-side selector-pack tool). The extension does NOT re-validate — it
+  // trusts that ANY script that reaches this sentinel passed validation.
+  // Single source of truth on the MCP side avoids drift.
+  if (typeof cmd.script === 'string' && cmd.script.startsWith('__SP_PACK_')) {
+    const colonIdx = cmd.script.indexOf(':');
+    const sentinel = colonIdx > 0 ? cmd.script.slice(0, colonIdx) : cmd.script;
+    let parsed = {};
+    if (colonIdx > 0) {
+      try { parsed = JSON.parse(cmd.script.slice(colonIdx + 1)); }
+      catch (e) {
+        const result = { ok: false, error: { name: 'PACK_PARAM_PARSE', message: `Failed to parse pack params: ${e?.message ?? String(e)}` } };
+        await updatePendingEntry(commandId, { status: 'completed', result });
+        return result;
+      }
+    }
+
+    const name = parsed.name;
+    const body = parsed.body;
+    if (typeof name !== 'string' || !name) {
+      const result = { ok: false, error: { name: 'PACK_INVALID_NAME', message: 'pack sentinel requires non-empty name' } };
+      await updatePendingEntry(commandId, { status: 'completed', result });
+      return result;
+    }
+
+    const storageKey = 'sp_pack_' + tab.id + '_' + name;
+
+    if (sentinel === '__SP_PACK_REGISTER__') {
+      if (typeof body !== 'string' || !body) {
+        const result = { ok: false, error: { name: 'PACK_INVALID_BODY', message: 'pack register sentinel requires non-empty body' } };
+        await updatePendingEntry(commandId, { status: 'completed', result });
+        return result;
+      }
+      try {
+        // Persist for re-injection on navigation.
+        await browser.storage.local.set({ [storageKey]: body });
+      } catch (e) {
+        const result = { ok: false, error: { name: 'PACK_STORAGE_WRITE_FAILED', message: e?.message ?? String(e) } };
+        await updatePendingEntry(commandId, { status: 'completed', result });
+        return result;
+      }
+      // Inject into page now via the standard storage-bus execute path. The
+      // page-side evaluator (content-main.js) wraps scripts in `new
+      // Function(script)()`, so the script must use a top-level `return` —
+      // an IIFE expression statement would have its result discarded.
+      // Embed name + body via JSON.stringify so quotes / backslashes survive
+      // the round-trip without bespoke escaping.
+      const injectionScript =
+        'window.__sp_pack=window.__sp_pack||{};' +
+        'try{' +
+          'window.__sp_pack[' + JSON.stringify(name) + ']=new Function(\'root\',\'arg\',' + JSON.stringify(body) + ');' +
+          'return JSON.stringify({ok:true,name:' + JSON.stringify(name) + '});' +
+        '}catch(e){' +
+          'return JSON.stringify({ok:false,error:e&&e.message?e.message:String(e)});' +
+        '}';
+      // Replace cmd.script and fall through to the regular execute path so
+      // the inject runs through the storage-bus content-script flow.
+      cmd.script = injectionScript;
+      emitTrace(commandId, 'pack_registered', { layer: 'extension-bg', data: { tabId: tab.id, name, bodyBytes: body.length } });
+      // Fall through — the regular execute path runs `cmd.script` in-page.
+    } else if (sentinel === '__SP_PACK_UNREGISTER__') {
+      try {
+        await browser.storage.local.remove([storageKey]);
+      } catch (e) {
+        const result = { ok: false, error: { name: 'PACK_STORAGE_REMOVE_FAILED', message: e?.message ?? String(e) } };
+        await updatePendingEntry(commandId, { status: 'completed', result });
+        return result;
+      }
+      const removalScript =
+        'var __removed=false;' +
+        'if(window.__sp_pack&&window.__sp_pack[' + JSON.stringify(name) + ']){' +
+          'delete window.__sp_pack[' + JSON.stringify(name) + '];' +
+          '__removed=true;' +
+        '}' +
+        'return JSON.stringify({ok:true,removed:__removed});';
+      cmd.script = removalScript;
+      emitTrace(commandId, 'pack_unregistered', { layer: 'extension-bg', data: { tabId: tab.id, name } });
+      // Fall through — regular execute path runs the removal.
+    } else {
+      const r = { ok: false, error: { name: 'UNKNOWN_PACK_SENTINEL', message: `Unknown pack sentinel: ${sentinel}` } };
+      await updatePendingEntry(commandId, { status: 'completed', result: r });
+      return r;
+    }
   }
 
   // T55a: validate frameId at dispatch time. Missing frame → fast-fail

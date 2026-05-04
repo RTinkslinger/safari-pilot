@@ -1,4 +1,3 @@
-import { escapeForJsSingleQuote } from '../escape.js';
 import { validatePackName, validatePackBody } from '../security/selector-pack-validator.js';
 import type { IEngine } from '../engines/engine.js';
 import type { Engine, ToolResponse, ToolRequirements } from '../types.js';
@@ -75,24 +74,18 @@ export class SelectorPackTools {
     validatePackName(name);
     validatePackBody(body);
 
-    // Storage write happens via the extension. For non-extension engines, register lives only in
-    // the page context (window.__sp_pack[name] = Function(...)). The extension path additionally
-    // writes browser.storage.local["sp_pack_<tabId>_<name>"] so subsequent uses survive navigation.
-    const escapedName = escapeForJsSingleQuote(name);
-    const escapedBody = escapeForJsSingleQuote(body);
-    const js = `
-      (function () {
-        if (!window.__sp_pack) window.__sp_pack = {};
-        try {
-          window.__sp_pack['${escapedName}'] = new Function('root', 'arg', '${escapedBody}');
-          return JSON.stringify({ ok: true, name: '${escapedName}' });
-        } catch (e) {
-          return JSON.stringify({ ok: false, error: e && e.message ? e.message : String(e) });
-        }
-      })();
-    `;
-
-    const result = await this.engine.executeJsInTab(tabUrl, js);
+    // Cluster D: persistence delivered via __SP_PACK_REGISTER__ sentinel. The
+    // extension intercepts and (a) writes sp_pack_<tabId>_<name>=body to
+    // storage.local for re-injection on navigation; (b) injects window.__sp_pack[name]
+    // into the page now via the standard storage-bus execute path. tabs.onUpdated
+    // re-injects from storage on every status:complete; tabs.onRemoved cleans up.
+    //
+    // Sentinel payload uses JSON for the round-trip — name and body have already
+    // passed validatePackName/validatePackBody so substring-injection paths are
+    // closed at the validator layer. JSON.stringify is the only encoding needed
+    // here for transport.
+    const sentinel = '__SP_PACK_REGISTER__:' + JSON.stringify({ name, body });
+    const result = await this.engine.executeJsInTab(tabUrl, sentinel);
     if (!result.ok) throw new Error(result.error?.message ?? 'register failed');
     const parsed = result.value ? JSON.parse(result.value) : { ok: false };
     if (!parsed.ok) throw new Error(`selectorPack register rejected by page: ${parsed.error}`);
@@ -106,18 +99,10 @@ export class SelectorPackTools {
     const name = params['name'] as string;
     validatePackName(name);
 
-    const escapedName = escapeForJsSingleQuote(name);
-    const js = `
-      (function () {
-        if (window.__sp_pack && window.__sp_pack['${escapedName}']) {
-          delete window.__sp_pack['${escapedName}'];
-          return JSON.stringify({ ok: true, removed: true });
-        }
-        return JSON.stringify({ ok: true, removed: false });
-      })();
-    `;
-
-    const result = await this.engine.executeJsInTab(tabUrl, js);
+    // Cluster D: __SP_PACK_UNREGISTER__ sentinel removes both the storage key
+    // and the page-side __sp_pack[name] entry.
+    const sentinel = '__SP_PACK_UNREGISTER__:' + JSON.stringify({ name });
+    const result = await this.engine.executeJsInTab(tabUrl, sentinel);
     if (!result.ok) throw new Error(result.error?.message ?? 'unregister failed');
     return this.makeResponse(result.value ? JSON.parse(result.value) : { ok: true }, Date.now() - start);
   }

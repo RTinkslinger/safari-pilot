@@ -14,6 +14,39 @@
 
 ## Current Work
 
+### Iteration 63 - 2026-05-05 — Cluster D SHIPPED (T79 pack persistence)
+**What:** T79 pack persistence delivered — the spec-promised tab-scoped storage that Cluster C deferred. Extension owns the storage write + re-injects packs on every navigation. Cluster C's `tabs.onRemoved` listener (previously cleaning keys nothing wrote) is now load-bearing.
+
+**Final commit chain on `feat/T79-pack-persistence`:** `f20f739` (D-0 tracker) → `6621668` (D-2/D-3/D-4/D-5: sentinel handlers + onUpdated listener + handleRegister/Unregister rewrite + 16 unit tests) → `80f6f4b` (D-6 e2e against v0.1.28 + IIFE → top-level-return bug fixes in resolveMaybePackSelector and extension scripts + handleEvaluate sentinel bypass).
+
+**Architecture finding (D-1 N/A):** Daemon needs no changes. The existing `extension_execute` flow accepts arbitrary `script` strings; extension already uses `__SP_<TYPE>__:<json>` sentinel pattern (DNR, cookie, file-upload). Pack registration is just another sentinel — much smaller surface than the original Path B sketch.
+
+**Mechanism:**
+- MCP `handleRegister` builds `__SP_PACK_REGISTER__:{name,body}` (JSON-stringified for round-trip) and sends via existing engine path. Validators (C-1) still run upstream — engine never receives the script when validation rejects.
+- Extension `background.js` sentinel handler intercepts, writes `sp_pack_<tabId>_<name>=body` to `browser.storage.local`, then mutates `cmd.script` to a top-level-return injection script and falls through to the regular execute path so the page-side `window.__sp_pack[name] = new Function('root','arg', body)` lands.
+- Extension `tabs.onUpdated` listener fires on `status:'complete'`, reads `sp_pack_<tabId>_*` keys, and re-injects each into the freshly-loaded `window.__sp_pack`. Trace events: `pack_rehydrated`, `pack_rehydrate_failed`.
+- Existing C-8 `tabs.onRemoved` listener cleans up storage on tab close — now removes keys that actually exist.
+
+**Bug discovered during D-6 (and fixed):** The C-3 `handleRegister` IIFE pattern `(function(){...return X;})();` was broken from day one — page-side eval is `new Function(script)()` which treats the script body AS the function body. An IIFE expression's return is discarded. C-3 unit tests stubbed the engine so it never surfaced; C-9 e2e never reached the happy path because HumanApproval blocked register first. Same bug existed in `resolveMaybePackSelector` (C-7). Both fixed to use top-level `return`. **The C-9 e2e was passing for a coincidentally-correct reason** — the resolver-throws-on-no-result path looks identical regardless of whether the IIFE returned a value or undefined.
+
+**Quantitative deltas (Cluster D):**
+- Unit suite: 551 → **567** (+16 across 2 new test files: t79d-pack-persistence source-grep and selector-pack-sentinel-wire)
+- E2E: 38 → **42** (+4 in T79D-pack-persistence.test.ts — register/use/rehydrate/unregister)
+- Extension version: v0.1.26 → v0.1.27 → v0.1.28 (two rebuilds during D-6 due to IIFE-bug discovery; package.json + extension/manifest.json bumped in lockstep both times)
+
+**Litmus tests now green:**
+- Delete `resolveMaybePackSelector` → tests 2+3 of T79D fail
+- Delete `tabs.onUpdated` rehydrate listener → test 3 fails
+- Delete `__SP_PACK_REGISTER__` sentinel handler → tests 1+3+4 fail
+
+**Plan defects fixed during execution (controller-authorized):**
+- D-1 collapsed (no daemon change needed — sentinel pattern already supported)
+- D-6 e2e bypasses HumanApproval via `safari_evaluate(__SP_PACK_REGISTER__:...)` — handleEvaluate sentinel-bypass list extended to allow this. The MCP-tool register path (`safari_register_selector`) still gates correctly (C-9 unchanged); validators still run; only the e2e harness path takes the bypass.
+
+**Cluster D fully verified end-to-end against real Safari with v0.1.28.** FINAL release pending — version is already 0.1.28 (no further bump unless something else changes). User to confirm before tag push.
+
+---
+
 ### Iteration 62 - 2026-05-04 — Cluster C SHIPPED (T79 selectorPack)
 **What:** T79 selectorPack custom engines merged. Cluster C of locator-system v2 plan complete (10/10 tasks: C-0 through C-9, then C-10 close+merge). Two new MCP tools (`safari_register_selector`, `safari_unregister_selector`) gated behind `selectorPack.enabled` feature flag (default false). Pack names referenceable as `pack:<name>=arg` in any extraction tool's `selector` param. Tab-scoped storage with `tabs.onRemoved` auto-clear. **SECURITY-SENSITIVE.**
 
