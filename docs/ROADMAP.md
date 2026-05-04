@@ -283,9 +283,10 @@ Locked priority order for post–Phase 5A work:
             could surface in production when agent pauses between fill
             and next action. P2.
 
-3. T59    ScreenshotPolicy domain-block          [security pipeline]
-            seed-list domain blocking; test-design vs product-design
-            decision pending
+3. ~~T59~~ ✓ RESOLVED 2026-04-26 — was already shipped before this sprint
+            (`ScreenshotPolicy` + `ScreenshotBlockedError` per tracker
+            row; commits 796cc83, 64385aa, 43dc2d6). Original roadmap
+            entry was stale. Skipped.
 
 4. T43    61 untested tools sub-sprint           [multi-week, Phase 6]
             full e2e coverage for the residual tool registry
