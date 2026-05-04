@@ -28,30 +28,16 @@ jobs:
       - name: Run unit tests
         run: npm run test:unit
 
-  integration-tests:
-    name: Integration Tests
-    runs-on: macos-15
-    steps:
-      - uses: actions/checkout@v5
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v5
-        with:
-          node-version: '22'
-          cache: 'npm'
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Build TypeScript
-        run: npm run build
-
-      - name: Build Swift daemon
-        run: swift build
-        working-directory: daemon
-
-      - name: Run integration tests
-        run: npm run test:integration
+  # Integration test job removed 2026-05-04. Per CLAUDE.md "Note: Unit and
+  # integration tests were purged (2026-04-23) — they were mock-based fakes.
+  # Only real e2e tests exist now (19 tests, 4 files)." The job had been
+  # failing on every push since the purge because `npm run test:integration`
+  # references a script that no longer exists. Coverage is owned by:
+  #   - unit-tests job (this workflow) — pure-logic in src/, no Safari
+  #   - e2e-tests job (this workflow, gated) — real spawn against real Safari
+  # If a need for cross-component testing without Safari ever returns, file a
+  # tracker item and reintroduce a vitest config + npm script BEFORE wiring
+  # the workflow.
 
   e2e-tests:
     name: E2E Tests
