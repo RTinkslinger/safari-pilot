@@ -39,6 +39,9 @@ export interface SnapshotResult {
  * Safe for use in `querySelector()` or tool parameters.
  */
 export function buildRefSelector(ref: string): string {
+  // T78: passthrough for fully-qualified data-sp-ref selectors so callers can
+  // hand in either the bare ref or the resolved selector form.
+  if (ref.startsWith('[data-sp-ref=')) return ref;
   return '[data-sp-ref="' + ref + '"]';
 }
 
