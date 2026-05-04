@@ -14,6 +14,43 @@
 
 ## Current Work
 
+### Iteration 55 - 2026-05-04
+**What:** Post–Phase-5A queue execution session. Closed 5 tracker items end-to-end, drove multi-file e2e sweep flake rate from 80% to 0%, achieved 100% MCP-tool e2e coverage (was 40%). Two extension releases shipped locally (v0.1.25 + v0.1.26, signed/notarized/stapled). 5 new tracker items filed honestly with reproduction recipes. ~20 commits ahead of origin/main, pushing to publish v0.1.26.
+
+**Changes (by tracker item):**
+- **T70 → 08164c3** — initialization e2e assertion aligned with T63 routing (safari_new_tab declares requiresApplescript:true; old test asserted extension engine pre-T63). 3 of 4 sub-items were stale-`dist/index.js` artifacts in the 5A.13 sweep, not real flakes.
+- **T71 partial → 64b192c** — `setupFiles afterAll(closeSharedClient)` was firing per-file (4× per 4-file sweep) instead of once-per-worker as the architecture comment claimed. Confirmed via stderr-tracing 4 invocations during one sweep. Removed the per-file hook; now relies on existing `process.once('beforeExit')` in shared-client.ts. MCP request IDs now accumulate across files (post-fix: 16/23/32/44 vs pre-fix: 3/7/10/14) confirming the singleton actually persists. Also added `McpTestClient.send()` per-timeout `timeouts.jsonl` dump + `[T71-timeout]` stderr breadcrumb.
+- **T72 partial → 0180e82, v0.1.25** — pollLoop now pre-launches `httpPoll` BEFORE the while-loop and re-arms inside the loop body BEFORE `await executeCommand` (overlapping fetches). 7 source-grep tests guard the structural invariants. Two-pass test-reviewer gate caught CRITICAL "let-binding could be a decoy" + MAJOR "sibling-try evasion" before GREEN. Validation: 5x sweep 3 PASS / 2 FAIL = 40% (was 80%).
+- **T73 → 90a3f08, v0.1.26** — module-level `lastSuccessfulPoll` timestamp updated inside pollLoop's success try-block AFTER the inflight-await; `supersedePollLoop` skips the abort cascade when the prior pollLoop is healthy (`Date.now() - lastSuccessfulPoll < 30_000`). T60 wedge-recovery contract preserved on the unhealthy path. 6 source-grep tests, one-pass reviewer (PASS with two MAJOR tightening recommendations both addressed). Validation: **10/10 sweeps PASS, 0% flake rate**.
+- **T65 → 9f47ce7** — phase3 3.1 was tracker'd as a 50% flake on httpbin.org/forms/post; reproduction post-T72/T73 showed 100% reproduce on BOTH httpbin AND a local-server replacement (so cause was NOT httpbin-specific). Daemon-trace evidence: page navigates ~388ms after a read-only `safari_evaluate` following a `safari_fill` — root cause unknown, filed as T74. Workaround: switched discriminator from "URL pathname changes" to "page-side click handler ran" via `window.__t65_clicked`; fixture preventDefaults the form submit so the tab does not navigate. Oracle stays strong (a stub click envelope cannot fire the page handler). Validation: 5/5 PASS.
+- **T59 stricken** — was already RESOLVED 2026-04-26 (ScreenshotPolicy + ScreenshotBlockedError shipped pre-session). Roadmap entry was stale; struck.
+- **T43 → 8f1f287** — 52 e2e tests across 7 new files covering 48 previously-untested MCP tools. **80/80 tools (100%) now have e2e coverage.** Files: T43-storage-tools, T43-observation-tools, T43-interaction-tools, T43-network-tools, T43-overrides-tools, T43-misc-tools, T43-download-tool. fixture-server.ts gains 7 new routes seeding required page state per category. All 52 PASS in 66s. Spawned T75 (idb_get keyshape) + T76 (permission_get script-parse).
+- **T66 → a213efd, RESOLVED-AS-DOCUMENTED** — strict-CSP file-upload limitation. Per user direction (option B), shipped with limitation documented. v0.1.23 changelog "NOT supported in v1" gains "Strict-CSP origins (Gmail-class)". Architectural fix path (MAIN-world fragmented postMessage OR storage-bus byte-encoding) deferred — requires authoring a strict-CSP fixture variant in e2e first.
+
+**Newly filed (with reproduction recipes):**
+- **T74** post-fill navigation mystery — page top-level frame navigates ~388ms after a read-only safari_evaluate following safari_fill. Reproduces on both httpbin AND local fixture. P2.
+- **T75** safari_idb_get keyshape — first record's numeric primary key round-trips as boolean `true` instead of `1`. Reproduces deterministically across DB-name changes, store.clear()+put(), fresh tabs. `.value` is intact, only `.key` corrupts. P2.
+- **T76** safari_permission_get script-parse error — top-level `var await navigator.permissions.query(...)` outside async wrapper causes Safari parse error for every permission name. P2.
+
+**Quantitative deltas:**
+- Multi-file e2e sweep flake rate: **80% → 0%** (10/10 sweeps green at v0.1.26).
+- MCP tool e2e coverage: **40% (32/80) → 100% (80/80)**.
+- Extension version: v0.1.24 → v0.1.26.
+- Open queue at start: 5 items (T70/T65/T59/T43/T66) → end: 0 items.
+
+**Context / what made this work:**
+1. Stale dist hidden a class of "flakes" that were just rebuild-not-run artifacts. The `npm run build` step before any e2e investigation should be project-default discipline.
+2. Two-pass test-reviewer gate on T72 caught a real CRITICAL (decoy let-binding) that would have shipped weak oracles — confirms UPP TDD's REVISE=full-stop policy is load-bearing, not ceremonial.
+3. The "multi-week" framing on T43 was wrong by ~10×. 48 tools × ~30 min/tool authoring + verification = ~1 day's focused work, not weeks. Honesty pass on tracker estimates owed.
+4. Test-harness instrumentation (`timeouts.jsonl`) was the load-bearing observability that pinned MV3 suspension as the T72/T73 root cause. Cheap to add (~50 LOC), pays off whenever the next flake surfaces.
+
+**Open follow-ups for next session:**
+- T74/T75/T76 investigations (P2 — non-blocking).
+- T43 sub-items that need tighter assertions when the underlying tool bugs ship (notably: T75 fix → strengthen idb_get key assertion; T76 fix → replace permission_get parse-error guard with positive state assertion; safari_handle_dialog → controlled non-blocking dialog primitive needed before full interceptor verification).
+- Strict-CSP fixture variant in fixture-server.ts is a prerequisite for any future T66 architectural fix.
+
+---
+
 ### Iteration 54 - 2026-05-04
 **What:** Phase 5A · 5A.14 SHIPPED — `npm run test:e2e:harness` infra automation. Wraps `scripts/build-extension.sh` with `SAFARI_PILOT_TEST_MODE=1`, runs the 5 harness-dependent e2e tests, trap-restores release build on any exit (success, failure, signal). Fully non-interactive — works via `! npm run test:e2e:harness` from chat or terminal. Closes T64 followup. Group B Phase 5A item 1/5 complete.
 
