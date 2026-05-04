@@ -14,6 +14,29 @@
 
 ## Current Work
 
+### Iteration 61 - 2026-05-04 — Cluster B SHIPPED (T78 safari_query_all)
+**What:** T78 multi-element extraction merged. Cluster B of locator-system v2 plan complete (5/5 tasks: B-0 branch, B-1 generateQueryAllJs, B-2 buildRefSelector sp- prefix, B-3 tool registration, B-4 e2e). Reuses Cluster A's chain-aware resolver via a new splice marker `// ── T78 splice point ──` placed after the post-chain empty-exit, before the T80 strictness block.
+
+**Final commit chain on `feat/T78-query-all`:** `cc94265` (B-0 tracker) → `7a8373b` (B-1 generateQueryAllJs + new splice marker) → `2049a7a` (B-2 buildRefSelector passthrough for [data-sp-ref] selectors) → `8a6aaff` (B-3 safari_query_all tool: selector + locator paths, empty-set normalization) → `08dbbcf` (B-4 e2e against real Safari, 6/6 PASS).
+
+**Quantitative deltas:**
+- Unit suite: 504 → **513** (+9 across 3 new test files: query-all, build-ref-selector, extraction-query-all)
+- E2E: 29 → **35** (+6 in T78-query-all.test.ts; 6/6 PASS, no flake on real Safari with v0.1.26 extension)
+- New MCP tool: `safari_query_all` (77 tools total)
+- New ref scheme: `sp-xxxxxx` flows through every existing tool's `ref` param via `buildRefSelector` passthrough — no extension or daemon changes needed (v0.1.26 extension still works)
+
+**Plan defect fixed during execution:** Plan prescribed slicing baseJs at the existing `// ── Result ──` marker (locator.ts:538), but that marker sits BEFORE the T77 chain ops block — slicing there would have dropped chain processing from the multi-element resolver. Resolution: introduced a NEW splice marker `// ── T78 splice point ──` AFTER the post-chain empty-exit block. Existing marker untouched. Self-documenting via the throw on `idx === -1`.
+
+**Empty-set normalization:** Plan's handler body returned `{found: false, ...}` shape on empty-match (inherited from the resolver's early-exit). Controller-authorized fix: handler converts to `{items: [], count: 0, limit, truncated: false}` for shape consistency. Applied to both selector and locator paths.
+
+**Context preserved for Cluster C (T79):**
+- `data-sp-ref` ref scheme is now polyglot (legacy `eN` + new `sp-xxxxxx`) — fully passthrough on `[data-sp-ref="..."]` form. T79 selectorPack custom engines should use the same scheme for consistency.
+- The splice-marker pattern works for ANY future "alternative result envelope" extension to `generateLocatorJs` — T79 if needed can add another marker (e.g., `// ── T79 splice point ──`) at the appropriate position.
+- `routeFrameAware(this.engine, {tabUrl, frameId}, js)` is the canonical extraction-tool execution path — T79 selectorPack tools will follow.
+
+**Cluster C (T79) pending — separate branch per plan.**
+---
+
 ### Iteration 60 - 2026-05-04 — Cluster A SHIPPED (T77 + T80)
 **What:** T77 locator chaining + T80 strict-mode action enforcement merged. Cluster A of locator-system v2 plan complete (11/11 tasks). Iters 56-59 covered the per-task work; this iter is the cluster-merge milestone.
 
