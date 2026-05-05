@@ -1,6 +1,6 @@
 // test/unit/tools/schema-strictness.test.ts
 // Cluster B — enum / min-max / minLength constraints on closed-set params
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll } from 'vitest';
 import { SafariPilotServer } from '../../../src/server.js';
 import { loadConfig } from '../../../src/config.js';
 
