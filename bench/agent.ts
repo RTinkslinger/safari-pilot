@@ -272,13 +272,19 @@ async function main(): Promise<void> {
       input_schema: t.inputSchema as Anthropic.Tool['input_schema'],
     }));
 
-    const systemPrompt =
-      `You are a browser automation agent using the Safari Pilot MCP tools. ` +
-      `You have access to safari_* tools to control Safari. ` +
-      `The fixture server is running at http://127.0.0.1:${fixturePort}${task.fixtureRoute}. ` +
-      `Complete the task efficiently using as few tool calls as possible. ` +
-      `Do not open new tabs unless the task explicitly requires it. ` +
-      `When done, summarize what you found.`;
+    // Load opinionated system prompt from bench/prompts/system.md.
+    // Falls back to a minimal inline prompt if the file is missing.
+    const fixtureUrl = `http://127.0.0.1:${fixturePort}${task.fixtureRoute}`;
+    let systemBody: string;
+    try {
+      const promptPath = `${process.cwd()}/bench/prompts/system.md`;
+      systemBody = readFileSync(promptPath, 'utf8');
+    } catch {
+      systemBody =
+        `You are a browser automation agent using the Safari Pilot MCP tools. ` +
+        `You have access to safari_* tools to control Safari.`;
+    }
+    const systemPrompt = `${systemBody}\n\n## This task\n\nFixture URL: ${fixtureUrl}\nComplete efficiently. When done, summarize what you found in plain text without a tool call.`;
 
     const messages: Anthropic.MessageParam[] = [
       { role: 'user', content: task.description },
