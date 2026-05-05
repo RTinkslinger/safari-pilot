@@ -1,0 +1,81 @@
+{
+  "run_dir": "/Users/Aakash/Claude Projects/Skills Factory/safari-pilot/bench-runs/20260505-215423",
+  "generated_at": "2026-05-05T16:25:56.975Z",
+  "variants": [
+    {
+      "variant": "v0.1.28-baseline",
+      "tasks_total": 6,
+      "tasks_success": 4,
+      "success_rate": 0.6666666666666666,
+      "total_tool_calls": 31,
+      "total_input_tokens": 726157,
+      "total_output_tokens": 3463,
+      "total_wall_ms": 77309,
+      "total_tt": 12396305183,
+      "scores": [
+        {
+          "task_id": "00-smoke",
+          "variant": "v0.1.28-baseline",
+          "success": false,
+          "tool_calls": 3,
+          "input_tokens": 62615,
+          "output_tokens": 272,
+          "wall_ms": 6149,
+          "tt": 386692163,
+          "failure_reason": "budget_exceeded"
+        },
+        {
+          "task_id": "01-extract-h1",
+          "variant": "v0.1.28-baseline",
+          "success": true,
+          "tool_calls": 2,
+          "input_tokens": 62524,
+          "output_tokens": 219,
+          "wall_ms": 5354,
+          "tt": 335926022
+        },
+        {
+          "task_id": "02-multi-element-list",
+          "variant": "v0.1.28-baseline",
+          "success": true,
+          "tool_calls": 3,
+          "input_tokens": 83731,
+          "output_tokens": 361,
+          "wall_ms": 12634,
+          "tt": 1062418328
+        },
+        {
+          "task_id": "03-form-fill",
+          "variant": "v0.1.28-baseline",
+          "success": true,
+          "tool_calls": 6,
+          "input_tokens": 126987,
+          "output_tokens": 675,
+          "wall_ms": 13055,
+          "tt": 1666627410
+        },
+        {
+          "task_id": "04-paginate-extract",
+          "variant": "v0.1.28-baseline",
+          "success": true,
+          "tool_calls": 11,
+          "input_tokens": 262779,
+          "output_tokens": 1317,
+          "wall_ms": 27980,
+          "tt": 7389406080
+        },
+        {
+          "task_id": "05-strict-mode",
+          "variant": "v0.1.28-baseline",
+          "success": false,
+          "tool_calls": 6,
+          "input_tokens": 127521,
+          "output_tokens": 619,
+          "wall_ms": 12137,
+          "tt": 1555235180,
+          "failure_reason": "budget_exceeded"
+        }
+      ]
+    }
+  ]
+}
