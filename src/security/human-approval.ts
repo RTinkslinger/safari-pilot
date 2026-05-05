@@ -1,5 +1,12 @@
 import { HumanApprovalRequiredError } from '../errors.js';
 
+/** Cluster G — suggested_next_tools emitted on every HumanApproval denial.
+ *  Exported so server.ts can attach it to both denial return paths without
+ *  duplicating the hint text. */
+export const HUMAN_APPROVAL_SUGGESTED_NEXT_TOOLS: Array<{ tool: string; reason: string }> = [
+  { tool: 'safari_evaluate', reason: 'Equivalent path that runs through the JS-eval engine (still security-gated).' },
+];
+
 // ─── HumanApproval ────────────────────────────────────────────────────────────
 //
 // Detects sensitive actions that require human confirmation before proceeding.

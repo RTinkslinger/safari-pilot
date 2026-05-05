@@ -114,6 +114,12 @@ export interface ToolResponse {
     degradedReason?: string;
     latencyMs: number;
     tabUrl?: string;
+    /** Cluster G — server-produced hints for the agent's next call.
+     *  Each entry names a tool and explains why it is the recommended
+     *  follow-up given what just happened (e.g. after safari_navigate
+     *  the suggestion is safari_snapshot to orient). Optional; omit when
+     *  no strong recommendation exists. */
+    suggested_next_tools?: Array<{ tool: string; reason: string }>;
   };
 }
 

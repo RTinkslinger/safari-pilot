@@ -38,7 +38,7 @@ import { DomainPolicy } from './security/domain-policy.js';
 import { RateLimiter } from './security/rate-limiter.js';
 import { CircuitBreaker } from './security/circuit-breaker.js';
 import { IdpiAnnotator } from './security/idpi-annotator.js';
-import { HumanApproval } from './security/human-approval.js';
+import { HumanApproval, HUMAN_APPROVAL_SUGGESTED_NEXT_TOOLS } from './security/human-approval.js';
 import { ScreenshotPolicy } from './security/screenshot-policy.js';
 import {
   RateLimitedError,
@@ -681,6 +681,7 @@ export class SafariPilotServer {
             degraded: true,
             degradedReason: err.message,
             latencyMs: Date.now() - start,
+            suggested_next_tools: HUMAN_APPROVAL_SUGGESTED_NEXT_TOOLS,
           },
         };
       }
@@ -845,6 +846,7 @@ export class SafariPilotServer {
               degraded: true,
               degradedReason: `extension_degraded_approval_required: ${err.message}`,
               latencyMs: Date.now() - start,
+              suggested_next_tools: HUMAN_APPROVAL_SUGGESTED_NEXT_TOOLS,
             },
           };
         }

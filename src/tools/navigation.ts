@@ -186,7 +186,14 @@ export class NavigationTools {
     const data = pageInfo ?? { url, title: '' };
     return {
       content: [{ type: 'text', text: JSON.stringify(data) }],
-      metadata: { engine: 'applescript', degraded: false, latencyMs: Date.now() - start },
+      metadata: {
+        engine: 'applescript',
+        degraded: false,
+        latencyMs: Date.now() - start,
+        suggested_next_tools: [
+          { tool: 'safari_snapshot', reason: 'Get a YAML map of the new page with refs you can pass to subsequent locator-using tools.' },
+        ],
+      },
     };
   }
 
