@@ -116,6 +116,8 @@ export class WaitTools {
               type: 'number',
               description: 'Maximum time to wait in milliseconds',
               default: DEFAULT_TIMEOUT_MS,
+              minimum: 0,
+              maximum: 120000,
             },
             pollInterval: {
               type: 'number',

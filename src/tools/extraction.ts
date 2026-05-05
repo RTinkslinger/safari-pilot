@@ -97,7 +97,7 @@ export class ExtractionTools {
           type: 'object',
           properties: {
             tabUrl: { type: 'string', description: 'Current URL of the tab' },
-            selector: { type: 'string', description: 'CSS selector. If omitted, returns full page text.' },
+            selector: { type: 'string', minLength: 1, description: 'CSS selector. If omitted, returns full page text.' },
             ref: { type: 'string', description: "Element ref from snapshot (e.g. 'e5'). Takes priority over selector." },
             role: { type: 'string', description: "ARIA role to search for (e.g. 'button', 'link', 'textbox')" },
             name: { type: 'string', description: 'Accessible name to match (substring, case-insensitive)' },
@@ -129,7 +129,7 @@ export class ExtractionTools {
           type: 'object',
           properties: {
             tabUrl: { type: 'string', description: 'Current URL of the tab' },
-            selector: { type: 'string', description: 'CSS selector. If omitted, returns full page HTML.' },
+            selector: { type: 'string', minLength: 1, description: 'CSS selector. If omitted, returns full page HTML.' },
             ref: { type: 'string', description: "Element ref from snapshot (e.g. 'e5'). Takes priority over selector." },
             role: { type: 'string', description: "ARIA role to search for (e.g. 'button', 'link', 'textbox')" },
             name: { type: 'string', description: 'Accessible name to match (substring, case-insensitive)' },
@@ -165,7 +165,7 @@ export class ExtractionTools {
           type: 'object',
           properties: {
             tabUrl: { type: 'string', description: 'Current URL of the tab' },
-            selector: { type: 'string', description: 'CSS selector for the element' },
+            selector: { type: 'string', minLength: 1, description: 'CSS selector for the element' },
             ref: { type: 'string', description: "Element ref from snapshot (e.g. 'e5'). Takes priority over selector." },
             role: { type: 'string', description: "ARIA role to search for (e.g. 'button', 'link', 'textbox')" },
             name: { type: 'string', description: 'Accessible name to match (substring, case-insensitive)' },
@@ -243,7 +243,7 @@ export class ExtractionTools {
             tabUrl: { type: 'string', description: 'Current URL of the tab' },
             level: {
               type: 'string',
-              enum: ['all', 'log', 'warn', 'error', 'info'],
+              enum: ['all', 'log', 'warn', 'error', 'info', 'debug'],
               description: 'Filter by log level',
               default: 'all',
             },
@@ -262,7 +262,7 @@ export class ExtractionTools {
           type: 'object',
           properties: {
             tabUrl: { type: 'string', description: 'Current URL of the tab' },
-            selector: { type: 'string', description: 'CSS selector. If provided, used directly via querySelectorAll.' },
+            selector: { type: 'string', minLength: 1, description: 'CSS selector. If provided, used directly via querySelectorAll.' },
             role: { type: 'string', description: 'ARIA role to search for' },
             name: { type: 'string', description: 'Accessible name' },
             text: { type: 'string', description: 'Visible text content to match' },
@@ -576,7 +576,7 @@ export class ExtractionTools {
       if (!window.__safariPilotConsole) {
         window.__safariPilotConsole = [];
         var origConsole = {};
-        ['log', 'warn', 'error', 'info'].forEach(function(method) {
+        ['log', 'warn', 'error', 'info', 'debug'].forEach(function(method) {
           origConsole[method] = console[method];
           console[method] = function() {
             var args = Array.prototype.slice.call(arguments);

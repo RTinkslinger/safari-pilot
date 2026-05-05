@@ -153,7 +153,7 @@ export class InteractionTools {
           type: 'object',
           properties: {
             tabUrl: { type: 'string', description: 'Current URL of the tab' },
-            selector: { type: 'string', description: 'CSS selector for the element to click' },
+            selector: { type: 'string', minLength: 1, description: 'CSS selector for the element to click' },
             ...elementTargetingParams,
             shadowSelector: { type: 'string', description: 'Selector within Shadow DOM (extension-only)' },
             button: { type: 'string', enum: ['left', 'right', 'middle'], default: 'left' },
@@ -173,7 +173,7 @@ export class InteractionTools {
           type: 'object',
           properties: {
             tabUrl: { type: 'string', description: 'Current URL of the tab' },
-            selector: { type: 'string', description: 'CSS selector for the element to double-click' },
+            selector: { type: 'string', minLength: 1, description: 'CSS selector for the element to double-click' },
             ...elementTargetingParams,
             timeout: { type: 'number', default: 5000 },
           },
@@ -189,7 +189,7 @@ export class InteractionTools {
           type: 'object',
           properties: {
             tabUrl: { type: 'string', description: 'Current URL of the tab' },
-            selector: { type: 'string', description: 'CSS selector for the input element' },
+            selector: { type: 'string', minLength: 1, description: 'CSS selector for the input element' },
             ...elementTargetingParams,
             value: { type: 'string', description: 'Text to fill' },
             framework: {
@@ -214,7 +214,7 @@ export class InteractionTools {
           type: 'object',
           properties: {
             tabUrl: { type: 'string', description: 'Current URL of the tab' },
-            selector: { type: 'string', description: 'Selector for the <select> element' },
+            selector: { type: 'string', minLength: 1, description: 'Selector for the <select> element' },
             ...elementTargetingParams,
             optionValue: { type: 'string', description: 'Option value attribute to select' },
             optionLabel: { type: 'string', description: 'Option visible text to select' },
@@ -232,7 +232,7 @@ export class InteractionTools {
           type: 'object',
           properties: {
             tabUrl: { type: 'string', description: 'Current URL of the tab' },
-            selector: { type: 'string', description: 'CSS selector for the checkbox/radio' },
+            selector: { type: 'string', minLength: 1, description: 'CSS selector for the checkbox/radio' },
             ...elementTargetingParams,
             checked: { type: 'boolean', description: 'true to check, false to uncheck' },
           },
@@ -248,7 +248,7 @@ export class InteractionTools {
           type: 'object',
           properties: {
             tabUrl: { type: 'string', description: 'Current URL of the tab' },
-            selector: { type: 'string', description: 'CSS selector for the element to hover' },
+            selector: { type: 'string', minLength: 1, description: 'CSS selector for the element to hover' },
             ...elementTargetingParams,
             duration: { type: 'number', description: 'How long to hover in ms', default: 0 },
           },
@@ -264,7 +264,7 @@ export class InteractionTools {
           type: 'object',
           properties: {
             tabUrl: { type: 'string', description: 'Current URL of the tab' },
-            selector: { type: 'string', description: 'CSS selector for the target element' },
+            selector: { type: 'string', minLength: 1, description: 'CSS selector for the target element' },
             ...elementTargetingParams,
             content: { type: 'string', description: 'Text to type' },
           },
