@@ -29,6 +29,8 @@ import { ExtensionDiagnosticsTools } from './tools/extension-diagnostics.js';
 import { FileUploadTools } from './tools/file-upload.js';
 import { ToolIndex } from './discovery/tool-index.js';
 import { ToolSearchTools } from './tools/tool-search.js';
+import { SkillRegistry } from './skills/registry.js';
+import { SkillTools } from './tools/skills.js';
 import { KillSwitch } from './security/kill-switch.js';
 import { TabOwnership } from './security/tab-ownership.js';
 import { AuditLog } from './security/audit-log.js';
@@ -280,6 +282,11 @@ export class SafariPilotServer {
     );
     modules.push(new ToolSearchTools(proxy, new ToolIndex(allEntries)) as unknown as typeof modules[0]);
 
+    // Add SkillTools with empty registry (listToolDefinitions is sync — no I/O).
+    const emptyDispatch: (n: string, a: Record<string, unknown>) => Promise<unknown> =
+      async () => { throw new Error('listToolDefinitions: dispatch unavailable'); };
+    modules.push(new SkillTools(proxy, new SkillRegistry(), emptyDispatch) as unknown as typeof modules[0]);
+
     const defs: Array<{ name: string; description: string; inputSchema: Record<string, unknown>; requirements: ToolRequirements }> = [];
     for (const mod of modules) {
       for (const d of (mod as unknown as { getDefinitions(): Array<{ name: string; description: string; inputSchema: Record<string, unknown>; requirements: ToolRequirements }> }).getDefinitions()) {
@@ -442,6 +449,27 @@ export class SafariPilotServer {
       modules.flatMap((m) => m.getDefinitions().map((d) => ({ name: d.name, description: d.description }))),
     );
     modules.push(new ToolSearchTools(proxy, toolIndex) as unknown as ToolModule);
+
+    // Load skill registry async and add SkillTools.
+    // NOTE: Sub-step dispatch bypasses the security pipeline (tab-ownership,
+    // rate-limit, circuit-breaker, audit). The outer safari_run_skill call is
+    // fully secured; inner steps are not individually audited. Accepted trade-off.
+    const skillRegistry = await SkillRegistry.fromDir('skills');
+    const skillDispatch = async (n: string, a: Record<string, unknown>): Promise<unknown> => {
+      if (n === 'safari_run_skill' || n === 'safari_list_skills') {
+        throw new Error(`Skill cannot call meta-tool: ${n}`);
+      }
+      for (const m of modules) {
+        const h = m.getHandler(n);
+        if (h) {
+          const resp = await h(a);
+          const text = resp.content[0]?.text;
+          try { return text ? JSON.parse(text) : null; } catch { return text; }
+        }
+      }
+      throw new Error(`Skill called unknown tool: ${n}`);
+    };
+    modules.push(new SkillTools(proxy, skillRegistry, skillDispatch) as unknown as ToolModule);
 
     for (const module of modules) {
       for (const def of module.getDefinitions()) {
