@@ -16,6 +16,12 @@
 
 ## Current Work
 
+### Iteration 70 - 2026-05-05 — Sprint close: agent-benchmark-lift v0.1.29 changelog (T15)
+**What:** Sprint complete. 15-task implementation plan executed under `upp:executing-plans` subagent mode. All 9 clusters shipped (A: descriptions, B: schemas, C: locator-v2 nudges, D-light: tool_search, E: skills, F: system prompt, G: suggested_next_tools, I: recipe miner) + 3 measurement gates + bench harness + 6 fixture tasks. **Best result iter-1: TT 8.40B = 0.677× baseline (32% reduction)**. Iter-2 success rate 5/6. Iter-3 regressed (0.891) — empirical "less is more" finding documented.
+**Changes:** `docs/changelogs/v0.1.29.md` (new: 172-line sprint changelog with TT scoreboard + per-cluster summary + empirical finding), `CHECKPOINT.md` (final sprint state). No version bump — extension binary unchanged at v0.1.28 per user constraint "no daemon/extension changes". Branch `feat/agent-benchmark-lift`, ~22 commits, 58 files changed (+3231/-157).
+**Context:** Decision: ship the sprint as a feature-branch addition (not a tagged npm release). Production benchmark configuration is iter-1 surface (descriptions+schemas+locator-v2+system-prompt). Wider surface (tool_search, skills, suggested_next_tools, recipe-miner) lands for future agent loops. SkillTools sub-step dispatch bypasses security pipeline by design. Recipe miner is "compound interest" — auto-promotion deferred. 605 unit + e2e tests green throughout.
+---
+
 ### Iteration 69 - 2026-05-05 — Cluster I: recipe miner (T14)
 **What:** Shipped the recipe miner — Browser Use browser-harness pattern port. Reads `tool-calls.jsonl` + `score.json` from each run subdir, extracts recurring successful tool sequences grouped by host, emits candidate `*.SKILL.md` files. TDD: 4 unit tests RED (module not found) → `src/discovery/recipe-miner.ts` implemented → GREEN (4/4). CLI driver `bench/mine-recipes.ts` scans `bench-runs/` by default, aggregates across timestamp dirs, writes to `skills/candidates/`.
 **Changes:** `src/discovery/recipe-miner.ts` (new: mineRecipes, collectTraces, signature, inferHost), `bench/mine-recipes.ts` (new: CLI aggregator driver), `test/unit/discovery/recipe-miner.test.ts` (new: 4 unit tests — happy path, skip-failed-runs, minLength filter, missing-score graceful), `TRACES.md` (iter 69 + milestone-23 compaction)
