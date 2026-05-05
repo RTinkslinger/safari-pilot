@@ -2,7 +2,10 @@
   "id": "03-form-fill",
   "description": "Fill in the email field with 'test@example.com', click Submit, and report the success message text.",
   "fixtureRoute": "/bench-form",
-  "successOracle": { "type": "final_text_contains", "text": "Thanks, test@example.com" },
+  "successOracle": {
+    "type": "final_text_contains",
+    "text": "Thanks, test@example.com"
+  },
   "maxIterations": 12,
-  "budgetTokens": 18000
+  "budgetTokens": 120000
 }

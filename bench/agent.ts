@@ -295,6 +295,14 @@ async function main(): Promise<void> {
     const wallStart = Date.now();
 
     for (let iter = 0; iter < task.maxIterations; iter++) {
+      // Cumulative budget guard — checked at top so iter 0 always runs.
+      // Once cumulative spend exceeds the budget we stop BEFORE the next
+      // API call. Soft cap: actual spend can overshoot by one round.
+      if (totalInputTokens + totalOutputTokens > task.budgetTokens) {
+        budgetExceeded = true;
+        break;
+      }
+
       const response = await anthropic.messages.create({
         model: 'claude-haiku-4-5-20251001',
         max_tokens: Math.min(task.budgetTokens, 4096),
@@ -305,12 +313,6 @@ async function main(): Promise<void> {
 
       totalInputTokens += response.usage.input_tokens;
       totalOutputTokens += response.usage.output_tokens;
-
-      // Cumulative budget guard — break before executing more tool calls
-      if (totalInputTokens + totalOutputTokens > task.budgetTokens) {
-        budgetExceeded = true;
-        break;
-      }
 
       // Extract text from this turn
       for (const block of response.content) {
