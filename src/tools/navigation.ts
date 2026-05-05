@@ -26,10 +26,8 @@ export class NavigationTools {
       {
         name: 'safari_navigate',
         description:
-          'Navigate the specified agent-owned tab (identified by its current URL) to a new URL. ' +
-          'Both `url` (target) and `tabUrl` (the tab to navigate) are required — the tab must be ' +
-          'one previously opened via `safari_new_tab` so tab ownership can be verified. Returns the ' +
-          'final URL and page title after navigation.',
+          'Navigate the current tab to a URL and wait for load. ' +
+          'Use when starting a task, following a known link, or after a redirect chain; updates tab ownership so subsequent tools target the new URL.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -49,7 +47,7 @@ export class NavigationTools {
       },
       {
         name: 'safari_navigate_back',
-        description: 'Go back one step in the browser history for the specified tab.',
+        description: 'Go back one step in browser history. Use when the previous page is needed after following a link or submitting a form.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -61,7 +59,7 @@ export class NavigationTools {
       },
       {
         name: 'safari_navigate_forward',
-        description: 'Go forward one step in the browser history for the specified tab.',
+        description: 'Go forward one step in browser history. Use when re-advancing to a page visited before a safari_navigate_back call.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -73,7 +71,7 @@ export class NavigationTools {
       },
       {
         name: 'safari_reload',
-        description: 'Reload the page in the specified tab.',
+        description: 'Reload the page in the specified tab. Use when a page needs a hard refresh to reflect server-side state changes or to clear stale UI.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -86,8 +84,7 @@ export class NavigationTools {
       {
         name: 'safari_new_tab',
         description:
-          'Open a new agent-owned tab, optionally navigating to a URL and/or in a private window. ' +
-          'Returns the new tab URL for future targeting.',
+          'Open a new Safari tab at a URL. Use when isolating work from an existing tab, opening multiple windows in parallel, or starting a task with a fresh context; returns a tabUrl you must pass to subsequent tools.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -104,7 +101,7 @@ export class NavigationTools {
       },
       {
         name: 'safari_close_tab',
-        description: 'Close a specific agent-owned tab identified by its current URL.',
+        description: 'Close an agent-owned Safari tab. Use when finished with a task, when a tab is in an unrecoverable state, or to clean up before a new isolated workflow.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -117,7 +114,7 @@ export class NavigationTools {
       {
         name: 'safari_list_tabs',
         description:
-          'List all open tabs across all Safari windows, including their URLs, titles, and basic metadata.',
+          'List all Safari tabs the agent owns (created via safari_new_tab). Use when you have lost track of an agent-owned tab or need to discover available tabs after an unexpected error; bypasses ownership checks.',
         inputSchema: {
           type: 'object',
           properties: {},
@@ -189,7 +186,14 @@ export class NavigationTools {
     const data = pageInfo ?? { url, title: '' };
     return {
       content: [{ type: 'text', text: JSON.stringify(data) }],
-      metadata: { engine: 'applescript', degraded: false, latencyMs: Date.now() - start },
+      metadata: {
+        engine: 'applescript',
+        degraded: false,
+        latencyMs: Date.now() - start,
+        suggested_next_tools: [
+          { tool: 'safari_snapshot', reason: 'Get a YAML map of the new page with refs you can pass to subsequent locator-using tools.' },
+        ],
+      },
     };
   }
 

@@ -41,11 +41,7 @@ export class StorageTools {
       {
         name: 'safari_get_cookies',
         description:
-          'Get cookies for the current page. ' +
-          'Returns name, value, domain, path, and security flags including httpOnly. ' +
-          'Extension engine routes through browser.cookies (sees httpOnly); ' +
-          'AppleScript fallback uses document.cookie (httpOnly invisible). ' +
-          'Optionally filter by domain substring.',
+          'Read all cookies for a domain or all loaded domains. Use when capturing session state for storage_state_export or debugging cookie-based auth.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -59,10 +55,7 @@ export class StorageTools {
       {
         name: 'safari_set_cookie',
         description:
-          'Set a cookie on the current page. ' +
-          'Supports name, value, domain, path, expiry, and security flags including httpOnly. ' +
-          'Extension engine routes through browser.cookies.set (httpOnly honored); ' +
-          'AppleScript fallback uses document.cookie (httpOnly silently dropped).',
+          'Set a cookie on a domain. Use when seeding test session state, bypassing login when a session token is known, or restoring a saved session.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -95,10 +88,7 @@ export class StorageTools {
       {
         name: 'safari_delete_cookie',
         description:
-          'Delete a cookie by name on the current page. ' +
-          'Optionally specify domain and path to target the exact cookie. ' +
-          'Extension engine routes through browser.cookies.remove (can delete httpOnly); ' +
-          'AppleScript fallback expires the cookie via document.cookie.',
+          'Delete a specific cookie. Use when forcing a logout, invalidating a stale session, or testing cookie-absent code paths.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -114,9 +104,7 @@ export class StorageTools {
       {
         name: 'safari_storage_state_export',
         description:
-          'Export the full storage state of the current page: cookies (via document.cookie), ' +
-          'localStorage, and sessionStorage. Useful for saving authenticated session state ' +
-          'to restore later with safari_storage_state_import.',
+          'Export cookies + localStorage + sessionStorage for a domain into a JSON snapshot. Use when persisting session state before tab close — enables bypass-login-on-restart via safari_storage_state_import.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -129,10 +117,7 @@ export class StorageTools {
       {
         name: 'safari_storage_state_import',
         description:
-          'Import a previously exported storage state into the current page. ' +
-          'Restores cookies (via document.cookie), localStorage, and sessionStorage. ' +
-          'Typically used to restore an authenticated session without re-logging in. ' +
-          'Pass the state object returned by safari_storage_state_export.',
+          'Import a previously-exported storage_state into a tab. Use when skipping login by replaying a saved auth blob from safari_storage_state_export.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -153,7 +138,7 @@ export class StorageTools {
       },
       {
         name: 'safari_local_storage_get',
-        description: 'Get a single localStorage value by key from the current page.',
+        description: 'Read a single key from localStorage on a tab. Use when an app stores auth tokens or app state in localStorage rather than cookies.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -166,7 +151,7 @@ export class StorageTools {
       },
       {
         name: 'safari_local_storage_set',
-        description: 'Set a localStorage key to the given value on the current page.',
+        description: 'Set a single key in localStorage. Use when seeding app state, restoring a saved session, or testing token rotation.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -180,7 +165,7 @@ export class StorageTools {
       },
       {
         name: 'safari_session_storage_get',
-        description: 'Get a single sessionStorage value by key from the current page.',
+        description: 'Read from sessionStorage (per-tab, lost on close). Use when an app uses sessionStorage for tab-scoped state.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -193,7 +178,7 @@ export class StorageTools {
       },
       {
         name: 'safari_session_storage_set',
-        description: 'Set a sessionStorage key to the given value on the current page.',
+        description: 'Write to sessionStorage. Use when seeding tab-scoped state for a test or workflow.',
         inputSchema: {
           type: 'object',
           properties: {

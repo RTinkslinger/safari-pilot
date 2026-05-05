@@ -27,6 +27,10 @@ import { DownloadTools } from './tools/downloads.js';
 import { PdfTools } from './tools/pdf.js';
 import { ExtensionDiagnosticsTools } from './tools/extension-diagnostics.js';
 import { FileUploadTools } from './tools/file-upload.js';
+import { ToolIndex } from './discovery/tool-index.js';
+import { ToolSearchTools } from './tools/tool-search.js';
+import { SkillRegistry } from './skills/registry.js';
+import { SkillTools } from './tools/skills.js';
 import { KillSwitch } from './security/kill-switch.js';
 import { TabOwnership } from './security/tab-ownership.js';
 import { AuditLog } from './security/audit-log.js';
@@ -34,7 +38,7 @@ import { DomainPolicy } from './security/domain-policy.js';
 import { RateLimiter } from './security/rate-limiter.js';
 import { CircuitBreaker } from './security/circuit-breaker.js';
 import { IdpiAnnotator } from './security/idpi-annotator.js';
-import { HumanApproval } from './security/human-approval.js';
+import { HumanApproval, HUMAN_APPROVAL_SUGGESTED_NEXT_TOOLS } from './security/human-approval.js';
 import { ScreenshotPolicy } from './security/screenshot-policy.js';
 import {
   RateLimitedError,
@@ -235,6 +239,70 @@ export class SafariPilotServer {
     return this._sessionWindowId;
   }
 
+  /**
+   * Return all tool definitions (name, description, inputSchema, requirements)
+   * without requiring `initialize()` to have been called.
+   *
+   * Uses I/O-free engine instances to satisfy tool module constructors;
+   * only `getDefinitions()` is called — no engine I/O occurs.
+   */
+  listToolDefinitions(): Array<{ name: string; description: string; inputSchema: Record<string, unknown>; requirements: ToolRequirements }> {
+    const engine = new AppleScriptEngine();
+    const proxy = new EngineProxy(engine);
+    const daemon = new DaemonEngine();
+
+    const modules = [
+      new NavigationTools(engine),
+      new InteractionTools(proxy, this),
+      new ExtractionTools(proxy, new ScreenshotPolicy(this.config.screenshotPolicy)),
+      new NetworkTools(proxy),
+      new StorageTools(proxy),
+      new AuthTools(proxy),
+      new FileUploadTools(proxy, daemon),
+      new ShadowTools(proxy),
+      new FrameTools(proxy),
+      new PermissionTools(proxy),
+      new ClipboardTools(proxy),
+      new ServiceWorkerTools(proxy),
+      new PerformanceTools(proxy),
+      new StructuredExtractionTools(proxy),
+      new WaitTools(proxy),
+      new CompoundTools(engine),
+      new DownloadTools(this),
+      new PdfTools(this),
+      new ExtensionDiagnosticsTools(null),
+      new SelectorPackTools(proxy, this.config.selectorPack),
+    ];
+
+    // Build the tool index from all existing modules and add the search meta-tool.
+    const allEntries = modules.flatMap((m) =>
+      (m as unknown as { getDefinitions(): Array<{ name: string; description: string }> })
+        .getDefinitions()
+        .map((d) => ({ name: d.name, description: d.description })),
+    );
+    modules.push(new ToolSearchTools(proxy, new ToolIndex(allEntries)) as unknown as typeof modules[0]);
+
+    // Add SkillTools with empty registry (listToolDefinitions is sync — no I/O).
+    const emptyDispatch: (n: string, a: Record<string, unknown>) => Promise<unknown> =
+      async () => { throw new Error('listToolDefinitions: dispatch unavailable'); };
+    modules.push(new SkillTools(proxy, new SkillRegistry(), emptyDispatch) as unknown as typeof modules[0]);
+
+    const defs: Array<{ name: string; description: string; inputSchema: Record<string, unknown>; requirements: ToolRequirements }> = [];
+    for (const mod of modules) {
+      for (const d of (mod as unknown as { getDefinitions(): Array<{ name: string; description: string; inputSchema: Record<string, unknown>; requirements: ToolRequirements }> }).getDefinitions()) {
+        defs.push({ name: d.name, description: d.description, inputSchema: d.inputSchema, requirements: d.requirements });
+      }
+    }
+    // Also include the emergency stop tool registered directly in initialize()
+    defs.push({
+      name: 'safari_emergency_stop',
+      description: 'Emergency stop — immediately close all agent-owned tabs, activate kill switch, and block all further automation.',
+      inputSchema: { type: 'object', properties: { reason: { type: 'string', description: 'Reason for the emergency stop' } } },
+      requirements: { idempotent: false },
+    });
+    return defs;
+  }
+
   private get sessionTabUrl(): string {
     return `http://127.0.0.1:19475/session?id=${this.sessionId}`;
   }
@@ -375,6 +443,33 @@ export class SafariPilotServer {
       extensionDiagnosticsTools,
       selectorPackTools,
     ];
+
+    // Build the tool index from all registered modules, then add the search meta-tool.
+    const toolIndex = new ToolIndex(
+      modules.flatMap((m) => m.getDefinitions().map((d) => ({ name: d.name, description: d.description }))),
+    );
+    modules.push(new ToolSearchTools(proxy, toolIndex) as unknown as ToolModule);
+
+    // Load skill registry async and add SkillTools.
+    // NOTE: Sub-step dispatch bypasses the security pipeline (tab-ownership,
+    // rate-limit, circuit-breaker, audit). The outer safari_run_skill call is
+    // fully secured; inner steps are not individually audited. Accepted trade-off.
+    const skillRegistry = await SkillRegistry.fromDir('skills');
+    const skillDispatch = async (n: string, a: Record<string, unknown>): Promise<unknown> => {
+      if (n === 'safari_run_skill' || n === 'safari_list_skills') {
+        throw new Error(`Skill cannot call meta-tool: ${n}`);
+      }
+      for (const m of modules) {
+        const h = m.getHandler(n);
+        if (h) {
+          const resp = await h(a);
+          const text = resp.content[0]?.text;
+          try { return text ? JSON.parse(text) : null; } catch { return text; }
+        }
+      }
+      throw new Error(`Skill called unknown tool: ${n}`);
+    };
+    modules.push(new SkillTools(proxy, skillRegistry, skillDispatch) as unknown as ToolModule);
 
     for (const module of modules) {
       for (const def of module.getDefinitions()) {
@@ -586,6 +681,7 @@ export class SafariPilotServer {
             degraded: true,
             degradedReason: err.message,
             latencyMs: Date.now() - start,
+            suggested_next_tools: HUMAN_APPROVAL_SUGGESTED_NEXT_TOOLS,
           },
         };
       }
@@ -750,6 +846,7 @@ export class SafariPilotServer {
               degraded: true,
               degradedReason: `extension_degraded_approval_required: ${err.message}`,
               latencyMs: Date.now() - start,
+              suggested_next_tools: HUMAN_APPROVAL_SUGGESTED_NEXT_TOOLS,
             },
           };
         }

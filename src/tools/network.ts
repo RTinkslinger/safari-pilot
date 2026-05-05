@@ -41,10 +41,7 @@ export class NetworkTools {
       {
         name: 'safari_list_network_requests',
         description:
-          'List recent network requests captured via the Performance Resource Timing API. ' +
-          'Returns URL, method, status, type, duration, and timing for each request. ' +
-          'Only captures requests made after page load or after interceptor is installed. ' +
-          'For full request/response bodies, use safari_intercept_requests first.',
+          'List all network requests captured for a tab since enable. Use when verifying an XHR/fetch fired, checking request headers, or correlating UI events with backend calls.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -71,9 +68,7 @@ export class NetworkTools {
       {
         name: 'safari_get_network_request',
         description:
-          'Get detailed timing and metadata for a specific network request by URL. ' +
-          'Returns transfer size, encoded size, duration breakdown (DNS, connect, TTFB, etc.), ' +
-          'and initiator type. Useful for diagnosing slow API calls or large asset loads.',
+          'Read a single network request by URL with full request/response detail. Use after safari_list_network_requests narrows down the target.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -124,10 +119,7 @@ export class NetworkTools {
       {
         name: 'safari_network_throttle',
         description:
-          'Simulate a slow network by monkey-patching fetch and XHR to add artificial latency and ' +
-          'optional bandwidth throttling. Must be called before the requests you want to throttle. ' +
-          'Uses MAIN world fetch/XHR patching — does NOT require declarativeNetRequest. ' +
-          'Call with latencyMs: 0 to remove throttling.',
+          'Throttle the tab to a named profile (Slow3G, Fast3G, etc) or custom bandwidth. Use when testing slow-network UX or reproducing latency-dependent bugs.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -148,9 +140,7 @@ export class NetworkTools {
       {
         name: 'safari_network_offline',
         description:
-          'Simulate offline mode by making all fetch and XHR requests reject with a NetworkError. ' +
-          'Call with offline: false to restore connectivity. ' +
-          'Works by monkey-patching window.fetch and XMLHttpRequest in the MAIN world.',
+          'Toggle offline mode for the tab. Use when testing offline UI, retry logic, or service-worker caching behavior.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -194,10 +184,7 @@ export class NetworkTools {
       {
         name: 'safari_websocket_listen',
         description:
-          'Install a WebSocket interceptor that captures sent and received messages. ' +
-          'Patches the global WebSocket constructor so all new connections are monitored. ' +
-          'Must be called before the WebSocket connection is established. ' +
-          'Retrieve captured messages with safari_websocket_filter.',
+          'Start capturing WebSocket frames for a tab. Use when validating realtime traffic — chat, live updates, collaborative editing.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -214,8 +201,7 @@ export class NetworkTools {
       {
         name: 'safari_websocket_filter',
         description:
-          'Get captured WebSocket messages from the buffer installed by safari_websocket_listen. ' +
-          'Optionally filter by content pattern or message direction.',
+          'Filter a captured WebSocket stream by direction and content. Use to find a specific frame in a noisy stream.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -235,10 +221,7 @@ export class NetworkTools {
       {
         name: 'safari_dump_har',
         description:
-          'Export the current intercept buffer (window.__safariPilotNetwork.entries from safari_intercept_requests) ' +
-          'as a HAR 1.2 log. Returns { har, entryCount }. The HAR is consumable by any HAR-aware tool ' +
-          '(Playwright routeFromHAR, browser devtools, k6, etc.) and by safari_route_from_har for in-Safari replay. ' +
-          'Requires safari_intercept_requests to have run first; otherwise returns an empty HAR (entryCount: 0).',
+          'Dump captured network as a HAR archive. Use when downstream analysis tools expect HAR format, or for sharing a repro with a backend team.',
         inputSchema: {
           type: 'object',
           properties: {

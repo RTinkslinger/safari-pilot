@@ -4,6 +4,7 @@
 - **Milestone 1 (iter 1-3):** Extension build pipeline, config externalisation, distribution hardening, enforcement hooks
 - **Milestone 2 (iter 4-6):** P0 accessibility/ARIA/auto-wait/locator, benchmark fixture server, benchmark reporter. Fixed type contract mismatches in types.ts (enginesUsed, perTask, evalDetails).
 - **Milestone 3 (iter 7-9):** MCP STDIO transport fix (was never wired), benchmark suite (120 tasks, CLI runner), real e2e tests (45 tests, zero mocks), locator IIFE + URL trailing-slash bugs fixed, e2e enforcement hooks, first real baseline 37.8%
+- **Milestone 23 (iter 67-69):** Agent benchmark lift — Cluster D-light (safari_tool_search + ToolIndex), Cluster E (SKILL.md bundles + safari_run_skill/list_skills), Cluster I (recipe miner). 88 unit test files / 605 tests. stat().catch(null) pattern for strict null safety.
 
 ## Milestone Index
 | # | Iterations | Focus | Key Decisions |
@@ -11,8 +12,39 @@
 | 1 | 1-3 | Extension pipeline + config + hardening | Three-persona distribution model; codesign via xcodebuild only; enforcement hooks |
 | 2 | 4-6 | ARIA/auto-wait/locator + benchmark foundation | enginesUsed→Record<string,number>; perTask→Record<string,PerTaskSummary>; flakiness threshold 0.2-0.8 |
 | 3 | 7-9 | MCP fix + benchmark suite + real e2e + baseline | MCP Server+StdioServerTransport in index.ts; --tools ToolSearch blocks Bash/WebFetch; e2e=spawn real processes; ID-based MCP response matching; generateLocatorJs emits raw body not IIFE |
+| 23 | 67-69 | Agent benchmark lift: tool search + skills + recipe miner | ToolIndex in both listToolDefinitions+initialize; skills bypass security pipeline; recipe miner CLI-only (no MCP); stat().catch(null) over let+try for strict null |
 
 ## Current Work
+
+### Iteration 70 - 2026-05-05 — Sprint close: agent-benchmark-lift v0.1.29 changelog (T15)
+**What:** Sprint complete. 15-task implementation plan executed under `upp:executing-plans` subagent mode. All 9 clusters shipped (A: descriptions, B: schemas, C: locator-v2 nudges, D-light: tool_search, E: skills, F: system prompt, G: suggested_next_tools, I: recipe miner) + 3 measurement gates + bench harness + 6 fixture tasks. **Best result iter-1: TT 8.40B = 0.677× baseline (32% reduction)**. Iter-2 success rate 5/6. Iter-3 regressed (0.891) — empirical "less is more" finding documented.
+**Changes:** `docs/changelogs/v0.1.29.md` (new: 172-line sprint changelog with TT scoreboard + per-cluster summary + empirical finding), `CHECKPOINT.md` (final sprint state). No version bump — extension binary unchanged at v0.1.28 per user constraint "no daemon/extension changes". Branch `feat/agent-benchmark-lift`, ~22 commits, 58 files changed (+3231/-157).
+**Context:** Decision: ship the sprint as a feature-branch addition (not a tagged npm release). Production benchmark configuration is iter-1 surface (descriptions+schemas+locator-v2+system-prompt). Wider surface (tool_search, skills, suggested_next_tools, recipe-miner) lands for future agent loops. SkillTools sub-step dispatch bypasses security pipeline by design. Recipe miner is "compound interest" — auto-promotion deferred. 605 unit + e2e tests green throughout.
+---
+
+### Iteration 69 - 2026-05-05 — Cluster I: recipe miner (T14)
+**What:** Shipped the recipe miner — Browser Use browser-harness pattern port. Reads `tool-calls.jsonl` + `score.json` from each run subdir, extracts recurring successful tool sequences grouped by host, emits candidate `*.SKILL.md` files. TDD: 4 unit tests RED (module not found) → `src/discovery/recipe-miner.ts` implemented → GREEN (4/4). CLI driver `bench/mine-recipes.ts` scans `bench-runs/` by default, aggregates across timestamp dirs, writes to `skills/candidates/`.
+**Changes:** `src/discovery/recipe-miner.ts` (new: mineRecipes, collectTraces, signature, inferHost), `bench/mine-recipes.ts` (new: CLI aggregator driver), `test/unit/discovery/recipe-miner.test.ts` (new: 4 unit tests — happy path, skip-failed-runs, minLength filter, missing-score graceful), `TRACES.md` (iter 69 + milestone-23 compaction)
+**Context:** Uses `stat().catch(() => null)` pattern (not `let s; try{}`) for tsc strict null safety. No MCP tool registration — developer-side CLI only. 88 unit test files, 605 tests pass. Build + lint + lint:bench all clean. Compacted iters 67-68-69 → milestone-23.md.
+---
+
+### Iteration 66 - 2026-05-05 — Cluster B: InputSchema enum/pattern hardening (T5)
+**What:** Added enum constraints, minLength, and min/max bounds to closed-set params across 3 tool files. TDD: test RED (13 failures) → source edits → GREEN (15/15). 585 unit tests pass, lint clean.
+**Changes:** `src/tools/extraction.ts` (level enum adds 'debug' + forEach handler adds 'debug'; selector minLength:1 on get_text, get_html, get_attribute, query_all), `src/tools/interaction.ts` (selector minLength:1 on click, double_click, fill, select_option, check, hover, type), `src/tools/wait.ts` (timeout minimum:0 / maximum:120000), `test/unit/tools/schema-strictness.test.ts` (new: 15 assertions across 3 describe blocks)
+**Context:** safari_network_throttle.profile skipped — no profile param exists in handler; lying schema deliberately omitted. safari_wait_for.condition values adapted from spec (used 'visible/hidden' names) to runtime names ('selector/selectorHidden') to avoid breaking WaitCondition TS type + buildConditionJs switch. safari_snapshot.format (yaml/json) already present — regression-guarded in test (2 of 15 passed at RED). Commit b16667e on feat/agent-benchmark-lift.
+---
+
+### Iteration 65 - 2026-05-05 — Cluster A: parity-tier tool description rewrite (T4)
+**What:** Rewrote 46 parity-tier tool descriptions across 13 tool files to follow `"<action>. Use when <trigger>; <constraint>."` pattern (≤400 chars, ≤2 sentences). Added `SafariPilotServer.listToolDefinitions()` sync public method. TDD cycle: RED test first, GREEN after rewrites.
+**Changes:** `src/server.ts` (listToolDefinitions() method), `src/tools/navigation.ts` (7), `src/tools/interaction.ts` (11), `src/tools/extraction.ts` (7), `src/tools/structured-extraction.ts` (5), `src/tools/compound.ts` (1), `src/tools/storage.ts` (9), `src/tools/network.ts` (7), `src/tools/wait.ts` (1), `src/tools/downloads.ts` (1), `src/tools/shadow.ts` (2), `src/tools/frames.ts` (2), `src/tools/selector-pack.ts` (2), `test/unit/tools/description-quality.test.ts` (new: 3 assertions)
+**Context:** safari_hover kept "synthetic MouseEvent" mention (T16 test enforces this). SelectorPack tools return [] when feature-flag disabled — covered by "if not in results, skip" logic in test. All 570 unit tests pass. Lint clean.
+---
+
+### Iteration 64 - 2026-05-05 — Bench harness scaffold (T1 of agent-benchmark sprint)
+**What:** Delivered the complete agent benchmark harness on branch `feat/agent-benchmark-lift`. Measurement infrastructure for ≥20% reduction in (wall_ms × tokens). Full TDD cycle: e2e test first → RED confirmed (tsx not found) → implementation → GREEN (13.3s real API round-trip).
+**Changes:** `bench/agent.ts` (Claude SDK loop + inline MCP client + score.json + tool-calls.jsonl writer), `bench/types.ts` (BenchTask/BenchScore interfaces), `bench/score.ts` (run-dir aggregator → scoreboard.json), `bench/run.sh` (bash driver loop over bench/tasks/**/*.task.json), `test/e2e/bench-harness.test.ts` (e2e: spawnSync bench/agent.ts, assert exit 0 + score.json shape + tt formula + tool-calls.jsonl), `tsconfig.bench.json` (separate typecheck for bench/; rootDir=. because bench/ is outside src/), `package.json` + `package-lock.json` (added devDeps @anthropic-ai/sdk + tsx; added "bench" + "lint:bench" scripts)
+**Context:** Commit `02c7a07` on `feat/agent-benchmark-lift`. Pre-commit hook false-positive fixed: comment text "No vi.mock" matched the e2e-no-mocks.sh grep pattern — changed to "Zero mocks". InlineMcpClient inlined in agent.ts (no test/ imports from bench/). Smoke task uses `safari_health_check` (SKIP_OWNERSHIP_TOOLS) to avoid tab lifecycle issues. Model: `claude-haiku-4-5-20251001`. TT formula equality check is the strong oracle. Unit suite: 567/567 PASS, lint:bench clean.
+---
 
 ### Iteration 63 - 2026-05-05 — Cluster D SHIPPED (T79 pack persistence)
 **What:** T79 pack persistence delivered — the spec-promised tab-scoped storage that Cluster C deferred. Extension owns the storage write + re-injects packs on every navigation. Cluster C's `tabs.onRemoved` listener (previously cleaning keys nothing wrote) is now load-bearing.

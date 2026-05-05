@@ -31,9 +31,7 @@ export class SelectorPackTools {
       {
         name: 'safari_register_selector',
         description:
-          'T79: Register a custom selector engine. Body is a JS function body executed as ' +
-          '`new Function("root", "arg", body)` in page context. Reference via "pack:<name>" prefix in any locator-using tool. ' +
-          'Tab-scoped — cleared automatically when the tab closes. Sensitive action; subject to HumanApproval gate.',
+          'Register a custom selector engine on a tab as a JS function body. Use when the same complex element-finding logic is needed >2 times — register once, then call any locator-using tool with selector="pack:<name>=<arg>"; persists across navigations until tab close (passes through HumanApproval).',
         inputSchema: {
           type: 'object',
           properties: {
@@ -47,7 +45,7 @@ export class SelectorPackTools {
       },
       {
         name: 'safari_unregister_selector',
-        description: 'T79: Unregister a previously registered selectorPack. Tab-scoped.',
+        description: 'Unregister a previously-registered selectorPack on the tab. Use when the pack name is being recycled or to free storage.',
         inputSchema: {
           type: 'object',
           properties: {
