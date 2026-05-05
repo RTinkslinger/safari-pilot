@@ -14,6 +14,12 @@
 
 ## Current Work
 
+### Iteration 68 - 2026-05-05 — Cluster E: SKILL.md bundles + safari_run_skill / safari_list_skills (T11)
+**What:** Shipped 3 SKILL.md workflow bundles (login, paginate-and-scrape, robust-form-fill), SkillRegistry (async SKILL.md loader with YAML frontmatter + JSON steps block parser), SkillRunner (interpolation + _loop support), and SkillTools (safari_run_skill + safari_list_skills). TDD: 4 unit tests RED (module not found) → registry.ts implemented → GREEN. E2e test confirms safari_list_skills returns all 3 bundled skills via real MCP.
+**Changes:** `skills/login.SKILL.md` (new), `skills/paginate-and-scrape.SKILL.md` (new), `skills/robust-form-fill.SKILL.md` (new), `src/skills/registry.ts` (new: SkillRegistry — fromDir, parse, list, get), `src/skills/runner.ts` (new: runSkill — interp, _loop, saveAs), `src/tools/skills.ts` (new: SkillTools — safari_run_skill + safari_list_skills), `src/server.ts` (imports + SkillTools push in listToolDefinitions with empty registry + async skillRegistry load + skillDispatch in initialize), `test/unit/skills/registry.test.ts` (new: 4 unit tests), `test/e2e/skill-runner.test.ts` (new: 1 e2e test)
+**Context:** Sub-step dispatch bypasses security pipeline (tab-ownership, rate-limit, circuit-breaker, audit) — outer safari_run_skill call is gated; inner steps are not individually audited. Accepted trade-off per manifest design intent. SkillTools not in ToolIndex (pushed after ToolIndex build) — system prompt names safari_list_skills directly, covering this gap. 86 unit test files, 598 tests pass. Lint clean. Commit 61054e6 on feat/agent-benchmark-lift.
+---
+
 ### Iteration 67 - 2026-05-05 — Cluster D-light: safari_tool_search meta-tool + ToolIndex (T8)
 **What:** Shipped the discovery half of the "tool search + defer_loading" pattern. In-memory ToolIndex (keyword overlap scoring with name+tag boost) + ToolSearchTools module registered in both listToolDefinitions() and initialize(). TDD: 5 unit tests RED → ToolIndex implemented → GREEN; 2 e2e tests pass against real MCP server.
 **Changes:** `src/discovery/tool-index.ts` (new: ToolIndex class — inferTags, tokenize, score, search, tagsFor), `src/tools/tool-search.ts` (new: ToolSearchTools with safari_tool_search handler), `src/server.ts` (imports + ToolIndex build + ToolSearchTools push in both listToolDefinitions and initialize), `test/unit/discovery/tool-index.test.ts` (new: 5 unit tests), `test/e2e/tool-search.test.ts` (new: 2 e2e tests via real MCP)
