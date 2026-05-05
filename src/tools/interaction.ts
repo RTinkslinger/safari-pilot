@@ -148,8 +148,7 @@ export class InteractionTools {
       {
         name: 'safari_click',
         description:
-          'Click an element. Auto-waits for the element to be visible, stable, enabled, and receiving events. ' +
-          'Target via ref (from snapshot), locator (role/text/label/testId/placeholder), or CSS selector.',
+          'Click an element on the page. Use when activating a button, link, checkbox, or any clickable; locator strict mode is enforced — if multiple elements match, the call throws StrictnessViolationError, use a chain filter or safari_query_all instead.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -169,8 +168,7 @@ export class InteractionTools {
       {
         name: 'safari_double_click',
         description:
-          'Double-click an element. Auto-waits for actionability. ' +
-          'Often used to select text or trigger edit modes.',
+          'Double-click an element. Use when activating a UI affordance that requires double-click (rare on web; mostly file managers and code editors).',
         inputSchema: {
           type: 'object',
           properties: {
@@ -186,8 +184,7 @@ export class InteractionTools {
       {
         name: 'safari_fill',
         description:
-          'Fill a form input with text. Auto-waits for the element to be visible, enabled, and editable. ' +
-          'Uses framework-aware filling for React, Vue, and Web Components. Clears existing value before typing.',
+          'Set the value of an input element directly. Use when filling form fields where keystroke fidelity is not required — faster than safari_type; strict mode enforced on the locator.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -212,8 +209,7 @@ export class InteractionTools {
       {
         name: 'safari_select_option',
         description:
-          'Select an option from a <select> dropdown. Auto-waits for the element to be visible and enabled. ' +
-          'Use optionValue, optionLabel, or optionIndex to pick which option.',
+          'Select an <option> in a native <select> by value, label, or index. Use when interacting with HTML select elements; for custom dropdowns built with divs use safari_click on the option element.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -231,7 +227,7 @@ export class InteractionTools {
       {
         name: 'safari_check',
         description:
-          'Check or uncheck a checkbox or radio button. Auto-waits for the element to be visible, stable, enabled, and receiving events.',
+          'Set the checked state of a checkbox or radio. Use when toggling form options; idempotent — passing a checked state matching current state is a no-op.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -247,9 +243,7 @@ export class InteractionTools {
       {
         name: 'safari_hover',
         description:
-          'Hover over an element. Auto-waits for the element to be visible, stable, and receiving events. ' +
-          'Dispatches synthetic MouseEvents (mouseover/mouseenter) — JS handlers run but CSS :hover does ' +
-          'not engage (web platform limitation; only the real cursor engages CSS pseudo-classes).',
+          'Dispatch a synthetic MouseEvent hover on an element. Use when a sub-menu or tooltip only appears on hover; note CSS :hover pseudo-classes are NOT activated — only JS mouseover/mouseenter handlers fire.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -265,8 +259,7 @@ export class InteractionTools {
       {
         name: 'safari_type',
         description:
-          'Type text character by character with key events. Unlike fill, dispatches individual ' +
-          'keydown/keypress/keyup events per character. No auto-wait (fires immediately).',
+          'Type text into a focused element character-by-character. Use when an input expects keystroke events (autocomplete, debounced search); for plain form fills prefer safari_fill which is faster.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -282,8 +275,7 @@ export class InteractionTools {
       {
         name: 'safari_press_key',
         description:
-          'Press a keyboard key or key combination. Works globally (not targeted to an element) ' +
-          'unless a target is provided via ref, selector, or locator. No auto-wait.',
+          'Press a keyboard key with optional modifiers. Use when submitting with Enter, dismissing with Escape, Tab/Shift-Tab keyboard navigation, or Cmd-A/Cmd-C combos.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -311,8 +303,7 @@ export class InteractionTools {
       {
         name: 'safari_scroll',
         description:
-          'Scroll the page or a specific element. No auto-wait. ' +
-          'Target via ref, selector, or locator. If omitted, scrolls the page.',
+          'Scroll the page or a scrollable container by pixels or to an element. Use when content is below the fold or to bring an element into view before clicking.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -335,8 +326,7 @@ export class InteractionTools {
       {
         name: 'safari_drag',
         description:
-          'Drag an element from one position to another. Auto-waits for source to be visible, stable, and receiving events. ' +
-          'Source and target can each be specified via ref or CSS selector.',
+          'Drag from one element to another. Use when working with sortable lists, file drop zones, or canvas-based UI; both endpoints accept locator descriptors.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -356,11 +346,7 @@ export class InteractionTools {
       {
         name: 'safari_handle_dialog',
         description:
-          'Install a proactive dialog interceptor that automatically handles alert, confirm, and prompt dialogs. ' +
-          'MUST be called BEFORE the action that triggers the dialog — dialogs block JavaScript execution ' +
-          'so they cannot be handled reactively. Patches window.alert, window.confirm, and window.prompt. ' +
-          'Use action: "accept" to confirm/ok dialogs, "dismiss" to cancel. ' +
-          'For prompts, provide promptText to set the return value.',
+          'Pre-arm a handler for the next JS alert/confirm/prompt. Use when the next action will trigger a dialog — Safari blocks on dialogs and other tools cannot run until handled.',
         inputSchema: {
           type: 'object',
           properties: {

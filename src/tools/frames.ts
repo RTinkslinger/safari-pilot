@@ -34,8 +34,7 @@ export class FrameTools {
       {
         name: 'safari_list_frames',
         description:
-          'List all iframes on the current page. Returns each frame\'s frameId+parentFrameId+url ' +
-          '(extension engine) or src+name+id+dimensions with frameId=null (AppleScript engine).',
+          'List all iframes on the page with frameId, src, and same-origin flag. Use when you need to discover the right frameId before calling safari_eval_in_frame or other frame-targeted tools.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -48,10 +47,7 @@ export class FrameTools {
       {
         name: 'safari_eval_in_frame',
         description:
-          'Execute arbitrary JavaScript inside a specific iframe\'s context. ' +
-          'Cross-origin frames require the extension engine and frameId (from safari_list_frames). ' +
-          'Same-origin frames can use frameSelector. When both frameId and frameSelector are ' +
-          'provided, frameId takes precedence.',
+          'Run JavaScript inside a specific iframe. Use when the target content lives in a same-origin or cross-origin frame; list frames first via safari_list_frames.',
         inputSchema: {
           type: 'object',
           properties: {

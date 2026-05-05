@@ -63,8 +63,7 @@ export class ExtractionTools {
       {
         name: 'safari_snapshot',
         description:
-          'Capture a Playwright-compatible accessibility tree snapshot. Returns ARIA roles, names, states, and [ref=eN] identifiers ' +
-          'for interactive elements. Use refs to target elements in subsequent actions (click, fill, etc.).',
+          'Build a YAML or JSON accessibility snapshot of the page or a sub-tree, with refs (e1, e2, ...). Use when the page structure is unknown after navigation — every subsequent tool can target by ref; cheaper than reading raw HTML.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -93,7 +92,7 @@ export class ExtractionTools {
       },
       {
         name: 'safari_get_text',
-        description: 'Extract the visible text content of the page or a specific element.',
+        description: 'Read the visible text of an element. Use when verifying a result, capturing an answer, or reading a label; strict mode — multi-match throws, use safari_query_all for multi-element extraction.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -125,7 +124,7 @@ export class ExtractionTools {
       },
       {
         name: 'safari_get_html',
-        description: 'Get the HTML content of an element or the full page.',
+        description: 'Read the outer or inner HTML of an element. Use when text alone is insufficient — preserved attributes, nested structure, or HTML-aware downstream parsing; strict mode enforced.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -161,7 +160,7 @@ export class ExtractionTools {
       },
       {
         name: 'safari_get_attribute',
-        description: 'Get a specific attribute value from an element.',
+        description: 'Read a named attribute (href, src, value, data-*) of an element. Use when capturing links, image URLs, form values, or test-ids; strict mode enforced.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -194,8 +193,7 @@ export class ExtractionTools {
       {
         name: 'safari_evaluate',
         description:
-          'Execute arbitrary JavaScript in the page context and return the result. ' +
-          'The most flexible extraction tool. Script must return a JSON-serializable value.',
+          'Run arbitrary JavaScript in the page and return its value. Use when no structured tool fits the need — prefer safari_get_text, safari_extract_tables, or safari_query_all; subject to security pipeline.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -238,7 +236,7 @@ export class ExtractionTools {
       },
       {
         name: 'safari_get_console_messages',
-        description: 'Retrieve console messages (log, warn, error, info) captured from the page.',
+        description: 'Read buffered console.log/warn/error from the page since the last call. Use when debugging an in-page bug or verifying a JS event fired; level filter supported.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -259,9 +257,7 @@ export class ExtractionTools {
       {
         name: 'safari_query_all',
         description:
-          'Resolve a locator to ALL matching elements (default cap 100). Returns rich payload per element: ' +
-          '{ref, tagName, text, attrs, boundingBox, visible}. Each ref is reusable in any action tool that ' +
-          "accepts ref or selector (e.g. safari_click({ref: 'sp-xxx'})).",
+          'Return ALL elements matching a locator + optional chain, with refs. Use when the answer is a list (search results, products, table rows as divs); always prefer over manual loops or repeated safari_get_text calls.',
         inputSchema: {
           type: 'object',
           properties: {

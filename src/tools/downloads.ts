@@ -154,15 +154,7 @@ export class DownloadTools {
       {
         name: 'safari_wait_for_download',
         description:
-          'Wait for a file download to complete after a click that triggers a download. ' +
-          'Call this IMMEDIATELY after safari_click on a download link — click context ' +
-          '(href, download attribute) is captured automatically and expires after 60 seconds. ' +
-          'Returns download metadata (filename, path, size, MIME type) on success. ' +
-          'Detects inline rendering (e.g. PDF opened in-tab instead of downloading). ' +
-          'IMPORTANT: Safari may show a "Allow downloads?" prompt that requires user action. ' +
-          'Tell the user to check Safari and allow the download if prompted. Use a timeout ' +
-          'of at least 60000ms to allow time for user interaction. ' +
-          'Prerequisites: Safari must be running, a download-triggering click must have occurred.',
+          'Wait for a download to complete and return the local path. Use when a file export has been triggered — pairs with the safari_click that initiates the download.',
         inputSchema: {
           type: 'object',
           properties: {

@@ -151,9 +151,7 @@ export class CompoundTools {
       {
         name: 'safari_paginate_scrape',
         description:
-          'Follow pagination through a multi-page result set, extracting data from each page. ' +
-          'Runs extractScript on each page, then clicks the nextSelector to advance. ' +
-          'Returns all collected data with page URLs.',
+          'Scrape a paginated list across N pages. Use when items span multiple pages and a single safari_smart_scrape would miss data; handles next-link discovery via selector.',
         inputSchema: {
           type: 'object',
           properties: {

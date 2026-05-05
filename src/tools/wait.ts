@@ -90,9 +90,7 @@ export class WaitTools {
       {
         name: 'safari_wait_for',
         description:
-          'Wait for a condition to be met in the specified tab before proceeding. ' +
-          'Polls the page at configurable intervals until the condition is satisfied or the timeout expires. ' +
-          'Supports waiting for DOM selectors, text content, URL patterns, network idle, and custom JS functions.',
+          'Wait for a condition: selector visible, hidden, text present, text gone, URL match, JS predicate, or networkidle. Use when a follow-up action depends on async page state — replaces sleep/setTimeout entirely.',
         inputSchema: {
           type: 'object',
           properties: {

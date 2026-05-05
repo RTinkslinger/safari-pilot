@@ -14,6 +14,18 @@
 
 ## Current Work
 
+### Iteration 65 - 2026-05-05 — Cluster A: parity-tier tool description rewrite (T4)
+**What:** Rewrote 46 parity-tier tool descriptions across 13 tool files to follow `"<action>. Use when <trigger>; <constraint>."` pattern (≤400 chars, ≤2 sentences). Added `SafariPilotServer.listToolDefinitions()` sync public method. TDD cycle: RED test first, GREEN after rewrites.
+**Changes:** `src/server.ts` (listToolDefinitions() method), `src/tools/navigation.ts` (7), `src/tools/interaction.ts` (11), `src/tools/extraction.ts` (7), `src/tools/structured-extraction.ts` (5), `src/tools/compound.ts` (1), `src/tools/storage.ts` (9), `src/tools/network.ts` (7), `src/tools/wait.ts` (1), `src/tools/downloads.ts` (1), `src/tools/shadow.ts` (2), `src/tools/frames.ts` (2), `src/tools/selector-pack.ts` (2), `test/unit/tools/description-quality.test.ts` (new: 3 assertions)
+**Context:** safari_hover kept "synthetic MouseEvent" mention (T16 test enforces this). SelectorPack tools return [] when feature-flag disabled — covered by "if not in results, skip" logic in test. All 570 unit tests pass. Lint clean.
+---
+
+### Iteration 64 - 2026-05-05 — Bench harness scaffold (T1 of agent-benchmark sprint)
+**What:** Delivered the complete agent benchmark harness on branch `feat/agent-benchmark-lift`. Measurement infrastructure for ≥20% reduction in (wall_ms × tokens). Full TDD cycle: e2e test first → RED confirmed (tsx not found) → implementation → GREEN (13.3s real API round-trip).
+**Changes:** `bench/agent.ts` (Claude SDK loop + inline MCP client + score.json + tool-calls.jsonl writer), `bench/types.ts` (BenchTask/BenchScore interfaces), `bench/score.ts` (run-dir aggregator → scoreboard.json), `bench/run.sh` (bash driver loop over bench/tasks/**/*.task.json), `test/e2e/bench-harness.test.ts` (e2e: spawnSync bench/agent.ts, assert exit 0 + score.json shape + tt formula + tool-calls.jsonl), `tsconfig.bench.json` (separate typecheck for bench/; rootDir=. because bench/ is outside src/), `package.json` + `package-lock.json` (added devDeps @anthropic-ai/sdk + tsx; added "bench" + "lint:bench" scripts)
+**Context:** Commit `02c7a07` on `feat/agent-benchmark-lift`. Pre-commit hook false-positive fixed: comment text "No vi.mock" matched the e2e-no-mocks.sh grep pattern — changed to "Zero mocks". InlineMcpClient inlined in agent.ts (no test/ imports from bench/). Smoke task uses `safari_health_check` (SKIP_OWNERSHIP_TOOLS) to avoid tab lifecycle issues. Model: `claude-haiku-4-5-20251001`. TT formula equality check is the strong oracle. Unit suite: 567/567 PASS, lint:bench clean.
+---
+
 ### Iteration 63 - 2026-05-05 — Cluster D SHIPPED (T79 pack persistence)
 **What:** T79 pack persistence delivered — the spec-promised tab-scoped storage that Cluster C deferred. Extension owns the storage write + re-injects packs on every navigation. Cluster C's `tabs.onRemoved` listener (previously cleaning keys nothing wrote) is now load-bearing.
 

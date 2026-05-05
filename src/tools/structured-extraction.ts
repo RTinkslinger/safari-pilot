@@ -21,10 +21,7 @@ export class StructuredExtractionTools {
       {
         name: 'safari_smart_scrape',
         description:
-          'Schema-based structured extraction. Walks the DOM heuristically to match fields described ' +
-          'in a JSON schema — label→input pairs, heading→content pairs, table headers→rows — and returns ' +
-          'a structured JSON object matching the schema shape. Ideal for extracting form data, article ' +
-          'content, product details, or any repeating page structure.',
+          'Scrape the page into a JSON object matching a provided schema. Use when extracting heterogeneous structured data — far higher signal than a snapshot when the schema is known; schema follows JSON Schema.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -47,9 +44,7 @@ export class StructuredExtractionTools {
       {
         name: 'safari_extract_tables',
         description:
-          'Extract all HTML tables on the page as structured JSON. Each table is returned with its ' +
-          'headers (from <th> elements) and rows (from <td> elements). Specify a CSS selector to ' +
-          'target a particular table.',
+          'Extract all <table> elements as structured JSON {headers, rows}. Use when the answer is in a table — far cheaper than parsing HTML manually; auto-detects header rows.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -66,8 +61,7 @@ export class StructuredExtractionTools {
       {
         name: 'safari_extract_links',
         description:
-          'Extract all hyperlinks from the page with their href, link text, and surrounding context ' +
-          '(parent heading or paragraph). Optionally filter to internal-only, external-only, or all links.',
+          'Extract every link on the page as {text, href, attrs}. Use when scoping link discovery — e.g., finding all pagination links or downloading a list of URLs.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -86,8 +80,7 @@ export class StructuredExtractionTools {
       {
         name: 'safari_extract_images',
         description:
-          'Extract all images on the page with their src, alt text, and rendered/natural dimensions. ' +
-          'Optionally filter by minimum rendered width or height to skip decorative or tiny images.',
+          'Extract every <img> as {src, alt, width, height}. Use when collecting image catalogs or auditing alt text; resolves srcset to canonical src.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -110,8 +103,7 @@ export class StructuredExtractionTools {
       {
         name: 'safari_extract_metadata',
         description:
-          'Extract page metadata: <title>, <meta> tags (description, keywords, author), ' +
-          'Open Graph (og:*), Twitter Cards (twitter:*), JSON-LD structured data, and canonical URL.',
+          'Extract document <meta>, OpenGraph, Twitter, JSON-LD, and canonical link metadata. Use when capturing page identity for citation, social sharing detection, or schema.org parsing.',
         inputSchema: {
           type: 'object',
           properties: {

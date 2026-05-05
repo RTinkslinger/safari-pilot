@@ -34,8 +34,7 @@ export class ShadowTools {
       {
         name: 'safari_query_shadow',
         description:
-          'Query an element inside a Shadow DOM tree. Pierces the shadow boundary by accessing the ' +
-          'host element\'s shadowRoot and querying within it. Returns element metadata when found.',
+          'Find an element inside Shadow DOM, piercing open shadow roots. Use when standard CSS selectors fail because the target is in a custom-element shadow tree.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -51,8 +50,7 @@ export class ShadowTools {
       {
         name: 'safari_click_shadow',
         description:
-          'Click an element inside a Shadow DOM tree. Pierces the shadow boundary and dispatches ' +
-          'the full click event sequence (mousedown, mouseup, click) on the shadow element.',
+          'Click an element inside Shadow DOM. Use when safari_click fails because the target element is inside a shadow-root; shadow-aware replacement for safari_click.',
         inputSchema: {
           type: 'object',
           properties: {
