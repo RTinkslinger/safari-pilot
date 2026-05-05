@@ -1,0 +1,81 @@
+{
+  "run_dir": "/Users/Aakash/Claude Projects/Skills Factory/safari-pilot/bench-runs/20260505-230010",
+  "generated_at": "2026-05-05T17:31:42.993Z",
+  "variants": [
+    {
+      "variant": "iter-3",
+      "tasks_total": 6,
+      "tasks_success": 4,
+      "success_rate": 0.6666666666666666,
+      "total_tool_calls": 29,
+      "total_input_tokens": 708812,
+      "total_output_tokens": 3306,
+      "total_wall_ms": 75818,
+      "total_tt": 11044600146,
+      "scores": [
+        {
+          "task_id": "00-smoke",
+          "variant": "iter-3",
+          "success": true,
+          "tool_calls": 2,
+          "input_tokens": 65125,
+          "output_tokens": 230,
+          "wall_ms": 5548,
+          "tt": 362589540
+        },
+        {
+          "task_id": "01-extract-h1",
+          "variant": "iter-3",
+          "success": true,
+          "tool_calls": 2,
+          "input_tokens": 65145,
+          "output_tokens": 179,
+          "wall_ms": 5847,
+          "tt": 381949428
+        },
+        {
+          "task_id": "02-multi-element-list",
+          "variant": "iter-3",
+          "success": true,
+          "tool_calls": 3,
+          "input_tokens": 87385,
+          "output_tokens": 344,
+          "wall_ms": 12505,
+          "tt": 1097051145
+        },
+        {
+          "task_id": "03-form-fill",
+          "variant": "iter-3",
+          "success": false,
+          "tool_calls": 7,
+          "input_tokens": 132784,
+          "output_tokens": 709,
+          "wall_ms": 13490,
+          "tt": 1800820570,
+          "failure_reason": "budget_exceeded"
+        },
+        {
+          "task_id": "04-paginate-extract",
+          "variant": "iter-3",
+          "success": true,
+          "tool_calls": 9,
+          "input_tokens": 225399,
+          "output_tokens": 1181,
+          "wall_ms": 24389,
+          "tt": 5526059620
+        },
+        {
+          "task_id": "05-strict-mode",
+          "variant": "iter-3",
+          "success": false,
+          "tool_calls": 6,
+          "input_tokens": 132974,
+          "output_tokens": 663,
+          "wall_ms": 14039,
+          "tt": 1876129843,
+          "failure_reason": "budget_exceeded"
+        }
+      ]
+    }
+  ]
+}
