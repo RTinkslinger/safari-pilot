@@ -1,0 +1,8 @@
+{
+  "id": "00-smoke",
+  "description": "Read the page heading and report its text.",
+  "fixtureRoute": "/bench-smoke",
+  "successOracle": { "type": "final_text_contains", "text": "Hello from Smoke" },
+  "maxIterations": 6,
+  "budgetTokens": 8000
+}

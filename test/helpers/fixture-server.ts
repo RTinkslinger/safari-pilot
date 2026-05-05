@@ -444,6 +444,73 @@ function makeHandler() {
       return;
     }
 
+    // bench-* fixture routes for agent benchmark tasks (T2)
+    if (url === '/bench-smoke') {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end('<!doctype html><html><body><h1>Hello from Smoke</h1></body></html>');
+      return;
+    }
+    if (url === '/bench-h1') {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end('<!doctype html><html><body><h1>Quarterly Report 2026</h1><p>Body content</p></body></html>');
+      return;
+    }
+    if (url === '/bench-list') {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end('<!doctype html><html><body><ul class="product-list"><li>Apple</li><li>Banana</li><li>Cherry</li></ul></body></html>');
+      return;
+    }
+    if (url === '/bench-form') {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(`<!doctype html><html><body>
+    <form id="f"><label>Email <input name="email" id="email"/></label>
+    <button type="button" id="submit">Submit</button></form>
+    <div id="msg"></div>
+    <script>
+      document.getElementById('submit').onclick = () => {
+        const v = document.getElementById('email').value;
+        document.getElementById('msg').innerText = 'Thanks, ' + v;
+      };
+    </script></body></html>`);
+      return;
+    }
+    if (url === '/bench-paginate') {
+      const rawUrl = req.url ?? '/bench-paginate';
+      const u = new URL(rawUrl, 'http://x');
+      const page = u.searchParams.get('page') ?? '1';
+      const items =
+        page === '1' ? ['Item-1A', 'Item-1B'] :
+        page === '2' ? ['Item-2A', 'Item-2B'] :
+        ['Item-3A', 'Item-3B'];
+      const next =
+        page === '3'
+          ? ''
+          : `<a href="/bench-paginate?page=${Number(page) + 1}" class="next">Next</a>`;
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(`<!doctype html><html><body>${items.map((i) => `<div class="item">${i}</div>`).join('')}${next}</body></html>`);
+      return;
+    }
+    if (url === '/bench-strict') {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(`<!doctype html><html><body>
+    <button>Sign In</button>
+    <button>Sign In</button>
+    <button data-test="primary-signin">Sign In</button>
+    <script>
+      document.querySelectorAll('button').forEach(b => {
+        if (b.dataset.test === 'primary-signin') {
+          b.onclick = () => { location.href = '/signed-in'; };
+        }
+      });
+    </script></body></html>`);
+      return;
+    }
+    if (url === '/signed-in') {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end('<!doctype html><html><body><h1>Signed In</h1></body></html>');
+      return;
+    }
+
     const file = url === '/' ? 'host.html' : url.replace(/^\/+/, '');
     try {
       const body = readFileSync(resolve(FIXTURE_DIR, file));
