@@ -27,6 +27,8 @@ import { DownloadTools } from './tools/downloads.js';
 import { PdfTools } from './tools/pdf.js';
 import { ExtensionDiagnosticsTools } from './tools/extension-diagnostics.js';
 import { FileUploadTools } from './tools/file-upload.js';
+import { ToolIndex } from './discovery/tool-index.js';
+import { ToolSearchTools } from './tools/tool-search.js';
 import { KillSwitch } from './security/kill-switch.js';
 import { TabOwnership } from './security/tab-ownership.js';
 import { AuditLog } from './security/audit-log.js';
@@ -270,6 +272,14 @@ export class SafariPilotServer {
       new SelectorPackTools(proxy, this.config.selectorPack),
     ];
 
+    // Build the tool index from all existing modules and add the search meta-tool.
+    const allEntries = modules.flatMap((m) =>
+      (m as unknown as { getDefinitions(): Array<{ name: string; description: string }> })
+        .getDefinitions()
+        .map((d) => ({ name: d.name, description: d.description })),
+    );
+    modules.push(new ToolSearchTools(proxy, new ToolIndex(allEntries)) as unknown as typeof modules[0]);
+
     const defs: Array<{ name: string; description: string; inputSchema: Record<string, unknown>; requirements: ToolRequirements }> = [];
     for (const mod of modules) {
       for (const d of (mod as unknown as { getDefinitions(): Array<{ name: string; description: string; inputSchema: Record<string, unknown>; requirements: ToolRequirements }> }).getDefinitions()) {
@@ -426,6 +436,12 @@ export class SafariPilotServer {
       extensionDiagnosticsTools,
       selectorPackTools,
     ];
+
+    // Build the tool index from all registered modules, then add the search meta-tool.
+    const toolIndex = new ToolIndex(
+      modules.flatMap((m) => m.getDefinitions().map((d) => ({ name: d.name, description: d.description }))),
+    );
+    modules.push(new ToolSearchTools(proxy, toolIndex) as unknown as ToolModule);
 
     for (const module of modules) {
       for (const def of module.getDefinitions()) {
