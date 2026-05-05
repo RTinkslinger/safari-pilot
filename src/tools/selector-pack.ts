@@ -31,7 +31,7 @@ export class SelectorPackTools {
       {
         name: 'safari_register_selector',
         description:
-          'Register a custom selector engine for the tab as a JS function body. Use when the same complex element-finding logic is needed >2 times — register once, then refer via "pack:<name>=<arg>" in any locator; persists across navigations until tab close.',
+          'Register a custom selector engine on a tab as a JS function body. Use when the same complex element-finding logic is needed >2 times — register once, then call any locator-using tool with selector="pack:<name>=<arg>"; persists across navigations until tab close (passes through HumanApproval).',
         inputSchema: {
           type: 'object',
           properties: {

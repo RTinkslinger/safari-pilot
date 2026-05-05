@@ -92,7 +92,7 @@ export class ExtractionTools {
       },
       {
         name: 'safari_get_text',
-        description: 'Read the visible text of an element. Use when verifying a result, capturing an answer, or reading a label; strict mode — multi-match throws, use safari_query_all for multi-element extraction.',
+        description: 'Read the visible text of one element. Use when verifying a result, capturing an answer, or reading a label — if the answer is a list of items, use safari_query_all instead (never loop safari_get_text by index).',
         inputSchema: {
           type: 'object',
           properties: {
@@ -257,7 +257,7 @@ export class ExtractionTools {
       {
         name: 'safari_query_all',
         description:
-          'Return ALL elements matching a locator + optional chain, with refs. Use when the answer is a list (search results, products, table rows as divs); always prefer over manual loops or repeated safari_get_text calls.',
+          'Return ALL elements matching a locator + optional chain, with refs. Use when the answer is a list (search results, products, table rows as divs) — prefer over loops; chain ops filter inline: chain=[{filter:{hasText:"Active"}},{nth:0}] picks the first Active item.',
         inputSchema: {
           type: 'object',
           properties: {

@@ -148,7 +148,7 @@ export class InteractionTools {
       {
         name: 'safari_click',
         description:
-          'Click an element on the page. Use when activating a button, link, checkbox, or any clickable; locator strict mode is enforced — if multiple elements match, the call throws StrictnessViolationError, use a chain filter or safari_query_all instead.',
+          'Click an element on the page. Use when activating a button, link, checkbox, or any clickable — strict mode throws StrictnessViolationError on multi-match; switch to safari_query_all to enumerate first or add chain=[{filter:{hasText:"Sign In"}},{nth:0}] to disambiguate inline.',
         inputSchema: {
           type: 'object',
           properties: {
