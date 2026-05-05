@@ -312,6 +312,12 @@ async function main(): Promise<void> {
       const response = await anthropic.messages.create({
         model: 'claude-haiku-4-5-20251001',
         max_tokens: Math.min(task.budgetTokens, 4096),
+        // temperature: 0 for deterministic measurement across iterations.
+        // Stochastic agent loops + 6 tasks made baseline TT swing ±35%
+        // run-to-run, masking real interventions. Temp 0 makes per-task
+        // outcomes a function of (system prompt × tool surface × task)
+        // rather than a function of (random seed).
+        temperature: 0,
         system: systemPrompt,
         tools: anthropicTools,
         messages,
