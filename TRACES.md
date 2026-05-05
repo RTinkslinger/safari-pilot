@@ -14,6 +14,12 @@
 
 ## Current Work
 
+### Iteration 67 - 2026-05-05 — Cluster D-light: safari_tool_search meta-tool + ToolIndex (T8)
+**What:** Shipped the discovery half of the "tool search + defer_loading" pattern. In-memory ToolIndex (keyword overlap scoring with name+tag boost) + ToolSearchTools module registered in both listToolDefinitions() and initialize(). TDD: 5 unit tests RED → ToolIndex implemented → GREEN; 2 e2e tests pass against real MCP server.
+**Changes:** `src/discovery/tool-index.ts` (new: ToolIndex class — inferTags, tokenize, score, search, tagsFor), `src/tools/tool-search.ts` (new: ToolSearchTools with safari_tool_search handler), `src/server.ts` (imports + ToolIndex build + ToolSearchTools push in both listToolDefinitions and initialize), `test/unit/discovery/tool-index.test.ts` (new: 5 unit tests), `test/e2e/tool-search.test.ts` (new: 2 e2e tests via real MCP)
+**Context:** ToolIndex registered in BOTH server.ts sites (listToolDefinitions for static introspection, initialize for runtime). safari_emergency_stop and safari_tool_search itself are not indexed (self-discovery not needed; emergency stop registered post-modules). 594/594 unit tests pass, lint clean. Commit 6baa8b8 on feat/agent-benchmark-lift.
+---
+
 ### Iteration 66 - 2026-05-05 — Cluster B: InputSchema enum/pattern hardening (T5)
 **What:** Added enum constraints, minLength, and min/max bounds to closed-set params across 3 tool files. TDD: test RED (13 failures) → source edits → GREEN (15/15). 585 unit tests pass, lint clean.
 **Changes:** `src/tools/extraction.ts` (level enum adds 'debug' + forEach handler adds 'debug'; selector minLength:1 on get_text, get_html, get_attribute, query_all), `src/tools/interaction.ts` (selector minLength:1 on click, double_click, fill, select_option, check, hover, type), `src/tools/wait.ts` (timeout minimum:0 / maximum:120000), `test/unit/tools/schema-strictness.test.ts` (new: 15 assertions across 3 describe blocks)
