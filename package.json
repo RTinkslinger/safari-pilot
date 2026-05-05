@@ -39,15 +39,19 @@
     "verify:extension:smoke": "bash scripts/verify-extension-smoke.sh",
     "verify:extension:full": "npm run verify:extension:smoke && npx vitest run test/e2e/",
     "test:e2e:harness": "bash scripts/test-e2e-harness.sh",
-    "prepublishOnly": "bash hooks/pre-publish-verify.sh"
+    "prepublishOnly": "bash hooks/pre-publish-verify.sh",
+    "bench": "bash bench/run.sh",
+    "lint:bench": "tsc --noEmit -p tsconfig.bench.json"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0"
   },
   "devDependencies": {
+    "@anthropic-ai/sdk": "^0.93.0",
+    "@types/node": "^20.0.0",
+    "tsx": "^4.21.0",
     "typescript": "^5.4.0",
-    "vitest": "^2.0.0",
-    "@types/node": "^20.0.0"
+    "vitest": "^2.0.0"
   },
   "engines": {
     "node": ">=20.0.0"
