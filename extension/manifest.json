@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Safari Pilot",
-  "version": "0.1.28",
+  "version": "0.1.29",
   "description": "Native Safari automation for AI agents",
   "permissions": [
     "activeTab",
@@ -18,22 +18,34 @@
   "content_security_policy": {
     "extension_pages": "script-src 'self'; connect-src 'self' http://localhost:19475 http://127.0.0.1:19475"
   },
-  "host_permissions": ["<all_urls>"],
+  "host_permissions": [
+    "<all_urls>"
+  ],
   "background": {
-    "scripts": ["background.js"],
+    "scripts": [
+      "background.js"
+    ],
     "persistent": false
   },
   "content_scripts": [
     {
-      "matches": ["<all_urls>"],
-      "js": ["content-isolated.js"],
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "content-isolated.js"
+      ],
       "run_at": "document_idle",
       "world": "ISOLATED",
       "all_frames": true
     },
     {
-      "matches": ["<all_urls>"],
-      "js": ["content-main.js"],
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "content-main.js"
+      ],
       "run_at": "document_idle",
       "world": "MAIN",
       "all_frames": true
