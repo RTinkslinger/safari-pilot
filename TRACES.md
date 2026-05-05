@@ -14,6 +14,12 @@
 
 ## Current Work
 
+### Iteration 66 - 2026-05-05 — Cluster B: InputSchema enum/pattern hardening (T5)
+**What:** Added enum constraints, minLength, and min/max bounds to closed-set params across 3 tool files. TDD: test RED (13 failures) → source edits → GREEN (15/15). 585 unit tests pass, lint clean.
+**Changes:** `src/tools/extraction.ts` (level enum adds 'debug' + forEach handler adds 'debug'; selector minLength:1 on get_text, get_html, get_attribute, query_all), `src/tools/interaction.ts` (selector minLength:1 on click, double_click, fill, select_option, check, hover, type), `src/tools/wait.ts` (timeout minimum:0 / maximum:120000), `test/unit/tools/schema-strictness.test.ts` (new: 15 assertions across 3 describe blocks)
+**Context:** safari_network_throttle.profile skipped — no profile param exists in handler; lying schema deliberately omitted. safari_wait_for.condition values adapted from spec (used 'visible/hidden' names) to runtime names ('selector/selectorHidden') to avoid breaking WaitCondition TS type + buildConditionJs switch. safari_snapshot.format (yaml/json) already present — regression-guarded in test (2 of 15 passed at RED). Commit b16667e on feat/agent-benchmark-lift.
+---
+
 ### Iteration 65 - 2026-05-05 — Cluster A: parity-tier tool description rewrite (T4)
 **What:** Rewrote 46 parity-tier tool descriptions across 13 tool files to follow `"<action>. Use when <trigger>; <constraint>."` pattern (≤400 chars, ≤2 sentences). Added `SafariPilotServer.listToolDefinitions()` sync public method. TDD cycle: RED test first, GREEN after rewrites.
 **Changes:** `src/server.ts` (listToolDefinitions() method), `src/tools/navigation.ts` (7), `src/tools/interaction.ts` (11), `src/tools/extraction.ts` (7), `src/tools/structured-extraction.ts` (5), `src/tools/compound.ts` (1), `src/tools/storage.ts` (9), `src/tools/network.ts` (7), `src/tools/wait.ts` (1), `src/tools/downloads.ts` (1), `src/tools/shadow.ts` (2), `src/tools/frames.ts` (2), `src/tools/selector-pack.ts` (2), `test/unit/tools/description-quality.test.ts` (new: 3 assertions)
