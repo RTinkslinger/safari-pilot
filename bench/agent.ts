@@ -275,7 +275,7 @@ async function main(): Promise<void> {
     const systemPrompt =
       `You are a browser automation agent using the Safari Pilot MCP tools. ` +
       `You have access to safari_* tools to control Safari. ` +
-      `The fixture server is running at http://127.0.0.1:${fixturePort}. ` +
+      `The fixture server is running at http://127.0.0.1:${fixturePort}${task.fixtureRoute}. ` +
       `Complete the task efficiently using as few tool calls as possible. ` +
       `Do not open new tabs unless the task explicitly requires it. ` +
       `When done, summarize what you found.`;
@@ -289,6 +289,7 @@ async function main(): Promise<void> {
     let toolCallCount = 0;
     let finalText = '';
     let strictViolation = false;
+    let budgetExceeded = false;
     const toolCallLog: Array<{ tool: string; args: Record<string, unknown>; result: unknown }> = [];
 
     const wallStart = Date.now();
@@ -304,6 +305,12 @@ async function main(): Promise<void> {
 
       totalInputTokens += response.usage.input_tokens;
       totalOutputTokens += response.usage.output_tokens;
+
+      // Cumulative budget guard — break before executing more tool calls
+      if (totalInputTokens + totalOutputTokens > task.budgetTokens) {
+        budgetExceeded = true;
+        break;
+      }
 
       // Extract text from this turn
       for (const block of response.content) {
@@ -333,14 +340,15 @@ async function main(): Promise<void> {
         try {
           result = await client.callTool(tb.name, args, 30_000);
         } catch (err: unknown) {
-          result = { _error: true, message: err instanceof Error ? err.message : String(err) };
-          strictViolation = true; // MCP-level error counts as violation for oracle purposes
+          const msg = err instanceof Error ? err.message : String(err);
+          result = { _error: true, message: msg };
+          if (msg.includes('STRICTNESS_VIOLATION')) strictViolation = true;
         }
 
         const elapsed = Date.now() - callStart;
 
         // Detect strict violation signals in result
-        if (typeof result['error'] === 'string' && result['error'].includes('STRICT_VIOLATION')) {
+        if (result['_error'] && typeof result['message'] === 'string' && result['message'].includes('STRICTNESS_VIOLATION')) {
           strictViolation = true;
         }
 
@@ -371,12 +379,16 @@ async function main(): Promise<void> {
 
     const wallMs = Date.now() - wallStart;
 
-    const { success, failure_reason } = evaluateOracle(
+    let { success, failure_reason } = evaluateOracle(
       task,
       toolCallLog,
       finalText,
       strictViolation,
     );
+    if (budgetExceeded) {
+      success = false;
+      failure_reason = 'budget_exceeded';
+    }
 
     const score: BenchScore = {
       task_id: task.id,
