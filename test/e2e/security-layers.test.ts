@@ -130,17 +130,25 @@ describe('Security layers e2e (SD-04)', () => {
   }, 25_000);
 
   // ── ScreenshotPolicy (T59) ───────────────────────────────────────────────
-  it('ScreenshotPolicy (T59): safari_take_screenshot returns SCREENSHOT_BLOCKED for a seed-list domain', async () => {
+  it('ScreenshotPolicy (T59): safari_take_screenshot throws SCREENSHOT_BLOCKED for a seed-list domain', async () => {
     // Wiring litmus: verifies ExtractionTools is constructed with ScreenshotPolicy
-    // in server.ts → checkDomain() fires before screencapture → SCREENSHOT_BLOCKED.
+    // in server.ts → checkDomain() fires BEFORE engine.executeJsInTab → throws
+    // ScreenshotBlockedError → MCP error response → rawCallTool throws.
+    //
+    // Updated 2026-05-08 (v0.1.30): the screenshot tool no longer routes via
+    // screencapture; it routes via `engine.executeJsInTab(tabUrl,
+    // '__SP_TAKE_SCREENSHOT__')` through the extension. ScreenshotPolicy still
+    // gates the tool BEFORE the engine call, but the failure shape is now an
+    // MCP error envelope (rawCallTool raises) rather than a degraded-response
+    // envelope. Test asserts the throw.
     //
     // stripe.com is in BANKING_DOMAIN_SEED. Its root URL does NOT trigger
     // HumanApproval (which only fires for stripe.com/pay and checkout.stripe.com
     // paths). TabOwnership passes because we open the tab ourselves first.
     //
     // Discrimination: comment out `new ScreenshotPolicy(...)` in the
-    // ExtractionTools constructor call in server.ts → screencaptureRunner runs
-    // instead of throwing → no SCREENSHOT_BLOCKED → assertion fails.
+    // ExtractionTools constructor call in server.ts → policy never fires → the
+    // capture sentinel runs → no SCREENSHOT_BLOCKED throw → assertion fails.
     const tab = await callTool(
       client,
       'safari_new_tab',
@@ -151,18 +159,23 @@ describe('Security layers e2e (SD-04)', () => {
     const tabUrl = tab.tabUrl as string;
 
     try {
-      const raw = await rawCallTool(
-        client,
-        'safari_take_screenshot',
-        { tabUrl },
-        nextId(),
-        15_000,
-      );
-
-      expect(raw.meta?.['degraded']).toBe(true);
-      expect(raw.payload['error']).toBe('SCREENSHOT_BLOCKED');
-      // Domain must appear in the payload — discriminates against a generic error envelope.
-      expect(JSON.stringify(raw.payload)).toContain('stripe.com');
+      let thrown: Error | undefined;
+      try {
+        await rawCallTool(
+          client,
+          'safari_take_screenshot',
+          { tabUrl },
+          nextId(),
+          15_000,
+        );
+      } catch (e) {
+        thrown = e as Error;
+      }
+      expect(thrown).toBeDefined();
+      // Message must mention the policy reason AND the blocked hostname —
+      // discriminates against a generic disconnect/timeout error envelope.
+      expect(thrown!.message).toMatch(/screenshot blocked|SCREENSHOT_BLOCKED/i);
+      expect(thrown!.message).toContain('stripe.com');
     } finally {
       try { await callTool(client, 'safari_close_tab', { tabUrl }, nextId()); } catch { /* ignore */ }
     }
