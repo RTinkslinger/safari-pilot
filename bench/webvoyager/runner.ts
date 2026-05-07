@@ -104,7 +104,13 @@ async function main(): Promise<void> {
 
       let verdict: 'SUCCESS' | 'FAILURE' | 'UNKNOWN' = 'UNKNOWN';
       let reasoning = '(judge skipped)';
-      if (!args.skipJudge) {
+      if (adapterResult.screenshot_path === null) {
+        // Capture failed — skip judge entirely. Don't try to call OpenAI without a screenshot;
+        // the upstream WebVoyager prompt is screenshot-mandatory and would either crash or
+        // produce a conservative NOT SUCCESS that's unrelated to agent capability.
+        verdict = 'UNKNOWN';
+        reasoning = `screenshot capture failed: ${adapterResult.capture_error_code ?? 'unknown'}`;
+      } else if (!args.skipJudge) {
         try {
           const j = await runJudge(task.question, adapterResult.agent_final_text, adapterResult.screenshot_path);
           verdict = j.verdict;

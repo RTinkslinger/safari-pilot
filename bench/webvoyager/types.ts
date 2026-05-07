@@ -23,7 +23,7 @@ export interface WebVoyagerScore {
   agent_final_text: string;
   run_seq: number;
   wall_ms: number;
-  screenshot_path: string;
+  screenshot_path: string | null;
   failure_reason?: string;
 }
 

@@ -4,6 +4,7 @@ export interface SiteAggregate {
   tasks_total: number;
   tasks_success: number;
   success_rate: number;
+  capture_failure_rate: number;
   wall_ms_median: number;
 }
 
@@ -35,6 +36,16 @@ function median(xs: number[]): number {
 
 function siteFromTaskId(id: string): string {
   return id.split('--')[0] ?? 'Unknown';
+}
+
+/**
+ * A score is a "capture failure" iff verdict is UNKNOWN AND the judge_reasoning
+ * starts with the canonical sentinel that runner.ts writes when adapter returns
+ * screenshot_path: null. This keeps capture failures separate from legitimate
+ * UNKNOWN verdicts (judge couldn't decide, model hedged, etc.).
+ */
+function isCaptureFailure(s: WebVoyagerScore): boolean {
+  return s.verdict === 'UNKNOWN' && /^screenshot capture failed:/.test(s.judge_reasoning);
 }
 
 /**
@@ -76,9 +87,11 @@ export function aggregateScoreboard(scores: WebVoyagerScore[]): Scoreboard {
   }
 
   // Per-site aggregates: success_rate from task-level majority verdict;
-  // wall_ms_median from ALL runs in the site (not median of medians).
+  // wall_ms_median from ALL runs in the site (not median of medians);
+  // capture_failure_rate from ALL runs in the site (capture failures / total runs).
   const tasksBySite = new Map<string, TaskAggregate[]>();
   const allRunsBySite = new Map<string, number[]>();
+  const allScoresBySite = new Map<string, WebVoyagerScore[]>();
   for (const t of Object.values(taskAggs)) {
     const arr = tasksBySite.get(t.site) ?? [];
     arr.push(t);
@@ -86,28 +99,36 @@ export function aggregateScoreboard(scores: WebVoyagerScore[]): Scoreboard {
   }
   for (const s of scores) {
     const site = siteFromTaskId(s.task_id);
-    const arr = allRunsBySite.get(site) ?? [];
-    arr.push(s.wall_ms);
-    allRunsBySite.set(site, arr);
+    const wallArr = allRunsBySite.get(site) ?? [];
+    wallArr.push(s.wall_ms);
+    allRunsBySite.set(site, wallArr);
+    const scoreArr = allScoresBySite.get(site) ?? [];
+    scoreArr.push(s);
+    allScoresBySite.set(site, scoreArr);
   }
 
   const perSite: Record<string, SiteAggregate> = {};
   for (const [site, ts] of tasksBySite) {
     const succ = ts.filter((t) => t.median_verdict === 'SUCCESS').length;
+    const siteScores = allScoresBySite.get(site) ?? [];
+    const captureFails = siteScores.filter(isCaptureFailure).length;
     perSite[site] = {
       tasks_total: ts.length,
       tasks_success: succ,
       success_rate: ts.length > 0 ? succ / ts.length : 0,
+      capture_failure_rate: siteScores.length > 0 ? captureFails / siteScores.length : 0,
       wall_ms_median: median(allRunsBySite.get(site) ?? []),
     };
   }
 
   const allTasks = Object.values(taskAggs);
   const overallSucc = allTasks.filter((t) => t.median_verdict === 'SUCCESS').length;
+  const overallCaptureFails = scores.filter(isCaptureFailure).length;
   const overall: SiteAggregate = {
     tasks_total: allTasks.length,
     tasks_success: overallSucc,
     success_rate: allTasks.length > 0 ? overallSucc / allTasks.length : 0,
+    capture_failure_rate: scores.length > 0 ? overallCaptureFails / scores.length : 0,
     wall_ms_median: median(scores.map((s) => s.wall_ms)),
   };
 

@@ -1,6 +1,6 @@
 // bench/webvoyager/adapter.ts
 import { spawn } from 'node:child_process';
-import { writeFileSync } from 'node:fs';
+import { existsSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { WebVoyagerTask } from './types.js';
@@ -23,7 +23,8 @@ export interface RunOptions {
 export interface RawAdapterResult {
   task_id: string;
   agent_final_text: string;
-  screenshot_path: string;
+  screenshot_path: string | null;
+  capture_error_code?: string;
   wall_ms: number;
   exit_code: number;
   stderr_tail: string;
@@ -115,8 +116,22 @@ export async function runWebVoyagerTask(
     `EXIT=${exitCode}\nTIMED_OUT=${timedOut}\nWALL_MS=${wallMs}\n=== STDOUT ===\n${stdoutBuf}\n=== STDERR ===\n${stderrBuf}`,
   );
 
-  // Post-hoc screenshot (independent of agent compliance) — uses the diff set
-  await captureScreenshotPostHoc(tabSnapshot, screenshotPath);
+  // Post-hoc screenshot (independent of agent compliance) — uses the diff set.
+  // Wrap in try/catch + existsSync so capture failures surface as null screenshot_path
+  // rather than throwing through the harness or producing a phantom path that the
+  // judge would later try to read.
+  let screenshotPathOrNull: string | null = screenshotPath;
+  let captureErrorCode: string | undefined;
+  try {
+    await captureScreenshotPostHoc(tabSnapshot, screenshotPath);
+    if (!existsSync(screenshotPath)) {
+      screenshotPathOrNull = null;
+      captureErrorCode = 'CAPTURE_NO_FILE';
+    }
+  } catch (e) {
+    screenshotPathOrNull = null;
+    captureErrorCode = (e as Error & { code?: string }).code ?? 'CAPTURE_FAILED';
+  }
 
   // Clean up only tabs that appeared during this run
   await cleanupNewTabs(tabSnapshot);
@@ -124,7 +139,8 @@ export async function runWebVoyagerTask(
   return {
     task_id: task.id,
     agent_final_text: finalText,
-    screenshot_path: screenshotPath,
+    screenshot_path: screenshotPathOrNull,
+    capture_error_code: captureErrorCode,
     wall_ms: wallMs,
     exit_code: exitCode,
     stderr_tail: stderrBuf.slice(-2000),
