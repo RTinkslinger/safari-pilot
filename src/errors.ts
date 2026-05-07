@@ -42,6 +42,15 @@ export const ERROR_CODES = {
   FILE_UPLOAD_MULTIPLE_NOT_ALLOWED: 'FILE_UPLOAD_MULTIPLE_NOT_ALLOWED',
   FILE_UPLOAD_INVALID_PARAMS: 'FILE_UPLOAD_INVALID_PARAMS',
   STRICTNESS_VIOLATION: 'STRICTNESS_VIOLATION',
+  // 2026-05-08 — codes for safari_take_screenshot WebView capture (Task 5).
+  // No concrete error classes for these: they are returned as structured
+  // data from the extension sentinel and lifted into ToolError by the
+  // engine layer, not thrown as SafariPilotError instances. Their
+  // retryable/hints metadata lives in ERROR_METADATA below.
+  WINDOW_CLOSED: 'WINDOW_CLOSED',
+  CAPTURE_RACE: 'CAPTURE_RACE',
+  CAPTURE_FAILED: 'CAPTURE_FAILED',
+  INVALID_PARAMS: 'INVALID_PARAMS',
 } as const;
 // SD-22 (2026-04-25): removed 4 dead codes (ELEMENT_NOT_INTERACTABLE,
 // CROSS_ORIGIN_FRAME, DIALOG_UNEXPECTED, FRAME_NOT_FOUND) — declared but
@@ -51,6 +60,18 @@ export const ERROR_CODES = {
 // SafariPilotError subclass AND wire the throw sites in the same change.
 
 export type ErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES];
+
+// Metadata for codes returned as structured data (not thrown as concrete
+// SafariPilotError subclasses). Concrete classes carry retryable/hints on
+// the instance; this map carries the same fields for data-only codes,
+// looked up at error-formatting time when the code did not originate from
+// a thrown class.
+export const ERROR_METADATA: Partial<Record<ErrorCode, { retryable: boolean; hints: readonly string[] }>> = {
+  WINDOW_CLOSED:  { retryable: false, hints: ['The Safari window containing this tab was closed before capture could complete.'] },
+  CAPTURE_RACE:   { retryable: true,  hints: ['Another tab became active during the capture window. Retry; if persistent, reduce concurrent activity in this Safari window.'] },
+  CAPTURE_FAILED: { retryable: true,  hints: ['Screenshot capture API failed. Verify Safari extension is enabled and the page is fully loaded.'] },
+  INVALID_PARAMS: { retryable: false, hints: ['Tool was called with parameters that violate its input schema.'] },
+};
 
 // ─── Abstract Base ────────────────────────────────────────────────────────────
 
