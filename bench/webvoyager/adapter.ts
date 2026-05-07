@@ -1,6 +1,6 @@
 // bench/webvoyager/adapter.ts
 import { spawn } from 'node:child_process';
-import { existsSync, writeFileSync } from 'node:fs';
+import { existsSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { WebVoyagerTask } from './types.js';
@@ -122,6 +122,15 @@ export async function runWebVoyagerTask(
   // judge would later try to read.
   let screenshotPathOrNull: string | null = screenshotPath;
   let captureErrorCode: string | undefined;
+  // Delete any stale file at the screenshot path BEFORE capture. The path is
+  // deterministic per (task_id, run_seq), so a prior run (e.g. the halted
+  // 2026-05-07 broken-screenshot partial run) may have left a file at this
+  // exact path. Without the unlink, captureScreenshotPostHoc not firing (e.g.
+  // empty diff because the agent closed its own tab) leaves the stale file in
+  // place; existsSync passes, screenshot_path resolves to garbage from the
+  // previous run, and the judge gets fed unrelated content. Unlink ensures
+  // the existsSync check correctly reflects whether THIS run wrote a file.
+  try { unlinkSync(screenshotPath); } catch { /* not present — fine */ }
   try {
     await captureScreenshotPostHoc(tabSnapshot, screenshotPath);
     if (!existsSync(screenshotPath)) {
