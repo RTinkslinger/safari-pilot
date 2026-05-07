@@ -1,0 +1,11 @@
+{
+  "id": "04-paginate-extract",
+  "description": "There are 3 pages of items. Extract every item title across all pages and report them as a comma-separated list.",
+  "fixtureRoute": "/bench-paginate?page=1",
+  "successOracle": {
+    "type": "final_text_contains",
+    "text": "Item-1A, Item-1B, Item-2A, Item-2B, Item-3A, Item-3B"
+  },
+  "maxIterations": 60,
+  "budgetTokens": 1000000
+}

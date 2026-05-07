@@ -18,3 +18,6 @@ test/e2e/reports/
 .latest-stable
 .breached/
 test-results/
+bench-runs/
+handoffs/
+.claude/scheduled_tasks.lock

@@ -1,0 +1,11 @@
+{
+  "id": "07-aggregate-count",
+  "description": "Visit the URL, then walk all paginated pages and report the TOTAL number of items across all pages (it spans 3 pages with 2 items each). Final answer must include the exact phrase 'total: 6 items'.",
+  "fixtureRoute": "/bench-paginate",
+  "successOracle": {
+    "type": "final_text_contains",
+    "text": "total: 6 items"
+  },
+  "maxIterations": 20,
+  "budgetTokens": 250000
+}

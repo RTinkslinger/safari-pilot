@@ -1,0 +1,11 @@
+{
+  "id": "05-strict-mode",
+  "description": "Click the 'Sign In' button. There are multiple buttons on the page. Use a strategy that disambiguates correctly and report the page URL after the click.",
+  "fixtureRoute": "/bench-strict",
+  "successOracle": {
+    "type": "final_text_contains",
+    "text": "/signed-in"
+  },
+  "maxIterations": 30,
+  "budgetTokens": 480000
+}

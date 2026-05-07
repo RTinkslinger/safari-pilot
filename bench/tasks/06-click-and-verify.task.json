@@ -1,0 +1,11 @@
+{
+  "id": "06-click-and-verify",
+  "description": "Navigate to the page and click the PRIMARY 'Sign In' button (the one with data-test=\"primary-signin\"). The page has 3 Sign In buttons but only one is the primary. After clicking, the page navigates to /signed-in. Read the h1 text on the destination page and report it.",
+  "fixtureRoute": "/bench-strict",
+  "successOracle": {
+    "type": "final_text_contains",
+    "text": "Signed In"
+  },
+  "maxIterations": 14,
+  "budgetTokens": 150000
+}

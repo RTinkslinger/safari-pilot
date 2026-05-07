@@ -28,7 +28,12 @@ import {
   writeFileSync,
   appendFileSync,
   readFileSync,
+  createWriteStream,
+  copyFileSync,
+  existsSync,
+  type WriteStream,
 } from 'node:fs';
+import { homedir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { BenchTask, BenchScore } from './types.js';
@@ -36,6 +41,7 @@ import type { BenchTask, BenchScore } from './types.js';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, '..');
 const DIST_INDEX = join(REPO_ROOT, 'dist/index.js');
+const SAFARI_PILOT_DIR = join(homedir(), '.safari-pilot');
 
 // ---------------------------------------------------------------------------
 // CLI arg parsing
@@ -46,6 +52,8 @@ function parseArgs(argv: string[]): {
   outDir: string;
   fixturePort: number;
   variant: string;
+  surface: 'full' | 'iter1' | 'hotset' | 'midset' | 'tinyset';
+  model: string;
 } {
   const args: Record<string, string> = {};
   for (let i = 0; i < argv.length; i++) {
@@ -59,13 +67,94 @@ function parseArgs(argv: string[]): {
   if (!args['out']) throw new Error('Missing --out argument');
   if (!args['fixture-port']) throw new Error('Missing --fixture-port argument');
   if (!args['variant']) throw new Error('Missing --variant argument');
+  const surface = (args['surface'] ?? 'full') as 'full' | 'iter1' | 'hotset' | 'midset' | 'tinyset';
+  if (!['full', 'iter1', 'hotset', 'midset', 'tinyset'].includes(surface)) {
+    throw new Error(`--surface must be 'full' | 'iter1' | 'hotset' | 'midset' | 'tinyset' (got: ${surface})`);
+  }
   return {
     taskPath: args['task'] as string,
     outDir: args['out'] as string,
     fixturePort: parseInt(args['fixture-port'] as string, 10),
     variant: args['variant'] as string,
+    surface,
+    model: args['model'] ?? 'claude-haiku-4-5-20251001',
   };
 }
+
+// Tools added in iter-2 (tool_search) and iter-3 (skills). When --surface iter1
+// is set, these are filtered from the tool list the agent sees so we measure
+// the iter-1 cost-optimal config against today's stack.
+const ITER3_DISCOVERY_TOOLS = new Set([
+  'safari_tool_search',
+  'safari_run_skill',
+  'safari_list_skills',
+]);
+
+// Empirical hot-set: tools the agent actually used across 8 runs of the
+// 6-task suite (232 calls). 11 unique tools observed; we add 3 defensive
+// extras (close_tab for cleanup, health_check for preflight, wait_for for
+// dynamic pages). 14 tools vs 86 = ~84% reduction in tool-list token cost.
+const HOTSET_TOOLS = new Set([
+  'safari_snapshot',
+  'safari_new_tab',
+  'safari_click',
+  'safari_get_text',
+  'safari_query_all',
+  'safari_fill',
+  'safari_paginate_scrape',
+  'safari_list_tabs',
+  'safari_navigate',
+  'safari_evaluate',
+  'safari_get_html',
+  // Defensive — present for predictable failure modes
+  'safari_close_tab',
+  'safari_health_check',
+  'safari_wait_for',
+]);
+
+// Tinyset: the 10 tools the agent provably USES across all 8 prior runs.
+// Drops defensive extras (close_tab, health_check, wait_for) — none were
+// observed in tool-calls.jsonl. Floor test: how small can the surface get
+// before tasks fail? Note: safari_health_check is still callable by the
+// preflight (uses MCP directly, bypassing the agent's filtered tool list).
+const TINYSET_TOOLS = new Set([
+  'safari_snapshot',
+  'safari_new_tab',
+  'safari_navigate',
+  'safari_click',
+  'safari_fill',
+  'safari_get_text',
+  'safari_get_html',
+  'safari_query_all',
+  'safari_evaluate',
+  'safari_paginate_scrape',
+]);
+
+// Midset: HOTSET + 16 reasonable defaults that aren't in current task usage
+// but are likely needed for any general browser-automation task. Tests
+// whether the cliff is below 14 or somewhere between 14 and 86.
+const MIDSET_TOOLS = new Set<string>([
+  ...HOTSET_TOOLS,
+  // Interaction primitives
+  'safari_hover',
+  'safari_type',
+  'safari_press_key',
+  'safari_scroll',
+  'safari_double_click',
+  'safari_select_option',
+  'safari_check',
+  'safari_drag',
+  'safari_file_upload',
+  // Extraction
+  'safari_get_attribute',
+  'safari_extract_links',
+  'safari_extract_tables',
+  'safari_extract_metadata',
+  // Navigation/observation
+  'safari_navigate_back',
+  'safari_navigate_forward',
+  'safari_take_screenshot',
+]);
 
 // ---------------------------------------------------------------------------
 // Minimal inline NDJSON/stdio MCP client
@@ -85,8 +174,13 @@ class InlineMcpClient {
     { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> }
   >();
   private nextIdCounter = 1;
+  private stderrStream: WriteStream;
+  private traceDir: string;
 
-  constructor() {
+  constructor(traceDir: string) {
+    this.traceDir = traceDir;
+    this.stderrStream = createWriteStream(join(traceDir, 'stderr.log'));
+
     this.proc = spawn('node', [DIST_INDEX], {
       stdio: ['pipe', 'pipe', 'pipe'],
       cwd: REPO_ROOT,
@@ -112,8 +206,8 @@ class InlineMcpClient {
       }
     });
 
-    this.proc.stderr!.on('data', (_chunk: Buffer) => {
-      // Discard daemon stderr — not needed for scoring
+    this.proc.stderr!.on('data', (chunk: Buffer) => {
+      this.stderrStream.write(chunk);
     });
   }
 
@@ -195,6 +289,17 @@ class InlineMcpClient {
       entry.reject(new Error('Client closed'));
     }
     this.pending.clear();
+
+    // Copy NDJSON trace files from the run window into the trace directory.
+    // Best-effort — never throw out of close().
+    try {
+      const serverTrace = join(SAFARI_PILOT_DIR, 'trace.ndjson');
+      const daemonTrace = join(SAFARI_PILOT_DIR, 'daemon-trace.ndjson');
+      if (existsSync(serverTrace)) copyFileSync(serverTrace, join(this.traceDir, 'server-trace.ndjson'));
+      if (existsSync(daemonTrace)) copyFileSync(daemonTrace, join(this.traceDir, 'daemon-trace.ndjson'));
+    } catch { /* best-effort */ }
+
+    this.stderrStream.end();
     this.proc.kill('SIGTERM');
   }
 }
@@ -246,7 +351,7 @@ function evaluateOracle(
 // ---------------------------------------------------------------------------
 
 async function main(): Promise<void> {
-  const { taskPath, outDir, fixturePort, variant } = parseArgs(process.argv.slice(2));
+  const { taskPath, outDir, fixturePort, variant, surface, model } = parseArgs(process.argv.slice(2));
 
   mkdirSync(outDir, { recursive: true });
 
@@ -255,7 +360,7 @@ async function main(): Promise<void> {
   const toolCallsPath = join(outDir, 'tool-calls.jsonl');
   const scorePath = join(outDir, 'score.json');
 
-  const client = new InlineMcpClient();
+  const client = new InlineMcpClient(outDir);
   const anthropic = new Anthropic({
     apiKey: process.env['ANTHROPIC_API_KEY'],
   });
@@ -263,7 +368,42 @@ async function main(): Promise<void> {
   try {
     await client.initialize();
 
-    const mcpTools = await client.listTools();
+    // Pre-flight: extension MUST be online. Benchmark measures the shipped
+    // extension-first product; AppleScript fallback success is a false
+    // positive — different engine path than what users experience.
+    const health = await client.callTool('safari_health_check', {}, 30_000);
+    const checks = (health['checks'] as Array<{ name: string; ok: boolean }> | undefined) ?? [];
+    const extCheck = checks.find((c) => c.name === 'extension');
+    if (!extCheck || !extCheck.ok) {
+      const score: BenchScore = {
+        task_id: task.id,
+        variant,
+        success: false,
+        tool_calls: 0,
+        input_tokens: 0,
+        output_tokens: 0,
+        wall_ms: 0,
+        tt: 0,
+        failure_reason: 'extension_offline',
+      };
+      writeFileSync(scorePath, JSON.stringify(score, null, 2));
+      process.stdout.write(`[bench] ${task.id} variant=${variant} ABORT extension_offline\n`);
+      return;
+    }
+
+    const allMcpTools = await client.listTools();
+    let mcpTools: McpTool[];
+    if (surface === 'iter1') {
+      mcpTools = allMcpTools.filter((t) => !ITER3_DISCOVERY_TOOLS.has(t.name));
+    } else if (surface === 'hotset') {
+      mcpTools = allMcpTools.filter((t) => HOTSET_TOOLS.has(t.name));
+    } else if (surface === 'midset') {
+      mcpTools = allMcpTools.filter((t) => MIDSET_TOOLS.has(t.name));
+    } else if (surface === 'tinyset') {
+      mcpTools = allMcpTools.filter((t) => TINYSET_TOOLS.has(t.name));
+    } else {
+      mcpTools = allMcpTools;
+    }
 
     // Translate MCP inputSchema → Anthropic SDK input_schema
     const anthropicTools: Anthropic.Tool[] = mcpTools.map((t) => ({
@@ -310,7 +450,7 @@ async function main(): Promise<void> {
       }
 
       const response = await anthropic.messages.create({
-        model: 'claude-haiku-4-5-20251001',
+        model,
         max_tokens: Math.min(task.budgetTokens, 4096),
         // temperature: 0 for deterministic measurement across iterations.
         // Stochastic agent loops + 6 tasks made baseline TT swing ±35%

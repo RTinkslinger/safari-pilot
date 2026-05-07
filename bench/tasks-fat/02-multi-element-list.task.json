@@ -1,0 +1,11 @@
+{
+  "id": "02-multi-element-list",
+  "description": "List ALL items in the .product-list as a comma-separated string.",
+  "fixtureRoute": "/bench-list",
+  "successOracle": {
+    "type": "final_text_contains",
+    "text": "Apple, Banana, Cherry"
+  },
+  "maxIterations": 30,
+  "budgetTokens": 400000
+}

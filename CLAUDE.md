@@ -388,6 +388,20 @@ Scripts:
 - `npm run test:e2e` → e2e only (requires full production stack)
 - `npm run test:all` → unit + e2e (explicit opt-in)
 
+## Benchmark Hierarchy (HARD RULES)
+
+Safari Pilot has TWO benchmarks. They serve different purposes and must NEVER be conflated.
+
+**1. Fixture suite (`bench/tasks/*.task.json`) — DEV LOOP ONLY.**
+Local Node fixture server (`test/helpers/fixture-server.ts`) + 8 in-house tasks. Cheap, fast, deterministic. Use it for measuring intervention deltas during sprint development. **Never used as a shipping baseline.** Numbers from this suite have no meaning for cross-version or cross-product comparison.
+
+**2. WebVoyager (`bench/webvoyager/`) — CANONICAL SHIP BASELINE.**
+The Yang et al. 2024 dataset (github.com/MinorJerry/WebVoyager). 643 tasks across 15 real public sites. GPT-4o judge eval. Same yardstick Browser Use, Stagehand, Anthropic computer-use publish against. **All v0.1.x ship gates and version-over-version comparisons run on WebVoyager.** Full protocol in `docs/benchmarking.md`.
+
+**HARD RULE:** No public claim, release-note metric, or cross-version comparison may cite fixture-suite numbers. Only WebVoyager. The fixture suite exists to inform development; WebVoyager exists to validate shipping.
+
+**HARD RULE:** Sites change. Recipes/skills are how we close gaps when WebVoyager scores drop on a specific site. Never exclude a site from the benchmark to make scores look better — the score is the product reality on that site.
+
 ## Canonical Architecture Document
 
 **`ARCHITECTURE.md`** is the single source of truth for how Safari Pilot works as shipped. Every data flow, IPC protocol, security layer, and engine selection path is documented there with verification evidence.
