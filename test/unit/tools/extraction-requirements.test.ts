@@ -75,3 +75,12 @@ describe('safari_evaluate routing requirements (SD-01)', () => {
     ).toBe('extension');
   });
 });
+
+describe('safari_take_screenshot routing requirements (Task 6)', () => {
+  it('safari_take_screenshot requires viewport capture', () => {
+    const tools = new ExtractionTools({} as IEngine);
+    const def = tools.getDefinitions().find((d) => d.name === 'safari_take_screenshot');
+    if (!def) throw new Error('definition missing');
+    expect(def.requirements.requiresViewportCapture).toBe(true);
+  });
+});

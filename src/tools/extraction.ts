@@ -1,20 +1,4 @@
-import * as childProcess from 'node:child_process';
-
-type ScreencaptureRunner = (format: string, filePath: string) => Promise<void>;
-
-function defaultScreencaptureRunner(format: string, filePath: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    childProcess.execFile(
-      'screencapture',
-      ['-x', '-t', format, filePath],
-      { timeout: 10000 },
-      (error) => { if (error) reject(error); else resolve(); },
-    );
-  });
-}
-import { readFile, unlink } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { writeFile } from 'node:fs/promises';
 import { generateSnapshotJs, buildRefSelector } from '../aria.js';
 import { escapeForJsSingleQuote } from '../escape.js';
 import { generateQueryAllJs, hasLocatorParams, extractLocatorFromParams, generateLocatorJs, resolveMaybePackSelector } from '../locator.js';
@@ -35,13 +19,11 @@ type Handler = (params: Record<string, unknown>) => Promise<ToolResponse>;
 export class ExtractionTools {
   private engine: IEngine;
   private screenshotPolicy: ScreenshotPolicy | undefined;
-  private screencaptureRunner: ScreencaptureRunner;
   private handlers: Map<string, Handler> = new Map();
 
-  constructor(engine: IEngine, screenshotPolicy?: ScreenshotPolicy, screencaptureRunner: ScreencaptureRunner = defaultScreencaptureRunner) {
+  constructor(engine: IEngine, screenshotPolicy?: ScreenshotPolicy) {
     this.engine = engine;
     this.screenshotPolicy = screenshotPolicy;
-    this.screencaptureRunner = screencaptureRunner;
     this.registerHandlers();
   }
 
@@ -214,25 +196,23 @@ export class ExtractionTools {
       {
         name: 'safari_take_screenshot',
         description:
-          'Capture a screenshot of the frontmost Safari window via the screencapture CLI ' +
-          '(no per-tab targeting; captures whatever is on top). Returns the image as base64-encoded PNG ' +
-          'unless `path` is provided. Requires Screen Recording permission.',
+          'Capture a PNG of the visible Safari WebView for the given tab. ' +
+          'Briefly activates the tab in its window (does not bring Safari to foreground), ' +
+          'captures via the extension API, and restores the previously active tab. ' +
+          "Output PNG is at the display's native devicePixelRatio (Retina captures are 2× viewport pixels). " +
+          'Requires the Safari Pilot extension to be installed and enabled. ' +
+          'BREAKING in v0.1.30+: replaces the previous whole-screen screencapture behavior with WebView-only capture.',
         inputSchema: {
           type: 'object',
           properties: {
-            tabUrl: {
-              type: 'string',
-              description: 'Current URL of the tab being screenshotted. Used for screenshot domain policy check. Does not retarget screencapture.',
-            },
-            path: {
-              type: 'string',
-              description: 'Optional file path to save the screenshot. If omitted, returns base64 data.',
-            },
-            format: { type: 'string', enum: ['png', 'jpeg'], description: 'Image format', default: 'png' },
+            tabUrl: { type: 'string', description: 'URL of the tab to capture (required).' },
+            format: { type: 'string', enum: ['png'], description: 'Image format. v1 only accepts png; non-png values are rejected with INVALID_PARAMS.' },
+            path: { type: 'string', description: 'Optional filesystem path. If provided, the PNG is also written to this path.' },
           },
-          required: [],
+          required: ['tabUrl'],
+          additionalProperties: false,
         },
-        requirements: { idempotent: true },
+        requirements: { idempotent: true, requiresViewportCapture: true },
       },
       {
         name: 'safari_get_console_messages',
@@ -530,39 +510,48 @@ export class ExtractionTools {
   }
 
   private async handleTakeScreenshot(params: Record<string, unknown>): Promise<ToolResponse> {
-    const tabUrl = params['tabUrl'];
-    if (this.screenshotPolicy && typeof tabUrl === 'string') {
-      this.screenshotPolicy.checkDomain(tabUrl);
+    const tabUrl = params['tabUrl'] as string | undefined;
+    if (!tabUrl) {
+      const err = new Error('tabUrl required');
+      (err as Error & { code?: string }).code = 'INVALID_PARAMS';
+      throw err;
     }
+
+    const requestedFormat = params['format'];
+    if (requestedFormat !== undefined && requestedFormat !== 'png') {
+      const err = new Error(`format='${String(requestedFormat)}' not supported in v1; only 'png' is accepted`);
+      (err as Error & { code?: string }).code = 'INVALID_PARAMS';
+      throw err;
+    }
+
+    if (this.screenshotPolicy) this.screenshotPolicy.checkDomain(tabUrl);
 
     const start = Date.now();
-    const format = (params['format'] as string | undefined) ?? 'png';
     const savePath = params['path'] as string | undefined;
-    const screenshotFormat = format === 'jpeg' ? 'jpg' : 'png';
-    const tmpFile = savePath ?? join(tmpdir(), `safari-pilot-${Date.now()}.${screenshotFormat}`);
-    const usingTmpFile = !savePath;
 
-    try {
-      await this.screencaptureRunner(screenshotFormat, tmpFile);
-
-      const buffer = await readFile(tmpFile);
-      const base64 = buffer.toString('base64');
-
-      if (usingTmpFile) {
-        await unlink(tmpFile).catch(() => {});
-      }
-
-      return {
-        content: [{ type: 'image', data: base64, mimeType: `image/${screenshotFormat === 'jpg' ? 'jpeg' : 'png'}` }],
-        metadata: { engine: 'applescript' as Engine, degraded: false, latencyMs: Date.now() - start },
-      };
-    } catch (error: unknown) {
-      if (usingTmpFile) {
-        await unlink(tmpFile).catch(() => {});
-      }
-      const message = error instanceof Error ? error.message : String(error);
-      throw new Error(`Screenshot failed: ${message}`);
+    const result = await this.engine.executeJsInTab(tabUrl, '__SP_TAKE_SCREENSHOT__', 30_000);
+    if (!result.ok) {
+      const err = new Error(`Screenshot failed: ${result.error?.message ?? 'unknown'}`);
+      if (result.error?.code) (err as Error & { code?: string }).code = result.error.code;
+      throw err;
     }
+
+    const base64 = result.value;
+    if (typeof base64 !== 'string' || base64.length === 0) {
+      const err = new Error('Screenshot returned empty payload');
+      (err as Error & { code?: string }).code = 'CAPTURE_FAILED';
+      throw err;
+    }
+
+    if (savePath) {
+      const buf = Buffer.from(base64, 'base64');
+      await writeFile(savePath, buf);
+    }
+
+    return {
+      content: [{ type: 'image', data: base64, mimeType: 'image/png' }],
+      metadata: { engine: 'extension' as Engine, degraded: false, latencyMs: Date.now() - start },
+    };
   }
 
   private async handleGetConsoleMessages(params: Record<string, unknown>): Promise<ToolResponse> {

@@ -58,3 +58,14 @@ describe('safari_take_screenshot inputSchema (T17)', () => {
     expect(getProperties()).not.toHaveProperty('quality');
   });
 });
+
+describe('safari_take_screenshot inputSchema (Task 6 update)', () => {
+  it('format must be enum=["png"] and additionalProperties=false', () => {
+    const tools = new ExtractionTools({} as IEngine);
+    const def = tools.getDefinitions().find((d) => d.name === 'safari_take_screenshot');
+    if (!def) throw new Error('definition missing');
+    const props = (def.inputSchema as { properties?: Record<string, { enum?: string[] }>; additionalProperties?: boolean }).properties ?? {};
+    expect(props['format']?.enum).toEqual(['png']);
+    expect((def.inputSchema as { additionalProperties?: boolean }).additionalProperties).toBe(false);
+  });
+});
