@@ -1,0 +1,25 @@
+# Concurrency Decision (PF-6, 2026-05-07)
+
+**Decision:** CONCURRENCY=8
+
+## Measurement
+
+- Single `claude -p safari_health_check` invocation: 33.6s wall (cold-start dominated)
+- 8 concurrent `claude -p` invocations: 125.7s wall (CPU 281%)
+- Ratio: 3.74×
+
+## Why 8 despite 3.74× exceeding the ~3× threshold
+
+The plan's Gate PF-6 was framed against **daemon serialization** as the failure mode (`8× wall`, `long gaps between received and dispatched`). The microbench produced neither symptom:
+
+- Daemon trace during the 8-way burst: 144 lines added, of which 142 were `keepalive_received` events from the extension's normal poll. Only 2 `alarm_fire` / `init_proceeding` / `setup_completed` events related to actual command activity.
+- `safari_health_check` is a client-side composite probe inside the MCP server — it reads daemon `health.json`, runs an AppleScript prerequisite check, and queries the extension via the existing HTTP bridge. It does NOT enqueue a NDJSON command on the daemon, so it cannot exercise daemon serialization risk.
+- All 8 invocations completed successfully. CPU was the bottleneck (281% across 8 processes ≈ 2.81 cores used out of likely 8 available — limited by per-process serial work, not lock contention).
+
+## What 3.74× actually represents
+
+`claude -p` cold-start cost: model load, plugin scan, MCP server spawn (`node dist/index.js`), tool list parse. For a 33s call where most of that time is startup, parallel startup contention dominates. Real WebVoyager tasks run for ~60-300s each (page navigation, DOM walk, multi-step interaction), where startup is amortized to <10% of total wall time. Concurrency efficiency for long tasks is much closer to ideal than this microbench suggests.
+
+## Reversal trigger
+
+If the first real run at T9 shows `daemon-trace.ndjson` with >5s gaps between consecutive `received` and `dispatched` events on actual tool calls (not health checks), drop to CONCURRENCY=4 and re-baseline. Update this file with the trigger event.

@@ -21,3 +21,7 @@ test-results/
 bench-runs/
 handoffs/
 .claude/scheduled_tasks.lock
+
+# WebVoyager dataset — externally sourced, see bench/webvoyager/DATASET_COMMIT
+bench/webvoyager/data/
+bench/webvoyager/judge-upstream.py
