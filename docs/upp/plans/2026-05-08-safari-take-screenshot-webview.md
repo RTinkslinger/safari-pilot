@@ -340,7 +340,7 @@ import type { ToolRequirements, EngineCapabilities } from '../../src/types.js';
 
 describe('viewport capture types (Task 3)', () => {
   it('ToolRequirements has optional requiresViewportCapture', () => {
-    const req: ToolRequirements = { retryable: false, requiresViewportCapture: true };
+    const req: ToolRequirements = { idempotent: false, requiresViewportCapture: true };
     expect(req.requiresViewportCapture).toBe(true);
   });
 
@@ -443,12 +443,12 @@ describe('engine-selector — viewport capture (Task 4)', () => {
   });
 
   it('requiresExtension returns true for {requiresViewportCapture: true}', () => {
-    expect(requiresExtension({ retryable: false, requiresViewportCapture: true })).toBe(true);
+    expect(requiresExtension({ idempotent: false, requiresViewportCapture: true })).toBe(true);
   });
 
   it('selectEngine routes viewport-capture tool to extension when available', () => {
     const engine = selectEngine(
-      { retryable: false, requiresViewportCapture: true },
+      { idempotent: false, requiresViewportCapture: true },
       { daemon: true, extension: true }
     );
     expect(engine).toBe('extension');
@@ -456,7 +456,7 @@ describe('engine-selector — viewport capture (Task 4)', () => {
 
   it('selectEngine throws EngineUnavailableError when extension unavailable', () => {
     expect(() => selectEngine(
-      { retryable: false, requiresViewportCapture: true },
+      { idempotent: false, requiresViewportCapture: true },
       { daemon: true, extension: false }
     )).toThrow(EngineUnavailableError);
   });
@@ -842,11 +842,11 @@ Update `getDefinitions()` entry for `safari_take_screenshot`:
     required: ['tabUrl'],
     additionalProperties: false,
   },
-  requirements: { retryable: true, requiresViewportCapture: true },
+  requirements: { idempotent: true, requiresViewportCapture: true },
 },
 ```
 
-(Adjust the `retryable` field per the existing tool's value — read it from current code before changing.)
+(`safari_take_screenshot` is idempotent — can be re-invoked safely. Other tool definitions in extraction.ts use `idempotent: true` for read-only operations; verify against the existing tool's value before changing.)
 
 - [ ] **Step 6: Run all tests — verify they pass**
 
