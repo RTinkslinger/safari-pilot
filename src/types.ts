@@ -15,6 +15,12 @@ export interface EngineCapabilities {
    * extension's content-main.js awaits the injected function's return value.
    */
   asyncJs: boolean;
+  /**
+   * Whether the engine can capture rendered WebView pixels for a specific
+   * tab via browser.tabs.captureVisibleTab. Only the extension can; daemon
+   * and AppleScript engines have no path to the rendered viewport.
+   */
+  viewportCapture?: boolean;
   latencyMs: number;
 }
 
@@ -41,6 +47,12 @@ export interface ToolRequirements {
    * `EngineCapabilities.asyncJs === true`.
    */
   requiresAsyncJs?: boolean;
+  /**
+   * The tool needs to capture rendered WebView pixels (screenshots).
+   * Forces routing to the extension engine; the daemon and AppleScript
+   * paths cannot capture WebView contents.
+   */
+  requiresViewportCapture?: boolean;
   prefersFastLatency?: boolean;
   /**
    * T63 — tool's handler always uses raw AppleScript regardless of engine
