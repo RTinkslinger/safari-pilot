@@ -83,7 +83,12 @@ export async function runWebVoyagerTask(
     {
       stdio: ['ignore', 'pipe', 'pipe'],
       cwd: REPO_ROOT,                    // REQUIRED so claude -p picks up project .mcp.json
-      env: { ...process.env },
+      env: {
+        ...process.env,
+        // Skip session-window creation in agent MCP server (claude -p inherits this env);
+        // the agent only opens its task tab, no extra UX window to leak.
+        SAFARI_PILOT_NO_SESSION_WINDOW: '1',
+      },
     },
   );
   child.stdout.on('data', (b: Buffer) => { stdoutBuf += b.toString(); });

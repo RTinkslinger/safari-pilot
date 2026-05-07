@@ -135,6 +135,16 @@ const SKIP_OWNERSHIP_TOOLS = new Set([
   'safari_health_check',
 ]);
 
+// Opt-in harness bypass — when SAFARI_PILOT_HARNESS_BYPASS_OWNERSHIP=1, the
+// MCP server skips the registry ownership check for `safari_close_tab` only.
+// Used by the WebVoyager harness's separate MCP server process to close tabs
+// the agent's MCP server opened (cross-process ownership leak — registries are
+// per-process, so harness has no record of the agent's tabs). Production never
+// sets this env var. Even when set, the session dashboard tab is still
+// protected by SessionTabProtectedError (see ownership-check site below).
+const HARNESS_BYPASS_OWNERSHIP =
+  process.env['SAFARI_PILOT_HARNESS_BYPASS_OWNERSHIP'] === '1';
+
 // ── Security-pipeline error classification ──────────────────────────────────
 // SD-31 — distinguishes "guardrails firing" from "tool execution failed".
 // The kill-switch's auto-activation rolling window must only count
@@ -758,38 +768,44 @@ export class SafariPilotServer {
     // This handles cross-domain navigation (click from example.com → iana.org) where the
     // URL changes but the tab.id stays the same.
     let deferredOwnershipCheck = false;
-    if (params['tabUrl'] && !SKIP_OWNERSHIP_TOOLS.has(name)) {
+    const inBaseSkipList = SKIP_OWNERSHIP_TOOLS.has(name);
+    const harnessCloseBypass = HARNESS_BYPASS_OWNERSHIP && name === 'safari_close_tab';
+    if (params['tabUrl'] && !inBaseSkipList) {
       const tabUrl = params['tabUrl'] as string;
       // T48 — explicit pre-execution guard for the session dashboard tab.
-      // Pre-T48 the session URL was implicitly protected (TabUrlNotRecognizedError
-      // on AppleScript path; deferred-fail-closed on extension path). The latter
-      // only fires AFTER the navigation/click side effect ran in Safari. This
-      // throws BEFORE the handler runs, regardless of selectedEngineName, so
-      // the side effect never happens.
+      // Always fires regardless of harness bypass — the session dashboard
+      // must never be closed by any agent or harness path.
       if (tabUrl === this.sessionTabUrl) {
         throw new SessionTabProtectedError();
       }
-      const tabId = this.tabOwnership.findByUrl(tabUrl);
-      if (tabId === undefined) {
-        // URL not found. If extension engine is selected, defer ownership to post-execution
-        // (extension result _meta.tabId identifies the tab, post-verify checks ownership).
-        // If not extension engine, fail immediately (no stable identity to verify with).
-        if (selectedEngineName === 'extension') {
-          deferredOwnershipCheck = true;
+      // Harness ownership bypass (opt-in via env): skip the registry check
+      // for safari_close_tab so the WebVoyager harness can close tabs opened
+      // by the agent's separate MCP server. Session-tab protection above
+      // still applies. Registry isn't updated; that's fine — the tab is
+      // closed regardless and the registry will time out the entry.
+      if (!harnessCloseBypass) {
+        const tabId = this.tabOwnership.findByUrl(tabUrl);
+        if (tabId === undefined) {
+          // URL not found. If extension engine is selected, defer ownership to post-execution
+          // (extension result _meta.tabId identifies the tab, post-verify checks ownership).
+          // If not extension engine, fail immediately (no stable identity to verify with).
+          if (selectedEngineName === 'extension') {
+            deferredOwnershipCheck = true;
+          } else {
+            throw new TabUrlNotRecognizedError(tabUrl);
+          }
         } else {
-          throw new TabUrlNotRecognizedError(tabUrl);
-        }
-      } else {
-        this.tabOwnership.assertOwnership(tabId);
-        // Inject positional identity so tool handlers can target the exact tab
-        // by window id + tab index instead of URL matching.
-        const pos = this.tabOwnership.getPosition(tabId);
-        if (pos) {
-          params['_windowId'] = pos.windowId;
-          params['_tabIndex'] = pos.tabIndex;
-          // Set on proxy so executeJsInTab uses positional targeting too
-          if (this.engineProxy) {
-            this.engineProxy.setTabPosition(pos);
+          this.tabOwnership.assertOwnership(tabId);
+          // Inject positional identity so tool handlers can target the exact tab
+          // by window id + tab index instead of URL matching.
+          const pos = this.tabOwnership.getPosition(tabId);
+          if (pos) {
+            params['_windowId'] = pos.windowId;
+            params['_tabIndex'] = pos.tabIndex;
+            // Set on proxy so executeJsInTab uses positional targeting too
+            if (this.engineProxy) {
+              this.engineProxy.setTabPosition(pos);
+            }
           }
         }
       }
@@ -798,7 +814,8 @@ export class SafariPilotServer {
       tabUrl: (params['tabUrl'] as string) ?? null,
       found: params['tabUrl'] ? !!this.tabOwnership.findByUrl(params['tabUrl'] as string) : null,
       deferred: deferredOwnershipCheck,
-      skipped: !params['tabUrl'] || SKIP_OWNERSHIP_TOOLS.has(name),
+      skipped: !params['tabUrl'] || inBaseSkipList || harnessCloseBypass,
+      harnessBypass: harnessCloseBypass,
     });
 
     // 7.5 Engine-degradation re-run
@@ -1400,6 +1417,15 @@ end tell`;
   private async ensureSessionWindow(traceId: string): Promise<void> {
     if (this._sessionWindowId) return; // already have a window
 
+    // Headless / harness mode: skip session window creation entirely.
+    // Used by the WebVoyager benchmark to avoid leaking N session windows
+    // across N task spawns. All callers of this method (start + recovery)
+    // honor the gate via this single early-return.
+    if (process.env['SAFARI_PILOT_NO_SESSION_WINDOW'] === '1') {
+      trace(traceId, 'server', 'session_window_skipped', { reason: 'env_NO_SESSION_WINDOW' });
+      return;
+    }
+
     trace(traceId, 'server', 'session_window_start', {});
 
     // SD-21 (b): close any orphaned "Safari Pilot — Active Session" windows
@@ -1571,7 +1597,7 @@ end tell'`,
       console.error(`Safari Pilot: found ${otherSessions} existing session(s), starting session ${otherSessions + 1} in new window`);
     }
 
-    // 2. Open session window
+    // 2. Open session window (gated inside ensureSessionWindow when NO_SESSION_WINDOW=1)
     await this.ensureSessionWindow('init');
 
     // 3. Wait for extension to connect (up to 15s)

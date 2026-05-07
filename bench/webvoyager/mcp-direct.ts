@@ -32,10 +32,21 @@ class TinyMcpClient {
   constructor() {
     // Spawn with SAFARI_PILOT_SURFACE=full so safari_take_screenshot is in the default surface
     // even after Phase 3 lands (the screenshot tool is in midset, not hotset).
+    //
+    // SAFARI_PILOT_HARNESS_BYPASS_OWNERSHIP=1 lets this harness MCP server close tabs that
+    // the agent's separate MCP server opened. Tab ownership registries are per-process, so
+    // without this the harness sees the agent's tabs as "not owned" and safari_close_tab
+    // fails with TabUrlNotRecognizedError. Session-tab protection still applies even with
+    // bypass — see src/server.ts ownership-check site.
     this.proc = spawn('node', [DIST_INDEX], {
       stdio: ['pipe', 'pipe', 'pipe'],
       cwd: REPO_ROOT,
-      env: { ...process.env, SAFARI_PILOT_SURFACE: 'full' },
+      env: {
+        ...process.env,
+        SAFARI_PILOT_SURFACE: 'full',
+        SAFARI_PILOT_HARNESS_BYPASS_OWNERSHIP: '1',
+        SAFARI_PILOT_NO_SESSION_WINDOW: '1',
+      },
     });
     this.proc.stdout!.on('data', (chunk: Buffer) => {
       this.buf += chunk.toString();
