@@ -26,6 +26,7 @@ export const ENGINE_CAPS: Record<Engine, EngineCapabilities> = {
     // by test/unit/engine-selector/cap-manifest-parity.test.ts.
     framesCrossOrigin: true,
     asyncJs: true,
+    viewportCapture: true,
     latencyMs: 10,
   },
   daemon: {
@@ -36,6 +37,7 @@ export const ENGINE_CAPS: Record<Engine, EngineCapabilities> = {
     cookieHttpOnly: false,
     framesCrossOrigin: false,
     asyncJs: false,
+    viewportCapture: false,
     latencyMs: 5,
   },
   applescript: {
@@ -46,6 +48,7 @@ export const ENGINE_CAPS: Record<Engine, EngineCapabilities> = {
     cookieHttpOnly: false,
     framesCrossOrigin: false,
     asyncJs: false,
+    viewportCapture: false,
     latencyMs: 80,
   },
 };
@@ -67,7 +70,8 @@ export function requiresExtension(tool: ToolRequirements): boolean {
     tool.requiresNetworkIntercept ||
     tool.requiresCookieHttpOnly ||
     tool.requiresFramesCrossOrigin ||
-    tool.requiresAsyncJs
+    tool.requiresAsyncJs ||
+    tool.requiresViewportCapture
   );
 }
 
