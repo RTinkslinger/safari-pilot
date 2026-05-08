@@ -63,4 +63,12 @@ else
 fi
 
 echo "safari-pilot: Session started on macOS ${OS_VERSION}" >&2
+
+# ── 7. Inject today's date for skills (e.g. temporal-substitution) ────────────
+# Must emit JSON to stdout; stderr discipline above is preserved for log lines.
+# Acceptable degradation: if early-exit paths fired (non-Darwin or old macOS),
+# no date is injected — temporal-substitution skill body handles that gracefully.
+TODAY="$(date '+%Y-%m-%d')"
+printf '{"hookSpecificOutput":{"additionalContext":"Current date: %s"}}\n' "$TODAY"
+
 exit 0

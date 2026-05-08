@@ -20,7 +20,16 @@
         }
       }
     },
-    "skills": ["skills/safari-pilot/SKILL.md"],
+    "skills": [
+      "skills/safari-pilot/SKILL.md",
+      "skills/login.SKILL.md",
+      "skills/paginate-and-scrape.SKILL.md",
+      "skills/robust-form-fill.SKILL.md",
+      "skills/evidence-grounded-screenshot.SKILL.md",
+      "skills/dismiss-overlays-recovery.SKILL.md",
+      "skills/visible-evidence-grounding.SKILL.md",
+      "skills/temporal-substitution.SKILL.md"
+    ],
     "hooks": [
       {
         "event": "SessionStart",
