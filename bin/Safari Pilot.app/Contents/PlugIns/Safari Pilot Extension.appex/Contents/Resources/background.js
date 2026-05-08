@@ -368,6 +368,56 @@ async function executeCommand(cmd) {
     return result;
   }
 
+  // safari_take_screenshot — capture the visible viewport of the target tab
+  // via browser.tabs.captureVisibleTab. Triggered by the __SP_TAKE_SCREENSHOT__
+  // sentinel from src/tools/extraction.ts. Briefly activates target tab in its
+  // window (no Safari app activation), captures, restores prior active tab.
+  if (cmd.script === '__SP_TAKE_SCREENSHOT__') {
+    let prevActiveTabId = null;
+    try {
+      if (tab.windowId == null) {
+        throw { name: 'WINDOW_CLOSED', message: 'tab.windowId missing' };
+      }
+
+      // Snapshot the previous active tab so we can restore it.
+      const prevActive = await browser.tabs.query({ windowId: tab.windowId, active: true });
+      prevActiveTabId = prevActive[0]?.id ?? null;
+
+      // Activate the target tab if it isn't already active. tabs.update resolves
+      // before Safari's internal active-tab state settles, so we verify by
+      // polling tabs.query before the capture (TOCTOU narrows but doesn't close).
+      if (prevActiveTabId !== tab.id) {
+        await browser.tabs.update(tab.id, { active: true });
+        let activated = false;
+        for (let attempt = 0; attempt < 5; attempt++) {
+          await new Promise((r) => setTimeout(r, 40));
+          const check = await browser.tabs.query({ windowId: tab.windowId, active: true });
+          if (check[0]?.id === tab.id) { activated = true; break; }
+        }
+        if (!activated) {
+          throw { name: 'CAPTURE_RACE', message: 'target tab did not become active within 200ms' };
+        }
+      }
+
+      const dataUrl = await browser.tabs.captureVisibleTab(tab.windowId, { format: 'png' });
+      const commaIdx = dataUrl.indexOf(',');
+      const base64 = commaIdx >= 0 ? dataUrl.slice(commaIdx + 1) : dataUrl;
+
+      const result = { ok: true, value: base64 };
+      await updatePendingEntry(commandId, { status: 'completed', result });
+      return result;
+    } catch (e) {
+      const errName = e?.name && typeof e.name === 'string' ? e.name : 'CAPTURE_FAILED';
+      const result = { ok: false, error: { name: errName, message: e?.message ?? String(e) } };
+      await updatePendingEntry(commandId, { status: 'completed', result });
+      return result;
+    } finally {
+      if (prevActiveTabId != null && prevActiveTabId !== tab.id) {
+        try { await browser.tabs.update(prevActiveTabId, { active: true }); } catch { /* tab may have closed */ }
+      }
+    }
+  }
+
   // 5A.1 phase-0: file upload probe sentinel — dispatched via the storage bus
   // to content-isolated.js (Test A: content-script fetch; Test B: File structured-
   // clone). Unlike cookie/DNR sentinels (which execute entirely in background.js),
