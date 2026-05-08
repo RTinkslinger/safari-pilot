@@ -5,7 +5,7 @@
 **Date:** 2026-05-08
 **Branch (TBD at impl start):** `feat/v0131-evidence-grounding`
 **Target release:** v0.1.31
-**Schedule:** 9-10 days hard floor
+**Schedule:** 10 days hard floor; 11-12 days realistic calendar
 
 ---
 
@@ -66,7 +66,7 @@ The plugin already has the layered structure to absorb this cleanly. Every new p
 
 src/
 ├── types.ts                  — uses existing requiresAsyncJs; no new flag
-├── errors.ts                 — +2 metadata-only codes (TARGET_NOT_FOUND, TARGET_HIDDEN)
+├── errors.ts                 — +2 NEW metadata-only codes (TARGET_NOT_FOUND, TARGET_HIDDEN); existing INVALID_PARAMS reused
 ├── engine-selector.ts        — no change (requiresAsyncJs already routes to ExtensionEngine)
 ├── overlays/                 — NEW dir
 │   ├── index.ts              — allowlist loader + schema validator
@@ -101,7 +101,7 @@ commands/
 └── stats.md                  — NEW slash-command wrapper
 
 hooks/
-└── session-start.sh          — append 2 lines for today's date injection
+└── session-start.sh          — append 3-line JSON emit before final exit (stdout contract; existing stderr discipline preserved); see §6.5
 
 test/
 ├── fixtures/                 — +9 new localhost fixture servers
@@ -176,13 +176,13 @@ Scroll uses `element.scrollIntoView({ behavior, block: 'center', inline: 'neares
 
 ### 4.3 Error envelope
 
-Two new metadata-only codes added to `src/errors.ts ERROR_CODES` (string-only) + `ERROR_METADATA`. Follows v0.1.30 precedent (`WINDOW_CLOSED`, `CAPTURE_RACE` are data-only, no concrete `SafariPilotError` subclass).
+**Two NEW metadata-only codes** added to `src/errors.ts ERROR_CODES` (string-only) + `ERROR_METADATA` — `TARGET_NOT_FOUND` and `TARGET_HIDDEN`. Follows v0.1.30 precedent (`WINDOW_CLOSED`, `CAPTURE_RACE` are data-only, no concrete `SafariPilotError` subclass). The third row below (`INVALID_PARAMS`) is **existing** at `src/errors.ts:53` and reused for this tool's input validation — do NOT add a new entry for it.
 
-| Code | When | Retryable | Hint |
-|---|---|---|---|
-| `TARGET_NOT_FOUND` | No element matches `{selector\|text\|role}` (visible or hidden), OR target is in cross-origin iframe | false | "No element matched the provided locator. If target is in a cross-origin iframe, the locator cannot reach it. Try a broader text substring, a different selector, or call safari_get_text to inspect page structure." |
-| `TARGET_HIDDEN` | Match exists but `offsetParent === null` or zero bbox | false | "Element exists but is display:none, visibility:hidden, or inside a closed `<details>`. The agent may need to expand a parent element first. Tool does NOT auto-expand (idempotency)." |
-| `INVALID_PARAMS` (existing) | None of `{selector, text, role}` provided, or `nth` out of range | false | "Provide at least one of selector, text, or role. nth must be < matchCount." |
+| Code | New/Existing | When | Retryable | Hint |
+|---|---|---|---|---|
+| `TARGET_NOT_FOUND` | **NEW** | No element matches `{selector\|text\|role}` (visible or hidden), OR target is in cross-origin iframe | false | "No element matched the provided locator. If target is in a cross-origin iframe, the locator cannot reach it. Try a broader text substring, a different selector, or call safari_get_text to inspect page structure." |
+| `TARGET_HIDDEN` | **NEW** | Match exists but `offsetParent === null` or zero bbox | false | "Element exists but is display:none, visibility:hidden, or inside a closed `<details>`. The agent may need to expand a parent element first. Tool does NOT auto-expand (idempotency)." |
+| `INVALID_PARAMS` | EXISTING (`errors.ts:53`) | None of `{selector, text, role}` provided, or `nth` out of range | false | "Provide at least one of selector, text, or role. nth must be < matchCount." |
 
 Cross-origin frames return `TARGET_NOT_FOUND` with cross-origin hint in the message — no separate error code (`CROSS_ORIGIN_FRAME` was deliberately deleted in SD-22 per `errors.ts:55-58`; spec respects that precedent).
 
@@ -264,31 +264,55 @@ if (cmd.script.startsWith('__SP_SCROLL_TO_ELEMENT__:')) {
 }
 ```
 
+> **Engine flag note:** `requiresAsyncJs: true` alone is sufficient to route to ExtensionEngine via `engine-selector.ts:65-76 requiresExtension()`. `requiresShadowDom: true` is **redundant for selection** but kept for documentation — explicit declaration that this tool penetrates open shadow roots.
+
+> **Server-side config flags** (read at MCP server boot, NOT per-call args):
+> - `disableOverlayDismiss: true` (env: `SAFARI_PILOT_DISABLE_OVERLAY_DISMISS`) — no-op all calls
+> - `enablePaywallDismiss: true` (env: `SAFARI_PILOT_ENABLE_PAYWALL_DISMISS`) — default `false`; required to activate paywall patterns at match time
+>
+> Per-call `categories` argument is for agent-side scoping (e.g., "only dismiss cookie banners on this call"). Server-side flags are user-level safety guards.
+
 ### 5.2 Success response (does NOT throw on no-match)
 
+The MCP `ToolResponse` shape — both `content[]` and `metadata`. The `content[0].text` field carries a JSON-serialized sanitized summary of the dismissed/skipped manifest so the existing `IdpiAnnotator` pipeline (which scans `result.content[].text` per `server.ts:1053-1075`) sees it.
+
 ```typescript
-metadata: {
-  engine: 'extension',
-  elapsed_ms: number,
-  dismissed: Array<{
-    category: 'cookie-consent' | 'registration-wall' | 'app-install' | 'paywall',
-    id: string,            // pattern ID from allowlist (e.g. 'onetrust-banner')
-    selector: string,      // matched root selector (sanitized; see §5.5)
-    action: 'click' | 'esc-key' | 'remove-node',
-    site: string,          // tabUrl host
-    verified: boolean      // overlay confirmed gone after 250ms stability check
-  }>,
-  skipped: Array<{
-    reason: 'allowlist_miss' | 'click_failed' | 'verify_failed_overlay_persists'
-          | 'shadow_dom_penetration_failed' | 'two_signal_check_failed',
-    candidate?: { selector?: string, category?: string, hint?: string }
-  }>,
-  overlaysAtStart: number,
-  overlaysAtEnd: number
+{
+  content: [
+    {
+      type: 'text',
+      text: JSON.stringify({
+        dismissed: <sanitized — id+category+site+action+verified only>,
+        skipped: <reason + candidate.category, no free-text>,
+        overlaysAtStart: number,
+        overlaysAtEnd: number
+      })
+    }
+  ],
+  metadata: {
+    engine: 'extension',
+    elapsed_ms: number,
+    dismissed: Array<{
+      category: 'cookie-consent' | 'registration-wall' | 'app-install' | 'paywall',
+      id: string,            // pattern ID from allowlist (e.g. 'onetrust-banner')
+      selector: string,      // matched root selector — allowlist's known signature, NOT page-controlled
+      action: 'click' | 'esc-key' | 'remove-node',
+      site: string,          // tabUrl host
+      verified: boolean      // overlay confirmed gone after 250ms stability check
+    }>,
+    skipped: Array<{
+      reason: 'allowlist_miss' | 'click_failed' | 'verify_failed_overlay_persists'
+            | 'shadow_dom_penetration_failed' | 'two_signal_check_failed'
+            | 'kill_switch_engaged' | 'paywall_opt_in_required',
+      candidate?: { selector?: string, category?: string, hint?: string }
+    }>,
+    overlaysAtStart: number,
+    overlaysAtEnd: number
+  }
 }
 ```
 
-The `dismissed[]` entries are **id-only sanitized** (no `aria-label`, no extracted text, no `name` field). Page-injected hostile strings cannot reach Claude through the structured response. `IdpiAnnotator` (see §5.5) extends to scan this tool's output as a defense-in-depth measure.
+The `dismissed[]` entries are **id-only sanitized** (no `aria-label`, no extracted text, no `name` field). Page-injected hostile strings cannot reach Claude through the structured response. `IdpiAnnotator` (see §5.5) extends to scan this tool's `content[0].text` (the existing pipeline path — no new annotator path needed) as a defense-in-depth measure.
 
 Verify wait: 250ms post-dismiss-action stability check. If overlay re-mounts within that window (common with React effects), `verified: false` and the entry moves to `skipped[]` with `reason: 'verify_failed_overlay_persists'`.
 
@@ -331,6 +355,13 @@ Each pattern entry shape — **two-signal rule** required (single-selector patte
 
 A pattern matches IFF all entries in `signals[]` are satisfied. The schema validator at load-time **rejects any pattern with fewer than 2 signals** → fails noisily during `dist/` build, never ships. Mitigates the false-positive class (a copy-pasted `id="onetrust-banner-sdk"` on an unrelated element would no longer match without the second aria-label signal).
 
+**Allowlist `version` field semantics:**
+- `version` is **per-file** (e.g., `cookie-consent.json` carries `"version": 1`).
+- **Bump on any content change** (pattern added, removed, or signals modified). Patches that only fix prose (notes field) do NOT bump.
+- Loader logs the loaded version on MCP server boot (one INFO line per file).
+- **No enforcement** — the loader does not reject mismatched versions or require monotonic increase. Intent is forensic: enables incident response to correlate user trace logs with allowlist content versions.
+- Format: integer, monotonically increasing. v0.1.31 ships with `version: 1` per file.
+
 ### 5.4 v1 allowlist content (~14-15 patterns total)
 
 **`cookie-consent.json`** (≈6 patterns): OneTrust, Cookiebot, Quantcast, TrustArc, Didomi, generic-aria-fallback.
@@ -339,15 +370,25 @@ A pattern matches IFF all entries in `signals[]` are satisfied. The schema valid
 
 **`app-install.json`** (≈2 patterns): Smart App Banner (Apple), Twitter "open in app" banner.
 
-**`paywalls.json`** (≈3 patterns): NYT-soft, FT-modal, Bloomberg-overlay. **Each dismisses ONLY the overlay element — never bypasses server-side gating.** Overlay may re-render on subsequent scroll/click; that degradation is acceptable. Inclusion was an explicit product-owner decision; risks (ToS exposure, Apple notarization sensitivity, brand) were evaluated and accepted with the mitigations in §11.
+**`paywalls.json`** (≈3 patterns): NYT-soft, FT-modal, Bloomberg-overlay. **Each dismisses ONLY the overlay element — never bypasses server-side gating.** Overlay may re-render on subsequent scroll/click; that degradation is acceptable.
 
-### 5.5 Safety mechanisms (5 mitigations, product-owner-signed-off)
+**Paywall patterns are OPT-IN (`enablePaywallDismiss: true` config flag, default `false`).** Two adversarial engineering reviews independently flagged paywall inclusion as the highest residual risk in v0.1.31; product-owner re-confirmed inclusion conditional on the opt-in default-off behavior:
 
-1. **Kill switch.** New config flag `disableOverlayDismiss: true` (read by MCP server at boot, propagated to OverlayTools handler) makes the tool a no-op returning empty `dismissed[]` and a single `skipped[]` entry `{ reason: 'kill_switch_engaged' }`. User can opt out without uninstalling. Documented in README and CHANGELOG.
-2. **Two-signal pattern rule.** Schema validator rejects single-signal patterns at allowlist-load time. Mitigates the copy-pasted-id false positive class.
-3. **Per-pattern integration tests (~14-15 tests).** One per allowlist entry. Each asserts: (a) dismisses target on positive fixture, (b) does NOT dismiss on same-DOM-shape negative fixture (e.g., a real "subscribe to magazine" form on a publisher's account-settings page must NOT match the registration-wall pattern). The negative fixtures are the safety net.
-4. **Per-dismissal audit log.** Every entry in `dismissed[]` writes a record to `~/.safari-pilot/trace.ndjson` via existing `AuditLog`: `{ ts, tool: 'safari_dismiss_overlays', dismissed_pattern: id, dismissed_category: category, page_url, page_host, action, verified }`. Forensic trail for false-positive incident response.
-5. **`IdpiAnnotator` extension.** `server.ts` IdpiAnnotator allowlist (currently extraction-tools-only) extends to include `safari_dismiss_overlays` so any page-injected hostile strings reaching the structured response (defense in depth on top of id-only sanitization) get scanned.
+- Default install: `safari_dismiss_overlays` runs cookie-consent, registration-wall, and app-install patterns. Paywall patterns are LOADED into the registry but skipped at match time with `skipped[].reason: 'paywall_opt_in_required'` so the agent (and audit log) can see they exist but were not dismissed.
+- Users who explicitly want paywall dismissal set `SAFARI_PILOT_ENABLE_PAYWALL_DISMISS=true` in their environment OR `enablePaywallDismiss: true` via `safari-pilot.config.json`. The MCP server reads at boot and propagates to the OverlayTools handler.
+- Bench harness can set the flag to measure paywall-pattern lift without changing default user behavior.
+- Install-day blast radius is zero. If/when the patterns prove safe + valuable in the wild, a future release can flip the default; the inverse is harder.
+
+Risks (ToS exposure, Apple notarization sensitivity, brand) acknowledged and mitigated with the 6 mitigations in §5.5.
+
+### 5.5 Safety mechanisms (6 mitigations, product-owner-signed-off)
+
+1. **General kill switch.** Config flag `disableOverlayDismiss: true` (env var `SAFARI_PILOT_DISABLE_OVERLAY_DISMISS=true`, OR config file `safari-pilot.config.json`) makes the tool a no-op returning empty `dismissed[]` and a single `skipped[]` entry `{ reason: 'kill_switch_engaged' }`. User can opt out of ALL dismissal categories without uninstalling. Documented in README and CHANGELOG.
+2. **Paywall opt-IN flag** (NEW per second engineering review). `enablePaywallDismiss: true` (env var `SAFARI_PILOT_ENABLE_PAYWALL_DISMISS=true`, default `false`). Paywall patterns LOADED into registry but skipped at match time with `skipped[].reason: 'paywall_opt_in_required'` until flag is set. Cookie-consent / registration-wall / app-install categories run normally regardless. Default install does not dismiss paywalls.
+3. **Two-signal pattern rule.** Schema validator rejects single-signal patterns at allowlist-load time. Mitigates the copy-pasted-id false positive class.
+4. **Per-pattern integration tests (~14-15 tests).** One per allowlist entry. Each asserts: (a) dismisses target on positive fixture, (b) does NOT dismiss on same-DOM-shape negative fixture (e.g., a real "subscribe to magazine" form on a publisher's account-settings page must NOT match the registration-wall pattern). The negative fixtures are the safety net.
+5. **Per-dismissal audit log.** Every entry in `dismissed[]` writes a record to `~/.safari-pilot/trace.ndjson` via existing `AuditLog`: `{ ts, tool: 'safari_dismiss_overlays', dismissed_pattern: id, dismissed_category: category, page_url, page_host, action, verified }`. The audit log captures **post-sanitization** entries (no `aria-label` / no `name` / no free-text). Forensic trail for false-positive incident response.
+6. **`IdpiAnnotator` extension.** `server.ts:1053-1059 EXTRACTION_TOOLS` Set extends to include `safari_dismiss_overlays`. The tool's response includes a JSON-stringified sanitized summary at `content[0].text` (per §5.2) so the existing pipeline path (`server.ts:1060-1075`) scans it without requiring a new annotator path. Defense-in-depth on top of id-only sanitization.
 
 **Sanitization of `dismissed[]` entries:** Drop `aria-label`, `name`, free-text fields. Keep `category`, `id`, `selector` (the matched root, which is the allowlist's known signature, not page-controlled), `site` (URL host), `action`, `verified`.
 
@@ -546,15 +587,26 @@ When a task references a date or relative time:
 
 ### 6.5 SessionStart hook update (`hooks/session-start.sh`)
 
-Existing script gets a 2-line addition at the end:
+The existing script (verified) uses `set -euo pipefail`, has 2 early-exit paths (non-Darwin line 17, macOS<12 line 25), and writes ALL log output to **stderr** with stdout currently empty. To inject `additionalContext`, the JSON must hit **stdout** (the Claude Code hook handler parses stdout when exit code is 0 per the canonical hook output schema). The existing stderr discipline is preserved.
+
+**Precise diff** — append immediately before the final `exit 0` (current line ~66):
 
 ```bash
-# Inject today's date for temporal-substitution skill (and any other skills that may want it)
+# Inject today's date for skills (e.g. temporal-substitution).
+# Must emit JSON to stdout; stderr discipline above is preserved for log lines.
+# Acceptable degradation: if early-exit paths fire (non-Darwin, old macOS),
+# no date is injected — temporal-substitution skill body handles that gracefully.
 TODAY="$(date '+%Y-%m-%d')"
-echo "{\"hookSpecificOutput\":{\"additionalContext\":\"Current date: ${TODAY}\"}}"
+printf '{"hookSpecificOutput":{"additionalContext":"Current date: %s"}}\n' "$TODAY"
+
+exit 0
 ```
 
-Provides date to **every** Claude Code session — robust to skill-shell-execution policies, no skill-format dependency.
+That replaces only the final `exit 0` line. The existing log lines (`echo "..." >&2`) are untouched. The new `printf` is the only stdout writer in the script.
+
+**Unit test for the hook** (added to `test/unit/hooks-session-start.test.ts`): runs the script in a sandboxed shell, captures stdout + stderr separately, asserts (a) stdout contains a parseable JSON object with `hookSpecificOutput.additionalContext` matching `^Current date: \d{4}-\d{2}-\d{2}$`, (b) stderr contains the existing log lines unchanged, (c) script exits 0.
+
+Provides date to **every** Claude Code session — robust to `disableSkillShellExecution` policies, no skill-format dependency.
 
 ### 6.6 Plugin manifest changes
 
@@ -609,6 +661,9 @@ Test surface: 4 new unit tests (aggregator, time-window, format, NDJSON parse ro
 - `scroll-to-element.test.ts` (6 assertions): selector-mode, text-mode, role-mode, multi-match returns matchCount+allMatches, hidden target → `TARGET_HIDDEN`, p95 latency under 200ms threshold over 20 calls
 - `dismiss-overlays.test.ts` (6 assertions): cookie-consent OneTrust dismissed (verified node-removed), shadow-DOM cookie-consent dismissed (penetration proof), registration-wall dismissed, paywall dismissed AND article body reveals to subsequent extraction, no-overlay control returns `{dismissed: [], skipped: [], overlaysAtStart: 0}`, **danger fixture (legitimate confirm dialog) NOT dismissed**
 - `evidence-grounded-screenshot-skill.test.ts` (3 assertions): skill template parses, when steps execute against real Safari all 3 tool calls fire and produce expected end state (screenshot PNG contains <50% pixels matching cookie-banner color signature → proves dismiss actually happened end-to-end, not workflow-presence-only)
+- `kill-switch.test.ts` (2 assertions): with `SAFARI_PILOT_DISABLE_OVERLAY_DISMISS=true`, safari_dismiss_overlays returns `{dismissed: [], skipped: [{reason: 'kill_switch_engaged'}]}` even on a page that DOES have a known overlay (positive control fixture cookie-consent-onetrust). With flag unset, same call dismisses normally. Proves the kill switch actually disables.
+- `paywall-opt-in.test.ts` (2 assertions): with `SAFARI_PILOT_ENABLE_PAYWALL_DISMISS=false` (default), safari_dismiss_overlays on the paywall-nyt-mock fixture returns `skipped[]` containing `{reason: 'paywall_opt_in_required', candidate.category: 'paywall'}` — paywall NOT dismissed. With flag set to true, paywall IS dismissed. Cookie-consent overlays on the same page are unaffected by the paywall flag (regression check).
+- `idpi-scan-reaches-dismissed.test.ts` (1 assertion): on a page where the `aria-label` of the matched cookie-banner contains a prompt-injection sentinel string, safari_dismiss_overlays response metadata carries `idpiThreats` from IdpiAnnotator scanning the `content[0].text` JSON. Proves the EXTRACTION_TOOLS Set extension actually wired the scan path. **Litmus: remove `safari_dismiss_overlays` from EXTRACTION_TOOLS Set → assertion fails.**
 
 **Per-pattern integration tests** (`test/e2e/overlays/`, ~14-15 new files — **the safety net**): one per allowlist entry. Each asserts (a) dismisses target on positive fixture, (b) does NOT dismiss on same-DOM-shape negative fixture. Examples: `onetrust-banner.test.ts` paired with `onetrust-banner.negative.fixture.ts` (a non-cookie element with the same id). The negative fixtures are bespoke per pattern.
 
@@ -625,6 +680,8 @@ Test surface: 4 new unit tests (aggregator, time-window, format, NDJSON parse ro
 **Type check:** `npm run lint` must pass with zero errors.
 
 **Pre-tag-check.sh adds one new check:** `dist/overlays/*.json` parses against the loader's expected schema. A syntactically valid but semantically wrong allowlist would otherwise slip past.
+
+**Content-only patch acceptance proof** (new CI step `tests/ci/content-only-patch.sh`): mutates a single allowlist JSON entry under `src/overlays/`, runs `npm run build`, fresh-spawns the MCP server (`node dist/index.js`), asserts the loader log line shows the new `version` AND a tools/list call confirms the patched pattern is reachable. Then asserts `bin/Safari Pilot.app` mtime is unchanged from before the patch (proves no extension rebuild was triggered). Required to pass before the v0.1.31 release. Proves the §9.3 rollback-policy claim is real, not aspirational.
 
 ### 8.2 Post-merge ship-gate (bench)
 
@@ -686,16 +743,18 @@ Per `feedback-extension-build-safeguards`: no manual codesign, version sync veri
 
 ### 9.3 Rollback policy
 
-| Bug class | Patch type | Mechanism |
-|---|---|---|
-| Bad allowlist entry (false positive) | **Content-only patch** (npm patch, NO extension rebuild) | Edit `src/overlays/*.json`, remove or fix entry, `npm version patch` + `npm publish`. New `dist/` ships. Next session of any user picks up new allowlist. Extension `.app` untouched. |
-| Bug in allowlist loader (`src/overlays/index.ts`) | **Content-or-logic patch** (npm patch, no extension) | `npm version patch` + publish. Extension untouched. |
-| Bug in tool handler (`src/tools/overlays.ts`, `src/tools/interaction.ts`) | **Logic patch** (npm patch, no extension) | Same as above. |
-| Bug in sentinel handler or `extension/locator.js` | **Full release** (extension rebuild + notarize + new tag) | `bash scripts/build-extension.sh` + `bash scripts/update-daemon.sh` (if needed) + version bump + tag + GitHub Release |
-| Bad behavior in a strategy skill | **Content-only patch** (npm patch, no extension) | Edit `skills/*.SKILL.md`, publish. Extension untouched. |
-| Need to disable a tool entirely | **Logic patch** | Add `disabled: true` field check in tool registration; or remove from `server.ts`. |
+| Bug class | Patch type | Mechanism | User action required |
+|---|---|---|---|
+| Bad allowlist entry (false positive) | **Content-only patch** (npm patch, NO extension rebuild) | Edit `src/overlays/*.json`, bump that file's `version`, `npm version patch` + `npm publish`. New `dist/` ships in npm tarball. | **`npm update safari-pilot`** — propagation is NOT silent; the user must update their npm install. The patched MCP server is loaded on the user's NEXT Claude Code session after the update. |
+| Bug in allowlist loader (`src/overlays/index.ts`) | **Content-or-logic patch** (npm patch, no extension) | `npm version patch` + publish. Extension untouched. | **`npm update safari-pilot`** |
+| Bug in tool handler (`src/tools/overlays.ts`, `src/tools/interaction.ts`) | **Logic patch** (npm patch, no extension) | Same as above. | **`npm update safari-pilot`** |
+| Bug in sentinel handler or `extension/locator.js` | **Full release** (extension rebuild + notarize + new tag) | `bash scripts/build-extension.sh` + `bash scripts/update-daemon.sh` (if needed) + version bump + tag + GitHub Release | **`npm update safari-pilot`** + `open bin/Safari Pilot.app` to register new extension; user re-enables in Safari Settings if version bump invalidated the cached approval (per `feedback-extension-version-both-fields`). |
+| Bad behavior in a strategy skill | **Content-only patch** (npm patch, no extension) | Edit `skills/*.SKILL.md`, publish. Extension untouched. | **`npm update safari-pilot`** |
+| Need to disable safari_dismiss_overlays for a specific user | **No release needed** | User sets `SAFARI_PILOT_DISABLE_OVERLAY_DISMISS=true` in their environment | None — kill switch is per-user |
 
-The "patch-releasable" claim has scope: **JSON allowlist content + Node-side TypeScript code** is patch-releasable. Anything in `extension/` requires full release.
+**Scope of "patch-releasable":** JSON allowlist content + Node-side TypeScript code → patch-releasable via npm. Anything in `extension/` → full release. Either way, **propagation requires `npm update safari-pilot` from the user**; we cannot push silent updates.
+
+**Forensic correlation:** the per-file allowlist `version` field (§5.3) lands in trace logs on each MCP server boot. When investigating a false-positive incident, the user's trace shows which allowlist version was loaded — supports root-causing whether the bug was in the released allowlist or in something later patched.
 
 ### 9.4 CHANGELOG.md v0.1.31 entry (draft)
 
@@ -735,15 +794,28 @@ The "patch-releasable" claim has scope: **JSON allowlist content + Node-side Typ
   npm publish (no extension rebuild needed for content-only changes)
 - Bench harness buildPrompt UNCHANGED — discipline boundary
 
-### Paywall dismissal — residual risk acknowledgment
-The dismiss-overlays allowlist includes 3 conservatively-scoped paywall
-patterns (NYT-soft, FT-modal, Bloomberg-overlay). Each dismisses ONLY the
-overlay element; server-side gating is not bypassed. Overlays may re-render on
-subsequent scroll/click. Inclusion was an explicit product-owner decision.
-Mitigations: kill switch (disableOverlayDismiss: true), two-signal pattern
-rule, per-pattern negative-fixture tests, per-dismissal audit log,
-patch-releasable allowlist. Any pattern can be removed in a v0.1.31.x patch
-without a feature release.
+### Paywall dismissal — opt-IN by default, residual risk acknowledged
+The dismiss-overlays allowlist ships 3 conservatively-scoped paywall patterns
+(NYT-soft, FT-modal, Bloomberg-overlay). They are **OPT-IN by default**: users
+must set `SAFARI_PILOT_ENABLE_PAYWALL_DISMISS=true` (env var) or
+`enablePaywallDismiss: true` (config) to activate them. Default install does
+not dismiss paywalls. Two engineering reviews independently flagged the
+inclusion as the highest-residual-risk decision; the opt-in default-off
+behavior was the agreed compromise.
+
+Each pattern dismisses ONLY the overlay element; server-side gating is not
+bypassed. Overlays may re-render on subsequent scroll/click. Mitigations:
+6 total per spec §5.5 — general kill switch, paywall opt-in flag, two-signal
+pattern rule, per-pattern negative-fixture tests, per-dismissal audit log,
+IdpiAnnotator scan extension. Any pattern can be removed in a v0.1.31.x patch
+(content-only, no extension rebuild — but propagation requires
+`npm update safari-pilot` from the user; not silent).
+
+### Patch propagation — user action required
+v0.1.31 ships content-only patches via `npm publish`. **Users must run
+`npm update safari-pilot`** to pick up patches; propagation is not silent. The
+patched MCP server loads on the user's next Claude Code session after the
+update.
 
 ### Bench-gate baseline
 v0.1.31 ship-gate: WebVoyager dev-sample 175-task run.
@@ -756,8 +828,12 @@ must not drop more than 1 task, capture_failure_rate ≤10.4%.
 
 ### Rollback
 - Tag: revert v0.1.31 → users on v0.1.30 unaffected
-- Allowlist content patch: npm publish patch (no extension rebuild)
-- Tool kill: disableOverlayDismiss: true config flag (per-user opt-out)
+- Allowlist content patch: npm publish patch (no extension rebuild). Users
+  must run `npm update safari-pilot` to pick up the patch.
+- Tool kill: SAFARI_PILOT_DISABLE_OVERLAY_DISMISS=true env var (per-user
+  opt-out, no release needed)
+- Paywall kill: paywalls ship opt-in (default off); no rollback needed unless
+  a default-on accidental ship.
 ```
 
 ### 9.5 Notion roadmap entry
@@ -794,8 +870,8 @@ Parallel Safety: Single-developer; bench gate post-merge.
 
 | # | Risk | Severity | Mitigation |
 |---|---|---|---|
-| R1 | Allowlist false positive dismisses legitimate consent UI on third-party site | **Critical** | 5 mitigations: kill switch, two-signal rule, per-pattern negative-fixture tests (~14), per-dismissal audit log, IdpiAnnotator scan extension. Product-owner-signed-off. Patch-releasable for rapid response. |
-| R2 | Paywall dismissal triggers ToS dispute / Apple notarization review / brand incident | **High** | Conservative single-overlay scope (no server-side bypass), patch-releasable removal path, explicit CHANGELOG acknowledgment. Inclusion is an explicit product-owner decision. |
+| R1 | Allowlist false positive dismisses legitimate consent UI on third-party site | **Critical** | 6 mitigations: general kill switch, paywall opt-in flag, two-signal rule, per-pattern negative-fixture tests (~14), per-dismissal audit log, IdpiAnnotator scan extension via content[0].text. Product-owner-signed-off. Patch-releasable for rapid response (user must `npm update`). |
+| R2 | Paywall dismissal triggers ToS dispute / Apple notarization review / brand incident | **High** | Paywall patterns ship **OPT-IN (default off)** per second engineering review. Default install does not dismiss paywalls. Conservative single-overlay scope (no server-side bypass). Patch-releasable removal. Two adversarial reviews flagged inclusion; product-owner decision is opt-in default-off compromise. |
 | R3 | `requiresShadowDom` extension on `safari_dismiss_overlays` doesn't actually penetrate cookie-consent shadow roots in the wild | Medium | Per-pattern integration tests cover shadow-DOM penetration explicitly (`cookie-consent-shadow.ts` fixture). Bench gate validates real-world success. |
 | R4 | `temporal-substitution` skill produces wrong substitutions on tasks where the date isn't actually past-relative | Medium | Skill body is conservative ("check whether the referent is in the past"); SessionStart-injected date is precise. Bench gate measures temporal-failure subset specifically. |
 | R5 | Bench harness changes the score by virtue of new skills triggering, not the underlying tools (skill-as-prompt-engineering) | Medium | Per-failure-subset measurement separates capability lift (I1, I2 tool-driven) from strategy lift (I3, I8 skill-driven). Each is independently observable. |
@@ -805,24 +881,30 @@ Parallel Safety: Single-developer; bench gate post-merge.
 
 ## 12. Schedule
 
-**Hard floor: 9-10 days.** Realistic calendar: 11-12 days with notarize-retry buffer.
+**Hard floor: 10 days. Realistic calendar: 11-12 days with notarize-retry buffer and review iteration.**
 
 | Phase | Days |
 |---|---|
-| Tool 1 (scroll) + locator.js helper + tests | 1.5 |
-| Tool 2 (dismiss) + 4 allowlist files + shadow-DOM penetration + 14 per-pattern tests + danger fixtures | 3.5 |
-| 4 skills + plugin.json fix + SessionStart hook update + skill tests | 1.0 |
+| Tool 1 (scroll) + locator.js helper + 6 e2e + 4 unit | 1.5 |
+| Tool 2 (dismiss) + 4 allowlist files + shadow-DOM penetration + 14 per-pattern integration tests + 14 paired negative fixtures + danger fixture + opt-in flag plumbing | 4.0 |
+| 4 skills + plugin.json fix (legacy 3 + new 4) + SessionStart hook update + hook unit test + skill template e2e | 1.0 |
 | /stats CLI + 4 unit tests + 1 e2e | 1.0 |
-| Pre-tag-check additions, full notarize cycle (3-retry buffer), bench post-merge | 1.5 |
-| Bench analysis + post-mortem if numbers don't move | 1.0 |
-| **Total floor** | **9.5** |
+| Pre-tag-check additions (allowlist parse-validate + content-only patch CI proof), full notarize cycle (3-retry buffer), bench post-merge | 1.5 |
+| Bench analysis + per-failure-subset comparison + post-mortem if numbers don't move | 1.0 |
+| **Total hard floor** | **10.0** |
+| Calendar buffer (notarize retries, review feedback iteration, unforeseen) | +1-2 |
+| **Realistic calendar** | **11-12** |
 
 ## 13. Acceptance & sign-off
 
-- Product owner signed off on safari_dismiss_overlays inclusion (with all 5 mitigations) on 2026-05-08
-- Engineering review passed (5 factual errors fixed in spec, 3 critical issues mitigated, 5 coverage gaps closed)
+- **Product owner signed off** on safari_dismiss_overlays inclusion (with all 6 mitigations including paywall opt-in default-off) on 2026-05-08
+- **Two adversarial engineering reviews** independently scrutinized the design:
+  - First review (synthesized design): 5 factual codebase errors fixed, 3 critical issues mitigated, 5 coverage gaps closed
+  - Second review (committed spec): CRITICAL-1 SessionStart hook mis-framing fixed with verified diff, CRITICAL-2 hot-reload comms corrected, CRITICAL-3 error-code wording tightened, IdpiAnnotator content[0].text path made explicit, allowlist version semantics defined, kill-switch + paywall-opt-in + content-only-patch acceptance tests added, schedule corrected to 10 days hard floor / 11-12 realistic
+- Both reviewers' independent recommendation to make paywalls opt-IN by default was adopted
 - Architecture surgical/additive; no breaking changes
-- Test surface includes the safety regression network (per-pattern positive + negative fixtures)
+- Test surface includes the safety regression network (per-pattern positive + negative fixtures + kill-switch test + opt-in test + IdpiAnnotator scan-reaches-dismissed litmus + content-only patch CI proof)
 - Bench gate is per-failure-subset monotonic, not aggregate-noise-floor
+- Rollback policy explicit on user-action-required (`npm update safari-pilot`) — no silent propagation claim
 
 Spec is implementation-ready. Next step: `upp:writing-plans` to produce a task-by-task implementation plan against this design.
