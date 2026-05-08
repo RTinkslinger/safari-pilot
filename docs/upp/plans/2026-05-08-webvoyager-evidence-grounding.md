@@ -849,9 +849,13 @@ git commit -m "test(fixtures): scroll-to-element fixtures (4 servers) (v0.1.31 T
 
 **Files:**
 - Create: `extension/locator.js` (NEW: resolveScrollTargets, querySelectorWithShadow, waitForScrollSettle, serializeNode helpers)
-- Modify: `extension/background.js` (add `__SP_SCROLL_TO_ELEMENT__:<json>` sentinel branch)
+- Modify: `extension/manifest.json` (register `locator.js` in MAIN-world content_scripts so `window.__SP_LOCATOR__` is reachable in page context)
+- Modify: `extension/content-main.js` (add `__SP_SCROLL_TO_ELEMENT__:<json>` sentinel intercept early in the `execute_script` case, BEFORE `new _Function(params.script)` evaluation)
 
-**Note:** This task and Task 6 are **atomic-revert pair** — the sentinel handler and the server-side handler depend on each other. If reverting, revert together.
+**IMPORTANT — corrected file list per discovered codebase architecture:**
+The original plan (and its source spec §3) listed `extension/background.js` as the sentinel handler site. That was wrong: `background.js` is the service worker and cannot reach page DOM. The existing sentinels (`__SP_TAKE_SCREENSHOT__`, `__SP_LIST_FRAMES__`, `__SP_DNR_*`) are all service-worker-local against WebExtension APIs; only `__SP_FILE_UPLOAD__:` crosses into the page (via a storage-bus fanout). `window.__SP_LOCATOR__` only exists in MAIN-world content scripts, so the sentinel must be intercepted in `content-main.js`'s `execute_script` case (search for `case 'execute_script'`), parsed as JSON, and dispatched to `__SP_LOCATOR__` helpers — returning a structured envelope. The `__SP_*:` prefix-and-JSON convention is preserved (F3 satisfied), just in MAIN world rather than service worker. `background.js` is NOT touched.
+
+**Note:** This task and Task 6 are **atomic-revert pair** — the content-main.js sentinel intercept and the server-side handler depend on each other. If reverting, revert together.
 
 - [ ] **Step 1: Create `extension/locator.js` with helpers**
 
@@ -1048,18 +1052,21 @@ Find `extension/manifest.json` and ensure `locator.js` is listed in the content_
 
 (Adjust to match the actual existing manifest structure — read it first, then add `locator.js` as the first entry of each script array.)
 
-- [ ] **Step 3: Add `__SP_SCROLL_TO_ELEMENT__` sentinel branch to `extension/background.js`**
+- [ ] **Step 3: Add `__SP_SCROLL_TO_ELEMENT__` sentinel intercept in `extension/content-main.js` (corrected per Option A — see file-list note above)**
 
-Find the `executeCommand` switch (search for `__SP_TAKE_SCREENSHOT__`). Add a new branch using prefix-and-JSON convention (consistent with `__SP_DNR_*:<json>` and `__SP_FILE_UPLOAD__:<json>`):
+Find `case 'execute_script':` in the message switch (search `case 'execute_script'` or `params.script`). Add an EARLY intercept BEFORE the existing `new _Function(params.script)` evaluation. The intercept must be the FIRST statement inside the case block; the existing default path (compile + run user script) remains intact for non-sentinel scripts. Use prefix-and-JSON convention (matches `__SP_FILE_UPLOAD_PROBE__:` interception convention in `extension/content-isolated.js` lines 159-192):
 
 ```javascript
-if (cmd.script.startsWith('__SP_SCROLL_TO_ELEMENT__:')) {
-  const args = JSON.parse(cmd.script.slice('__SP_SCROLL_TO_ELEMENT__:'.length));
-  return await dispatchToTab(tab, async (window) => {
-    const { selector, text, role, name, nth = 0, behavior = 'instant' } = args;
-    const L = window.__SP_LOCATOR__;
-    if (!L) return { ok: false, error: { name: 'TARGET_NOT_FOUND', message: 'locator.js not loaded' } };
+case 'execute_script': {
+  // ── EARLY INTERCEPT: __SP_SCROLL_TO_ELEMENT__:<json> ──
+  if (typeof params.script === 'string' && params.script.startsWith('__SP_SCROLL_TO_ELEMENT__:')) {
     try {
+      const args = JSON.parse(params.script.slice('__SP_SCROLL_TO_ELEMENT__:'.length));
+      const { selector, text, role, name, nth = 0, behavior = 'instant' } = args;
+      const L = window.__SP_LOCATOR__;
+      if (!L) {
+        return { ok: false, error: { name: 'TARGET_NOT_FOUND', message: 'locator.js not loaded in MAIN world' } };
+      }
       const candidates = L.resolveScrollTargets({ selector, text, role, name });
       if (candidates.length === 0) {
         const hidden = L.resolveScrollTargets({ selector, text, role, name, includeHidden: true });
@@ -1090,11 +1097,13 @@ if (cmd.script.startsWith('__SP_SCROLL_TO_ELEMENT__:')) {
     } catch (e) {
       return { ok: false, error: { name: 'TARGET_NOT_FOUND', message: String(e && e.message || e) } };
     }
-  });
+  }
+  // ── existing default execute_script path continues below (do NOT remove) ──
+  // ... original `new _Function(params.script)` code path remains unchanged for non-sentinel scripts
 }
 ```
 
-(`dispatchToTab` is the existing helper used by `__SP_TAKE_SCREENSHOT__`; adapt to match exact call shape in `background.js`.)
+`extension/manifest.json` must register `locator.js` in the MAIN-world `content_scripts` entry, BEFORE `content-main.js`. Do NOT register it in the ISOLATED world (would not be reachable from MAIN-world `window.__SP_LOCATOR__`). `background.js` is NOT touched.
 
 - [ ] **Step 4: Build the extension**
 
@@ -1117,7 +1126,7 @@ Expected: builds without errors, `bin/Safari Pilot.app` updated.
 Don't commit yet. Hold the staging until Task 6 lands. The extension+server pair commits together as one atomic-revert unit.
 
 ```bash
-git add extension/locator.js extension/background.js extension/manifest.json
+git add extension/locator.js extension/manifest.json extension/content-main.js
 # DO NOT COMMIT YET — combined commit at end of Task 6
 ```
 
@@ -1246,7 +1255,7 @@ Expected: PASS.
 - [ ] **Step 8: Commit (atomic with Task 5)**
 
 ```bash
-git add extension/locator.js extension/background.js extension/manifest.json src/tools/interaction.ts
+git add extension/locator.js extension/manifest.json extension/content-main.js src/tools/interaction.ts
 git commit -m "feat(scroll): safari_scroll_to_element tool + sentinel + locator helpers (v0.1.31 Tasks 5-6, atomic)"
 ```
 
@@ -1795,8 +1804,11 @@ git commit -m "test(fixtures): per-pattern negative fixtures (safety net) (v0.1.
 ## Task 10: Extension-side `safari_dismiss_overlays` implementation
 
 **Files:**
-- Modify: `extension/locator.js` (add overlay-detection + dismissal helpers)
-- Modify: `extension/background.js` (add `__SP_DISMISS_OVERLAYS__:<json>` sentinel branch)
+- Modify: `extension/locator.js` (add overlay-detection + dismissal helpers — `matchSignal`, `findPatternRoot`, `dismissPattern`)
+- Modify: `extension/content-main.js` (add `__SP_DISMISS_OVERLAYS__:<json>` sentinel intercept early in the `case 'execute_script':` block, alongside the `__SP_SCROLL_TO_ELEMENT__:` intercept landed in Task 5)
+
+**IMPORTANT — same architectural correction as Task 5:**
+The original plan listed `extension/background.js` as the sentinel handler site. That was wrong for the same reason as Task 5: `background.js` is the service worker and cannot reach page DOM. Sentinels that need `window.__SP_LOCATOR__` MUST live in `content-main.js`'s `execute_script` early-intercept path. `background.js` is NOT touched.
 
 This task lands atomic with Task 11 (server-side handler) — single commit.
 
@@ -1898,15 +1910,20 @@ Append to the IIFE in `extension/locator.js` (before the `window.__SP_LOCATOR__`
   window.__SP_LOCATOR__.dismissPattern = dismissPattern;
 ```
 
-- [ ] **Step 2: Add `__SP_DISMISS_OVERLAYS__:<json>` sentinel branch to `extension/background.js`**
+- [ ] **Step 2: Add `__SP_DISMISS_OVERLAYS__:<json>` sentinel intercept in `extension/content-main.js` (corrected per Option A — same architectural rationale as Task 5)**
+
+Find the `case 'execute_script':` block. Add this intercept ALONGSIDE the `__SP_SCROLL_TO_ELEMENT__:` intercept landed in Task 5 (both sit at the top of the case before the existing `new _Function(params.script)` evaluation):
 
 ```javascript
-if (cmd.script.startsWith('__SP_DISMISS_OVERLAYS__:')) {
-  const args = JSON.parse(cmd.script.slice('__SP_DISMISS_OVERLAYS__:'.length));
-  return await dispatchToTab(tab, async (window) => {
+// ── EARLY INTERCEPT: __SP_DISMISS_OVERLAYS__:<json> ──
+if (typeof params.script === 'string' && params.script.startsWith('__SP_DISMISS_OVERLAYS__:')) {
+  try {
+    const args = JSON.parse(params.script.slice('__SP_DISMISS_OVERLAYS__:'.length));
     const { categories, patterns, killSwitchEngaged, paywallEnabled } = args;
     const L = window.__SP_LOCATOR__;
-    if (!L) return { ok: false, error: { name: 'NO_LOCATOR', message: 'locator.js not loaded' } };
+    if (!L) {
+      return { ok: false, error: { name: 'NO_LOCATOR', message: 'locator.js not loaded in MAIN world' } };
+    }
     const result = { dismissed: [], skipped: [], overlaysAtStart: 0, overlaysAtEnd: 0 };
     if (killSwitchEngaged) {
       result.skipped.push({ reason: 'kill_switch_engaged' });
@@ -1951,9 +1968,13 @@ if (cmd.script.startsWith('__SP_DISMISS_OVERLAYS__:')) {
     for (const p of filtered) { if (L.findPatternRoot(p)) remaining++; }
     result.overlaysAtEnd = remaining;
     return { ok: true, value: result };
-  });
+  } catch (e) {
+    return { ok: false, error: { name: 'NO_LOCATOR', message: String(e && e.message || e) } };
+  }
 }
 ```
+
+`background.js` is NOT touched.
 
 - [ ] **Step 3: Build extension**
 
@@ -1966,7 +1987,7 @@ bash scripts/build-extension.sh --skip-notarize
 - [ ] **Step 5: Hold staging — DO NOT commit yet**
 
 ```bash
-git add extension/locator.js extension/background.js
+git add extension/locator.js extension/content-main.js
 # Atomic with Task 11 — combined commit there
 ```
 
@@ -2154,7 +2175,7 @@ Expected: all pass; allowlist files appear in `dist/overlays/`.
 - [ ] **Step 6: Commit (atomic with Task 10)**
 
 ```bash
-git add extension/locator.js extension/background.js src/tools/overlays.ts src/server.ts package.json
+git add extension/locator.js extension/content-main.js src/tools/overlays.ts src/server.ts package.json
 git commit -m "feat(dismiss): safari_dismiss_overlays tool + sentinel + IdpiAnnotator scan extension (v0.1.31 Tasks 10-11, atomic)"
 ```
 
