@@ -5,14 +5,15 @@
     {
       "id": "smart-app-banner",
       "signals": [
-        { "type": "selector", "value": "meta[name=apple-itunes-app]" },
-        { "type": "selector", "value": ".smart-app-banner, [class*=smartbanner i]" }
+        { "type": "selector", "value": ".smart-app-banner, [class*=smartbanner i]" },
+        { "type": "fixed-position", "value": "true" }
       ],
       "dismiss": {
         "action": "click",
         "selector": ".smart-app-banner [aria-label*=close i], [class*=smartbanner i] [aria-label*=close i]"
       },
-      "verify": { "type": "node-removed", "stabilityMs": 250 }
+      "verify": { "type": "node-removed", "stabilityMs": 250 },
+      "notes": "v0.1.31 fix: original pattern required meta[name=apple-itunes-app] (head) AND .smart-app-banner (body) to match the SAME element — impossible. Replaced head-meta requirement with fixed-position structural discriminator. Real smart app banners are always position:fixed."
     },
     {
       "id": "twitter-open-in-app",

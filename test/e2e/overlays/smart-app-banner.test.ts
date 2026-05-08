@@ -1,26 +1,13 @@
 /**
  * Task 14 — per-pattern: smart-app-banner (app-install).
  *
- * POSITIVE: inline fixture below. Asserts dismissed[].id contains
- *   'smart-app-banner'. Currently EXPECTED TO FAIL — see KNOWN PATTERN BUG.
+ * POSITIVE: inline fixture below (.smart-app-banner with position:fixed).
  * NEGATIVE: shipped fixture in test/fixtures/overlays-negative/smart-app-banner.negative.ts.
  *
- * KNOWN PATTERN BUG (flagged for v0.1.32 hardening — BLOCKER class):
- * `src/overlays/app-install.json` smart-app-banner has TWO `selector` signals:
- *   1. `meta[name=apple-itunes-app]` (lives in <head>)
- *   2. `.smart-app-banner, [class*=smartbanner i]` (lives in <body>)
- * `extension/locator.js` findPatternRoot picks the FIRST selector signal as
- * primary, finds ONE candidate (the meta tag), and requires `every` signal to
- * match that single element. A meta tag cannot match `.smart-app-banner`, so
- * the pattern is unmatchable on any site — it ships as dead code.
- *
- * Fix path (out of scope for T14): split into a "page-level selector exists"
- * signal type, or replace signal 1 with a body-compatible signal (e.g.
- * `aria-role` on the banner itself), or relax `every` to `findPatternRoot`
- * candidate-union semantics.
- *
- * The positive test below intentionally asserts the desired behavior so that
- * when the v0.1.32 fix lands, this test starts passing without code changes.
+ * The pattern was fixed in this same v0.1.31 commit: the original two-selector
+ * head-meta + body-selector form was unmatchable (impossible for one element
+ * to live in both head and body). Replaced with body-selector + fixed-position
+ * structural discriminator. See src/overlays/app-install.json notes field.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { createServer, type Server } from 'node:http';
