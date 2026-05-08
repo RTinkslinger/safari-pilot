@@ -18,7 +18,7 @@
 		</data>
 		<key>Resources/content-main.js</key>
 		<data>
-		6i9PmPViojUToTvM5U+7GqSxAA0=
+		QINLdjgkwSaauIXkTxltDwFqMeQ=
 		</data>
 		<key>Resources/icons/icon-128.png</key>
 		<data>
@@ -44,9 +44,13 @@
 		<data>
 		QuKBeYVj7KLBM6uXEnrEc0NnHGg=
 		</data>
+		<key>Resources/locator.js</key>
+		<data>
+		nzWZSf8d2l1FEHIJFixkz8ylJsc=
+		</data>
 		<key>Resources/manifest.json</key>
 		<data>
-		mYFXwUU7fSCWlo5s8S0ox5gRwhQ=
+		b7t2YAoQSJq28FCLY7bnacHevPw=
 		</data>
 		<key>Resources/native/SafariWebExtensionHandler.swift</key>
 		<data>
@@ -80,7 +84,7 @@
 		<dict>
 			<key>hash2</key>
 			<data>
-			Zcx+vYaa2yv4pCvOKg/TStGK1p1NliF4Q/In9Vv2U5I=
+			XnFiueWRQl3A0v1u1GUcoEPavdQ6L/UNZUeXIMqeys8=
 			</data>
 		</dict>
 		<key>Resources/icons/icon-128.png</key>
@@ -125,11 +129,18 @@
 			z5QmK//NhQVtdCIBx8R+cH3vmu7dL7R7DF5ihq+KSEQ=
 			</data>
 		</dict>
+		<key>Resources/locator.js</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			Bg4nLgxFIeEgKs6dVliERWafx7C3f75H6Tj/lZATqYM=
+			</data>
+		</dict>
 		<key>Resources/manifest.json</key>
 		<dict>
 			<key>hash2</key>
 			<data>
-			ROEb9KefohKdixZxEaiNK52EXDce1HyFA+wifbUThMg=
+			WoJEL1PYdWABzG8L79k+Vxl4MjEiAaJw/l55ez1aRzw=
 			</data>
 		</dict>
 		<key>Resources/native/SafariWebExtensionHandler.swift</key>

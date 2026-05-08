@@ -550,6 +550,161 @@
             break;
           }
           case 'execute_script': {
+            // ── EARLY INTERCEPT: __SP_SCROLL_TO_ELEMENT__:<json> (v0.1.31 Task 5) ──
+            // Sentinel-routed handler for safari_scroll_to_element. Sits at the
+            // top of the case so it runs before commandId caching and the
+            // _Function compile path. Errors thrown here flow through the outer
+            // catch → respond(false, { error: { message, name } }), which the
+            // daemon (ExtensionBridge.handleResult) maps to error.code on the
+            // Node side via StructuredError.code = error.name.
+            if (typeof params.script === 'string' && params.script.startsWith('__SP_SCROLL_TO_ELEMENT__:')) {
+              const args = JSON.parse(params.script.slice('__SP_SCROLL_TO_ELEMENT__:'.length));
+              const sel = args.selector;
+              const txt = args.text;
+              const role = args.role;
+              const name = args.name;
+              const nth = typeof args.nth === 'number' ? args.nth : 0;
+              const behavior = args.behavior === 'smooth' ? 'smooth' : 'instant';
+              const L = window.__SP_LOCATOR__;
+              if (!L) {
+                throw Object.assign(
+                  new Error('locator.js not loaded in MAIN world'),
+                  { name: 'TARGET_NOT_FOUND' },
+                );
+              }
+              const candidates = L.resolveScrollTargets({ selector: sel, text: txt, role, name });
+              if (candidates.length === 0) {
+                const hidden = L.resolveScrollTargets({ selector: sel, text: txt, role, name, includeHidden: true });
+                if (hidden.length > 0) {
+                  throw Object.assign(
+                    new Error('element exists but is not visible (display:none, hidden, or in closed <details>)'),
+                    { name: 'TARGET_HIDDEN' },
+                  );
+                }
+                throw Object.assign(
+                  new Error('no element matched the provided locator'),
+                  { name: 'TARGET_NOT_FOUND' },
+                );
+              }
+              if (nth >= candidates.length) {
+                throw Object.assign(
+                  new Error('nth=' + nth + ' out of range (matchCount=' + candidates.length + ')'),
+                  { name: 'INVALID_PARAMS' },
+                );
+              }
+              const target = candidates[nth];
+              const fromY = window.scrollY;
+              target.element.scrollIntoView({ behavior, block: 'center', inline: 'nearest' });
+              await L.waitForScrollSettle(500);
+              const matchedNode = L.serializeNode(target.element);
+              const allMatches = candidates.length > 1
+                ? candidates.slice(0, 5).map((c) => L.serializeNode(c.element, true))
+                : undefined;
+              result = {
+                scrolledTo: { strategy: target.strategy, matchedNode, matchCount: candidates.length, allMatches },
+                viewport: { scrollX: window.scrollX, scrollY: window.scrollY, innerWidth: window.innerWidth, innerHeight: window.innerHeight },
+                scrolledFromY: fromY,
+              };
+              break;
+            }
+            // ── EARLY INTERCEPT: __SP_DISMISS_OVERLAYS__:<json> (v0.1.31 Task 10) ──
+            // Sentinel-routed handler for safari_dismiss_overlays. Same Option A shape
+            // as the scroll intercept above: success → result = {...}; break;
+            // failure → throw with error.name → daemon maps to error.code.
+            if (typeof params.script === 'string' && params.script.startsWith('__SP_DISMISS_OVERLAYS__:')) {
+              try {
+                const args = JSON.parse(params.script.slice('__SP_DISMISS_OVERLAYS__:'.length));
+                const { categories, patterns, killSwitchEngaged, paywallEnabled } = args;
+                const L = window.__SP_LOCATOR__;
+                if (!L) {
+                  throw Object.assign(
+                    new Error('locator.js not loaded in MAIN world'),
+                    { name: 'NO_LOCATOR' },
+                  );
+                }
+                if (killSwitchEngaged) {
+                  result = {
+                    dismissed: [],
+                    skipped: [{ reason: 'kill_switch_engaged' }],
+                    overlaysAtStart: 0,
+                    overlaysAtEnd: 0,
+                  };
+                  break;
+                }
+                const dismissed = [];
+                const skipped = [];
+                let overlaysAtStart = 0;
+                const filtered = (patterns || []).filter((p) => !categories || categories.includes(p.category));
+                for (const pattern of filtered) {
+                  // Paywall opt-in gate
+                  if (pattern.category === 'paywall' && !paywallEnabled) {
+                    const root = L.findPatternRoot(pattern);
+                    if (root) {
+                      const sel = pattern.signals.find((s) => s.type === 'selector');
+                      skipped.push({
+                        reason: 'paywall_opt_in_required',
+                        candidate: { selector: sel ? sel.value : undefined, category: 'paywall' },
+                      });
+                    }
+                    continue;
+                  }
+                  const root = L.findPatternRoot(pattern);
+                  if (!root) {
+                    const sel = pattern.signals.find((s) => s.type === 'selector');
+                    skipped.push({
+                      reason: 'allowlist_miss',
+                      candidate: { selector: sel ? sel.value : undefined, category: pattern.category },
+                    });
+                    continue;
+                  }
+                  overlaysAtStart++;
+                  try {
+                    const verifyResult = await L.dismissPattern(pattern, root);
+                    if (!verifyResult.verified) {
+                      const sel = pattern.signals.find((s) => s.type === 'selector');
+                      skipped.push({
+                        reason: 'verify_failed_overlay_persists',
+                        candidate: { selector: sel ? sel.value : undefined, hint: pattern.id },
+                      });
+                    } else {
+                      const sel = pattern.signals.find((s) => s.type === 'selector');
+                      dismissed.push({
+                        category: pattern.category,
+                        id: pattern.id,
+                        selector: sel ? sel.value : '',
+                        action: pattern.dismiss.action,
+                        site: window.location.hostname,
+                        verified: true,
+                      });
+                    }
+                  } catch (e) {
+                    skipped.push({
+                      reason: 'click_failed',
+                      candidate: { hint: String((e && e.message) || e) },
+                    });
+                  }
+                }
+                // Recount remaining
+                let remaining = 0;
+                for (const p of filtered) { if (L.findPatternRoot(p)) remaining++; }
+                result = {
+                  dismissed,
+                  skipped,
+                  overlaysAtStart,
+                  overlaysAtEnd: remaining,
+                };
+                break;
+              } catch (e) {
+                // Re-throw with NO_LOCATOR semantic (any unexpected failure surfaces here).
+                // If it already has a .name, preserve it; otherwise tag NO_LOCATOR.
+                if (e && e.name && e.name !== 'Error') throw e;
+                throw Object.assign(
+                  new Error(String((e && e.message) || e)),
+                  { name: 'NO_LOCATOR' },
+                );
+              }
+            }
+            // ── existing default execute_script path ──
             const commandId = params.commandId;
             if (commandId && window.__safariPilotExecutedCommands.has(commandId)) {
               const cached = window.__safariPilotExecutedCommands.get(commandId);
