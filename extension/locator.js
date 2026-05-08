@@ -191,11 +191,101 @@
     return out;
   }
 
+  // ── matchSignal: does element satisfy a single signal? ──────────────────
+  function matchSignal(el, signal, hostDoc) {
+    switch (signal.type) {
+      case 'selector':
+        return !!hostDoc.querySelector(signal.value);
+      case 'aria-label-substring': {
+        const label = (el.getAttribute && el.getAttribute('aria-label')) || '';
+        const v = signal.caseInsensitive ? signal.value.toLowerCase() : signal.value;
+        const l = signal.caseInsensitive ? label.toLowerCase() : label;
+        return l.includes(v);
+      }
+      case 'aria-role':
+        return (el.getAttribute && el.getAttribute('role')) === signal.value;
+      case 'fixed-position': {
+        const cs = el.ownerDocument.defaultView.getComputedStyle(el);
+        return cs.position === 'fixed';
+      }
+      case 'z-index-above': {
+        const cs = el.ownerDocument.defaultView.getComputedStyle(el);
+        const z = parseInt(cs.zIndex, 10);
+        return Number.isFinite(z) && z > parseInt(signal.value, 10);
+      }
+      default:
+        return false;
+    }
+  }
+
+  // ── findPatternRoot: finds the first element matching ALL signals ──────
+  function findPatternRoot(pattern) {
+    // Primary signal is selector if present
+    const primarySignal = pattern.signals.find((s) => s.type === 'selector');
+    const primarySelector = primarySignal ? primarySignal.value : '*';
+    const candidates = [];
+    // Main document (with shadow penetration)
+    const mainCandidate = querySelectorWithShadow(primarySelector);
+    if (mainCandidate) candidates.push(mainCandidate);
+    // Same-origin iframes
+    const frames = document.querySelectorAll('iframe');
+    for (const frame of frames) {
+      let frameDoc = null;
+      try { frameDoc = frame.contentDocument; } catch (_e) { continue; }
+      if (!frameDoc) continue;
+      const c = frameDoc.querySelector(primarySelector);
+      if (c) candidates.push(c);
+    }
+    for (const el of candidates) {
+      const allMatch = pattern.signals.every((s) => matchSignal(el, s, el.ownerDocument));
+      if (allMatch) return el;
+    }
+    return null;
+  }
+
+  // ── dismissPattern: execute the dismiss action, verify removal ─────────
+  async function dismissPattern(pattern, root) {
+    const action = pattern.dismiss.action;
+    let actionExecuted = false;
+    try {
+      if (action === 'click') {
+        const target = (pattern.dismiss.selector
+          ? root.ownerDocument.querySelector(pattern.dismiss.selector) || querySelectorWithShadow(pattern.dismiss.selector)
+          : root);
+        if (target) { target.click(); actionExecuted = true; }
+      } else if (action === 'esc-key') {
+        const evt = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true });
+        document.dispatchEvent(evt); actionExecuted = true;
+      } else if (action === 'remove-node') {
+        const target = pattern.dismiss.selector
+          ? root.ownerDocument.querySelector(pattern.dismiss.selector) || querySelectorWithShadow(pattern.dismiss.selector)
+          : root;
+        if (target && target.parentNode) { target.parentNode.removeChild(target); actionExecuted = true; }
+      }
+    } catch (e) {
+      // try fallback if defined
+      if (pattern.dismiss.fallbackAction) {
+        return dismissPattern({ ...pattern, dismiss: { action: pattern.dismiss.fallbackAction, selector: pattern.dismiss.fallbackSelector } }, root);
+      }
+      throw e;
+    }
+    if (!actionExecuted && pattern.dismiss.fallbackAction) {
+      return dismissPattern({ ...pattern, dismiss: { action: pattern.dismiss.fallbackAction, selector: pattern.dismiss.fallbackSelector } }, root);
+    }
+    // Verify after stabilityMs
+    await new Promise((r) => setTimeout(r, pattern.verify.stabilityMs));
+    const stillThere = findPatternRoot(pattern);
+    return { verified: !stillThere };
+  }
+
   // Expose on window for content-main.js sentinel intercepts.
   window.__SP_LOCATOR__ = {
     querySelectorWithShadow,
     resolveScrollTargets,
     waitForScrollSettle,
     serializeNode,
+    matchSignal,
+    findPatternRoot,
+    dismissPattern,
   };
 })();

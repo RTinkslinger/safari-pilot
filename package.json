@@ -24,7 +24,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && mkdir -p dist/overlays && cp src/overlays/*.json dist/overlays/",
     "dev": "tsc --watch",
     "test": "npm run test:unit",
     "test:unit": "vitest run -c vitest.config.unit.ts",

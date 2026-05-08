@@ -1,5 +1,7 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { fileURLToPath } from 'node:url';
+import { dirname, resolve as pathResolve } from 'node:path';
 import type { Engine, ToolResponse, ToolRequirements, ClickContext } from './types.js';
 import type { IEngine } from './engines/engine.js';
 import { selectEngine, requiresExtension, EngineUnavailableError } from './engine-selector.js';
@@ -27,6 +29,9 @@ import { DownloadTools } from './tools/downloads.js';
 import { PdfTools } from './tools/pdf.js';
 import { ExtensionDiagnosticsTools } from './tools/extension-diagnostics.js';
 import { FileUploadTools } from './tools/file-upload.js';
+import { OverlayTools } from './tools/overlays.js';
+import { loadAllAllowlists } from './overlays/index.js';
+import type { PatternRegistryEntry } from './overlays/types.js';
 import { ToolIndex } from './discovery/tool-index.js';
 import { ToolSearchTools } from './tools/tool-search.js';
 import { SkillRegistry } from './skills/registry.js';
@@ -282,6 +287,8 @@ export class SafariPilotServer {
       new PdfTools(this),
       new ExtensionDiagnosticsTools(null),
       new SelectorPackTools(proxy, this.config.selectorPack),
+      // OverlayTools: I/O-free static lister — empty patterns + flags off.
+      new OverlayTools({ engine: proxy, patterns: [], disableOverlayDismiss: false, enablePaywallDismiss: false }),
     ];
 
     // Build the tool index from all existing modules and add the search meta-tool.
@@ -419,6 +426,29 @@ export class SafariPilotServer {
       daemonAvailable ? daemonEngine : null,
     );
 
+    // ── Overlay dismiss tool (v0.1.31 Task 11) ───────────────────────────────
+    // Resolve overlays/ dir relative to THIS file's location so it works whether
+    // running from dist/ (production) or via tsx (dev). The `..` step resolves
+    // dist/ → dist/overlays or src/ → src/overlays — both have the JSON files
+    // (dev: source files; prod: copied during build via package.json build script).
+    const overlaysDir = pathResolve(dirname(fileURLToPath(import.meta.url)), '../overlays');
+    let overlayPatterns: PatternRegistryEntry[] = [];
+    try {
+      overlayPatterns = loadAllAllowlists(overlaysDir);
+    } catch (e) {
+      // Don't kill server startup on bad allowlist — log and proceed with empty
+      // registry. The tool will simply find no patterns to dismiss.
+      console.error(`[safari-pilot] failed to load overlay allowlists from ${overlaysDir}:`, (e as Error).message);
+    }
+    const disableOverlayDismiss = process.env['SAFARI_PILOT_DISABLE_OVERLAY_DISMISS'] === 'true';
+    const enablePaywallDismiss = process.env['SAFARI_PILOT_ENABLE_PAYWALL_DISMISS'] === 'true';
+    const overlayTools = new OverlayTools({
+      engine: proxy,
+      patterns: overlayPatterns,
+      disableOverlayDismiss,
+      enablePaywallDismiss,
+    });
+
     // Register all tools from all modules.
     // Each module may have getHandler returning Handler (NavigationTools) or Handler | undefined.
     type ToolModule = {
@@ -452,6 +482,7 @@ export class SafariPilotServer {
       pdfTools,
       extensionDiagnosticsTools,
       selectorPackTools,
+      overlayTools as unknown as ToolModule,
     ];
 
     // Build the tool index from all registered modules, then add the search meta-tool.
@@ -1056,6 +1087,8 @@ export class SafariPilotServer {
         'safari_smart_scrape', 'safari_extract_tables',
         'safari_extract_links', 'safari_extract_images',
         'safari_extract_metadata',
+        // v0.1.31 Task 11: scan dismissed[] summary for indirect prompt injection
+        'safari_dismiss_overlays',
       ]);
       if (EXTRACTION_TOOLS.has(name) && result.content) {
         const textContent = result.content
