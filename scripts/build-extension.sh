@@ -1,15 +1,14 @@
 #!/bin/bash
 set -euo pipefail
 
-# Parse --skip-notarize (or SKIP_NOTARIZE=1 env var). Default: notarize.
-# Skipping notarization is for local dev-loop iteration only — CI release
-# path leaves the flag off so shipped releases are always notarized.
-SKIP_NOTARIZE="${SKIP_NOTARIZE:-}"
-for arg in "$@"; do
-  case "$arg" in
-    --skip-notarize) SKIP_NOTARIZE=1 ;;
-  esac
-done
+# Notarize-always policy (v0.1.31, removed in response to user directive):
+# This script ALWAYS runs the full notarize pipeline. The --skip-notarize /
+# SKIP_NOTARIZE flag added in v0.1.30 was an anti-pattern that created a
+# dev-loop path tempting version-bump-skipping and producing ungatekeepered
+# builds Safari couldn't load reliably without "Allow Unsigned Extensions"
+# hacks. The user's directive ("just bump the version, use the ship protocol")
+# applies universally — every rebuild goes through:
+# Xcode archive → sign → notarize → stapler → spctl verify.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -300,32 +299,20 @@ echo "=== Notarizing ==="
 
 ditto -c -k --keepParent --norsrc --noextattr --noqtn --noacl "$APP_PATH" "$ROOT/bin/Safari Pilot.zip"
 
-if [[ "$SKIP_NOTARIZE" != "1" ]]; then
-  echo "[build-extension] notarizing..."
-  xcrun notarytool submit "$ROOT/bin/Safari Pilot.zip" \
-    --keychain-profile "apple-notarytool" --wait
-else
-  echo "[build-extension] SKIP_NOTARIZE=1: skipping notarytool submission"
-fi
+echo "[build-extension] notarizing..."
+xcrun notarytool submit "$ROOT/bin/Safari Pilot.zip" \
+  --keychain-profile "apple-notarytool" --wait
 
-if [[ "$SKIP_NOTARIZE" != "1" ]]; then
-  xcrun stapler staple "$APP_PATH"
+xcrun stapler staple "$APP_PATH"
 
-  # Re-zip with stapled ticket
-  rm "$ROOT/bin/Safari Pilot.zip"
-  ditto -c -k --keepParent --norsrc --noextattr --noqtn --noacl "$APP_PATH" "$ROOT/bin/Safari Pilot.zip"
-else
-  echo "[build-extension] SKIP_NOTARIZE=1: skipping stapler staple"
-fi
+# Re-zip with stapled ticket
+rm "$ROOT/bin/Safari Pilot.zip"
+ditto -c -k --keepParent --norsrc --noextattr --noqtn --noacl "$APP_PATH" "$ROOT/bin/Safari Pilot.zip"
 
 # ── Step 10: Final Gatekeeper check ─────────────────────────────────────────
 
 echo "=== Final Verification ==="
-if [[ "$SKIP_NOTARIZE" != "1" ]]; then
-  spctl -a -t exec -vv "$APP_PATH"
-  xcrun stapler validate "$APP_PATH"
-else
-  echo "[build-extension] SKIP_NOTARIZE=1: skipping spctl + stapler validate"
-fi
+spctl -a -t exec -vv "$APP_PATH"
+xcrun stapler validate "$APP_PATH"
 
 echo "=== Build Complete: v$VERSION (build $BUILD_NUMBER) ==="

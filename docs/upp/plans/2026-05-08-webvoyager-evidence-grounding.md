@@ -1105,15 +1105,15 @@ case 'execute_script': {
 
 `extension/manifest.json` must register `locator.js` in the MAIN-world `content_scripts` entry, BEFORE `content-main.js`. Do NOT register it in the ISOLATED world (would not be reachable from MAIN-world `window.__SP_LOCATOR__`). `background.js` is NOT touched.
 
-- [ ] **Step 4: Build the extension**
+- [ ] **Step 4: Build the extension (full notarize pipeline)**
 
 ```bash
-bash scripts/build-extension.sh --skip-notarize
+bash scripts/build-extension.sh
 ```
 
-(Local dev cycle uses `--skip-notarize` per `scripts/build-extension.sh` flag added in v0.1.30. For real release, full notarize per Task 23.)
+Per `feedback-no-skip-notarize`: every rebuild runs the FULL Xcode archive → sign → notarize → stapler → spctl-verify pipeline. There is no dev-loop shortcut. Notarytool round-trip is 5-15 minutes; that's the cost of the ship protocol and we pay it on every build. The `--skip-notarize` / `SKIP_NOTARIZE` flag was removed from the build script in v0.1.31.
 
-Expected: builds without errors, `bin/Safari Pilot.app` updated.
+Expected: full pipeline completes without errors; `bin/Safari Pilot.app` updated, signed, notarized, stapled, Gatekeeper-accepted.
 
 - [ ] **Step 5: Reload extension in Safari (manual)**
 
@@ -1979,8 +1979,10 @@ if (typeof params.script === 'string' && params.script.startsWith('__SP_DISMISS_
 - [ ] **Step 3: Build extension**
 
 ```bash
-bash scripts/build-extension.sh --skip-notarize
+bash scripts/build-extension.sh
 ```
+
+Full notarize pipeline (5-15 min). Per `feedback-no-skip-notarize`: no dev-loop shortcut.
 
 - [ ] **Step 4: Reload extension in Safari (manual)**
 
@@ -3686,7 +3688,7 @@ Per `feedback-distribution-builds` and `feedback-extension-build-safeguards`: so
 bash scripts/build-extension.sh
 ```
 
-This runs the full Xcode → archive → sign → notarize → stapler pipeline. Expect 5-15 minutes including notarize wait. Per `feedback-extension-build-safeguards`: NEVER use `--skip-notarize` for a release build (only for dev cycles).
+This runs the full Xcode → archive → sign → notarize → stapler pipeline. Expect 5-15 minutes including notarize wait. Per `feedback-no-skip-notarize`: there is no `--skip-notarize` flag — every rebuild from any task in this sprint runs the full pipeline. The flag was removed from the build script in v0.1.31.
 
 Expected: prints "Build complete" and `bin/Safari Pilot.app` updated with v0.1.31.
 
