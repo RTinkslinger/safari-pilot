@@ -8,7 +8,8 @@
   "components": {
     "commands": [
       "commands/start.md",
-      "commands/stop.md"
+      "commands/stop.md",
+      "commands/stats.md"
     ],
     "mcpServers": {
       "safari": {
