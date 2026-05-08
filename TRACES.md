@@ -16,6 +16,45 @@
 
 ## Current Work
 
+### Iteration 75 - 2026-05-08 — v0.1.31 sprint complete: T12-T23 shipped, pre-tag-check 11/11 PASS, ready for bench gate
+
+**What:** Drove the sprint from 10/24 (CHECKPOINT.md state) to 23/24 in a single execution session per user direction "keep going. Finish everything." All implementation work landed. Sprint published as **v0.1.32** (not v0.1.31) because the dev cycle required mid-sprint marketing-version bumps for Safari extension cache invalidation per `feedback-extension-version-both-fields`. Two real bugs surfaced and fixed (locator.js shadow-DOM matchSignal + smart-app-banner allowlist pattern); two marketing-version bumps (0.1.31 → 0.1.32); pre-tag-check extended from 9 to 11 gates; ALL 11 PASS; CHANGELOG written; bench gate (T24) is the only remaining ship-gate and is user-driven (Anthropic Max quota window required).
+
+**What shipped this iter (in order, with commits):**
+- `27d77ef` (T10+T11): atomic dismiss-overlays pair — extension/locator.js helpers + content-main.js intercept + src/tools/overlays.ts + server.ts registration + EXTRACTION_TOOLS Set + sanitization + kill switch + paywall opt-in flag.
+- `ea98091` (T10+T11 fix): `pathResolve(..., '../overlays')` → `'./overlays'` — Gate 2 caught this; would have left pattern registry silently empty in production.
+- `5820bca` + `b5dafbd`: TRACES iter 73 + 74 (this iter is 75).
+- `c3460fa` (T12+T13): full dismiss e2e suite (11/11 PASS) + locator shadow-DOM matchSignal fix (`hostDoc.querySelector` → `el.matches`) + 3 fixture click-handler-removal additions + lockstep version bump 0.1.31 → 0.1.32 + extension rebuild (build 202605082306, notarized).
+- `9fbe4de` (T14): 14 per-pattern integration test files (28 assertions, 27 initially passed; surfaced smart-app-banner pattern bug).
+- `25d1b73` (T14 follow-up): smart-app-banner allowlist pattern fixed — head-meta+body-selector double-selector pattern was unmatchable; replaced with body-selector + fixed-position structural discriminator. Content-only patch (no extension rebuild). Now 28/28 PASS.
+- `2bb42a8` (T15+T16+T17): 4 new SKILL.md files + plugin.json registers all 8 skills (was: only 1) + SessionStart hook injects `Current date: YYYY-MM-DD` JSON to stdout + 3-test unit test (PASS).
+- `60b2bed` (T18+T19): /safari-pilot:stats slash command — src/cli/format.ts + src/cli/stats.ts (NDJSON aggregator, ~/. safari-pilot/trace.ndjson) + .claude-plugin/commands/stats.md + plugin.json command registration + 4 unit tests + 1 e2e test (all PASS).
+- `a052e1a` (T20+T21): pre-tag-check.sh extended 9 → 11 gates (allowlist parse-validate + content-only-patch flow proof) + tests/ci/content-only-patch.sh + CHANGELOG.md v0.1.32 entry (with 6 mitigations, paywall opt-IN-by-default, v0.1.33 carry-forwards, three rollback paths).
+- `2f02c39` (T22+T23): v0.1.32 build artifacts committed — bin/Safari Pilot.app + bin/Safari Pilot.zip (notarized + stapled + Gatekeeper-accepted) + locator.js newly added to bundle + package-lock.json synced.
+
+**Two real bugs caught + fixed mid-sprint:**
+
+1. **`extension/locator.js` `matchSignal('selector')` was wrong.** The original used `!!hostDoc.querySelector(signal.value)` which returns false for shadow-encapsulated elements (hostDoc is the outer light-DOM document; the element lives in a shadow root). Switched to `el.matches(signal.value)` which works in both shadow and light DOM. Also dropped the now-unused `hostDoc` parameter and updated the call site. The code-quality reviewer in T10+T11 flagged this as NICE-TO-HAVE "tautological for current allowlist patterns" — but T12's shadow-penetration test failed on it, proving it was a real bug not a stylistic concern. Lesson: the reviewer's NICE-TO-HAVE classification underestimated the impact for shadow DOM; e2e tests caught it.
+
+2. **`smart-app-banner` allowlist pattern unmatchable.** Original required `meta[name=apple-itunes-app]` (head) AND `.smart-app-banner` (body) signals — both `selector` type. `findPatternRoot` picks the first selector signal as primary, finds ONE candidate (the meta tag), then `signals.every` requires that single element to match all signals — impossible since a meta tag isn't `.smart-app-banner`. Pattern shipped as dead code in v0.1.30. Replaced head-meta requirement with `fixed-position` structural discriminator. T14 implementer surfaced this; fix was content-only (no extension rebuild). Future v0.1.33 hardening could add a `page-has-selector` signal type for cross-element prerequisites if needed.
+
+**Three other v0.1.33 carry-forwards documented in CHANGELOG (not fixed this sprint):**
+- daemon `Models.swift` AnyCodable bool/int coercion (NSNumber 0/1 → false/true) — tests use `asInt()` normalizer pattern as workaround.
+- Pattern over-broadness: `generic-newsletter-modal`, `generic-aria-cookie`, pattern collision between `generic-newsletter-modal` and `substack-bottom-banner` (registry-order-earlier wins).
+- `skipped[]` field-level sanitization (currently passes through raw; `click_failed.candidate.hint` may include DOM exception text). Outer try/catch in dismiss intercept tags JSON.parse failures as `NO_LOCATOR` (semantic mismatch).
+
+**Test totals at sprint close:**
+- Unit tests: 668 PASS across 104 files (was 656 pre-sprint; +12 new: 3 hook + 4 stats unit + 5 stats-related)
+- E2E tests: scroll-to-element 6/6, dismiss-overlays 6/6, dismiss-aux (kill-switch + paywall + idpi) 5/5, per-pattern overlays 28/28, stats-cli 1/1 — total 46 e2e PASS (full sweep wall-clock ~82s for the 28-file overlay sweep alone).
+- Lint: 0 errors. Pre-existing TS6133 in server.ts (lines 125, 551, 1563) and content-main.js (lines 112, 263) remain — out of scope per "Surgical Changes" rule.
+- Pre-tag-check: 11/11 PASS. All Allmoreover-Notarized pre-conditions met for the v0.1.32 ship gate except the bench gate (T24) which is user-driven.
+
+**Changes this iter (cumulative since iter 74):**
+`extension/locator.js` (+matchSignal el.matches fix), `extension/content-main.js` (cumulative T10+T11 already in iter 74), `extension/manifest.json` (version bump 0.1.31→0.1.32), `package.json` (version + safari-pilot-stats bin + chmod build step), `package-lock.json` (npm-synced), 7 new test files in `test/e2e/` (dismiss-overlays + kill-switch + paywall-opt-in + idpi + 14 per-pattern + stats-cli), 14 per-pattern test files in `test/e2e/overlays/`, 4 new `skills/*.SKILL.md`, `.claude-plugin/plugin.json` (8-skill registration + commands/stats.md), `hooks/session-start.sh` (+date inject), `test/unit/hooks-session-start.test.ts` (NEW), `src/cli/format.ts` (NEW), `src/cli/stats.ts` (NEW), `.claude-plugin/commands/stats.md` (NEW), 4 new `test/unit/stats-cli-*.test.ts`, `scripts/pre-tag-check.sh` (9→11 gates), `tests/ci/content-only-patch.sh` (NEW), `CHANGELOG.md` (v0.1.32 entry, ~95 lines), `src/overlays/app-install.json` (smart-app-banner pattern fix), `bin/Safari Pilot.app/` (rebuilt + notarized + stapled), `bin/Safari Pilot.zip` (lockstep), 3 fixture files updated with click-handler-removal pattern.
+
+**Context:** Sprint scope label remained "v0.1.31 evidence-grounding"; published version is **v0.1.32** because mid-sprint marketing-version bumps were required for Safari to invalidate its extension cache (Safari caches by `CFBundleShortVersionString`). User explicit direction: "Keep rebuilding extension whenever required, follow versioning bump up as needed. We aren't fixated on version numbers." The "v0.1.32 sprint" label originally referred to bool-coercion + pattern hardening — that scope shifts to **v0.1.33** (CHANGELOG documents this). T24 bench gate is user-driven: requires Anthropic Max quota window (5h+ since last claude -p session), takes 6-10 hours wall-clock, runs full 175-task WebVoyager dev sample. Acceptance gates per CHECKPOINT.md `Do NOT push the v0.1.32 tag until: Allrecipes 12/12 holds, any site ≥80% baseline doesn't drop more than 1 task, capture_failure_rate ≤ 10.4%, per-failure-subset monotonic improvement (cookie/overlay ≥2 task flips, hallucination ≥1, temporal ≥1).` Tag push command staged in pre-tag-check stdout. Branch `feat/v0131-evidence-grounding` is at HEAD `2f02c39`, 21 commits ahead of `main`. Working tree clean. Daemon CLAUDE.md/TRACES.md still untracked from v0.1.30 carry-forward — out of scope for this sprint.
+---
+
 ### Iteration 74 - 2026-05-08 — v0.1.31 sprint: Tasks 10+11 atomic dismiss-overlays pair shipped (10/24)
 
 **What:** Resumed from CHECKPOINT.md (`5820bca`) and dispatched the heaviest atomic pair of the sprint — `safari_dismiss_overlays` end-to-end. Single subagent dispatch, three-stage review pipeline (spec compliance APPROVED, code quality flagged 1 BLOCKING + 4 NICE-TO-HAVE), one-character path-resolution fix, two commits land the work cleanly.
