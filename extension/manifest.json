@@ -44,6 +44,7 @@
         "<all_urls>"
       ],
       "js": [
+        "locator.js",
         "content-main.js"
       ],
       "run_at": "document_idle",

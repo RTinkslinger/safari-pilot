@@ -40,6 +40,7 @@ export class InteractionTools {
     this.handlers.set('safari_scroll', this.handleScroll.bind(this));
     this.handlers.set('safari_drag', this.handleDrag.bind(this));
     this.handlers.set('safari_handle_dialog', this.handleHandleDialog.bind(this));
+    this.handlers.set('safari_scroll_to_element', this.handleScrollToElement.bind(this));
   }
 
   // ── Element Resolution & Auto-Wait ─────────────────────────────────────────
@@ -368,6 +369,32 @@ export class InteractionTools {
           required: ['tabUrl', 'autoHandle', 'action'],
         },
         requirements: { idempotent: false },
+      },
+      {
+        name: 'safari_scroll_to_element',
+        description:
+          'Scroll a specific element into the visible viewport. Provide one of '
+          + '{selector, text, role+name} — the tool resolves to a DOM node and '
+          + 'scrolls it to vertical center. Useful before safari_take_screenshot '
+          + 'when the answer-bearing content is off-screen, or to bring a section '
+          + 'into focus after navigation. On multi-match, scrolls to first match '
+          + 'and returns the full candidate list. Resolution precedence: selector '
+          + '> role+name > text. text matches DOM textContent only — NOT form values.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            tabUrl:   { type: 'string', format: 'uri' },
+            selector: { type: 'string', description: 'CSS selector (preferred when known)' },
+            text:     { type: 'string', description: 'Visible text substring (case-insensitive, whitespace-normalized). DOM text only — does NOT match form values.' },
+            role:     { type: 'string', description: 'ARIA role (e.g. "button", "heading")' },
+            name:     { type: 'string', description: 'Accessible name for role-based lookup' },
+            nth:      { type: 'integer', minimum: 0, description: '0-based index for multi-match disambiguation' },
+            behavior: { type: 'string', enum: ['instant', 'smooth'], default: 'instant' },
+          },
+          required: ['tabUrl'],
+          additionalProperties: false,
+        },
+        requirements: { requiresAsyncJs: true, idempotent: true },
       },
     ];
   }
@@ -950,6 +977,42 @@ export class InteractionTools {
   }
 
   // ── Private helpers ─────────────────────────────────────────────────────────
+
+  private async handleScrollToElement(params: Record<string, unknown>): Promise<ToolResponse> {
+    const start = Date.now();
+    const tabUrl = params['tabUrl'] as string | undefined;
+    if (!tabUrl) {
+      const err = new Error('tabUrl is required');
+      (err as Error & { code?: string }).code = 'INVALID_PARAMS';
+      throw err;
+    }
+    const selector = params['selector'] as string | undefined;
+    const text = params['text'] as string | undefined;
+    const role = params['role'] as string | undefined;
+    const name = params['name'] as string | undefined;
+    if (!selector && !text && !role) {
+      const err = new Error('At least one of {selector, text, role} is required');
+      (err as Error & { code?: string }).code = 'INVALID_PARAMS';
+      throw err;
+    }
+    const nth = (params['nth'] as number | undefined) ?? 0;
+    const behavior = (params['behavior'] as string | undefined) ?? 'instant';
+
+    const sentinel =
+      '__SP_SCROLL_TO_ELEMENT__:' + JSON.stringify({ selector, text, role, name, nth, behavior });
+    const result = await this.engine.executeJsInTab(tabUrl, sentinel, 30_000);
+    if (!result.ok) {
+      const err = new Error(result.error?.message ?? 'safari_scroll_to_element failed');
+      if (result.error?.code) (err as Error & { code?: string }).code = result.error.code;
+      throw err;
+    }
+
+    const parsed = result.value ? JSON.parse(result.value) : {};
+    return {
+      content: [{ type: 'text', text: JSON.stringify(parsed) }],
+      metadata: { engine: 'extension' as Engine, degraded: false, latencyMs: Date.now() - start },
+    };
+  }
 
   private makeResponse(data: unknown, latencyMs: number = 0): ToolResponse {
     return {

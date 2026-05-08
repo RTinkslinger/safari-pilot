@@ -550,6 +550,64 @@
             break;
           }
           case 'execute_script': {
+            // ── EARLY INTERCEPT: __SP_SCROLL_TO_ELEMENT__:<json> (v0.1.31 Task 5) ──
+            // Sentinel-routed handler for safari_scroll_to_element. Sits at the
+            // top of the case so it runs before commandId caching and the
+            // _Function compile path. Errors thrown here flow through the outer
+            // catch → respond(false, { error: { message, name } }), which the
+            // daemon (ExtensionBridge.handleResult) maps to error.code on the
+            // Node side via StructuredError.code = error.name.
+            if (typeof params.script === 'string' && params.script.startsWith('__SP_SCROLL_TO_ELEMENT__:')) {
+              const args = JSON.parse(params.script.slice('__SP_SCROLL_TO_ELEMENT__:'.length));
+              const sel = args.selector;
+              const txt = args.text;
+              const role = args.role;
+              const name = args.name;
+              const nth = typeof args.nth === 'number' ? args.nth : 0;
+              const behavior = args.behavior === 'smooth' ? 'smooth' : 'instant';
+              const L = window.__SP_LOCATOR__;
+              if (!L) {
+                throw Object.assign(
+                  new Error('locator.js not loaded in MAIN world'),
+                  { name: 'TARGET_NOT_FOUND' },
+                );
+              }
+              const candidates = L.resolveScrollTargets({ selector: sel, text: txt, role, name });
+              if (candidates.length === 0) {
+                const hidden = L.resolveScrollTargets({ selector: sel, text: txt, role, name, includeHidden: true });
+                if (hidden.length > 0) {
+                  throw Object.assign(
+                    new Error('element exists but is not visible (display:none, hidden, or in closed <details>)'),
+                    { name: 'TARGET_HIDDEN' },
+                  );
+                }
+                throw Object.assign(
+                  new Error('no element matched the provided locator'),
+                  { name: 'TARGET_NOT_FOUND' },
+                );
+              }
+              if (nth >= candidates.length) {
+                throw Object.assign(
+                  new Error('nth=' + nth + ' out of range (matchCount=' + candidates.length + ')'),
+                  { name: 'INVALID_PARAMS' },
+                );
+              }
+              const target = candidates[nth];
+              const fromY = window.scrollY;
+              target.element.scrollIntoView({ behavior, block: 'center', inline: 'nearest' });
+              await L.waitForScrollSettle(500);
+              const matchedNode = L.serializeNode(target.element);
+              const allMatches = candidates.length > 1
+                ? candidates.slice(0, 5).map((c) => L.serializeNode(c.element, true))
+                : undefined;
+              result = {
+                scrolledTo: { strategy: target.strategy, matchedNode, matchCount: candidates.length, allMatches },
+                viewport: { scrollX: window.scrollX, scrollY: window.scrollY, innerWidth: window.innerWidth, innerHeight: window.innerHeight },
+                scrolledFromY: fromY,
+              };
+              break;
+            }
+            // ── existing default execute_script path ──
             const commandId = params.commandId;
             if (commandId && window.__safariPilotExecutedCommands.has(commandId)) {
               const cached = window.__safariPilotExecutedCommands.get(commandId);
