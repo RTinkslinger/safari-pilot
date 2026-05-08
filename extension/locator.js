@@ -192,10 +192,13 @@
   }
 
   // ── matchSignal: does element satisfy a single signal? ──────────────────
-  function matchSignal(el, signal, hostDoc) {
+  function matchSignal(el, signal) {
     switch (signal.type) {
       case 'selector':
-        return !!hostDoc.querySelector(signal.value);
+        // Element-matches, not document-querySelector. The latter returns false
+        // for shadow-encapsulated elements because hostDoc is the outer light-DOM
+        // document. el.matches() works in both shadow and light DOM.
+        return !!(el.matches && el.matches(signal.value));
       case 'aria-label-substring': {
         const label = (el.getAttribute && el.getAttribute('aria-label')) || '';
         const v = signal.caseInsensitive ? signal.value.toLowerCase() : signal.value;
@@ -237,7 +240,7 @@
       if (c) candidates.push(c);
     }
     for (const el of candidates) {
-      const allMatch = pattern.signals.every((s) => matchSignal(el, s, el.ownerDocument));
+      const allMatch = pattern.signals.every((s) => matchSignal(el, s));
       if (allMatch) return el;
     }
     return null;

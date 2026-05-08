@@ -10,6 +10,13 @@ export function startOneTrustFixture(port = 0): { server: Server; url: () => str
   <button id="onetrust-accept-btn-handler">Accept All Cookies</button>
   <button id="onetrust-reject-all-handler">Reject All</button>
 </div>
+<script>
+  // Mimic OneTrust's real behavior: Accept/Reject removes the banner.
+  // Without this the pattern's verify (node-removed) fails and dismissal lands in skipped[].
+  function removeBanner(){var n=document.getElementById('onetrust-banner-sdk');if(n)n.parentNode.removeChild(n);}
+  document.getElementById('onetrust-accept-btn-handler').addEventListener('click',removeBanner);
+  document.getElementById('onetrust-reject-all-handler').addEventListener('click',removeBanner);
+</script>
 </body></html>`;
   const server = createServer((_req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });

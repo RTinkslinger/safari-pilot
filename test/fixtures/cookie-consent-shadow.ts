@@ -14,6 +14,11 @@ export function startShadowCookieFixture(port = 0): { server: Server; url: () =>
       <button id="onetrust-accept-btn-handler">Accept</button>
     </div>
   \`;
+  // Mimic real banner behavior so verify (node-removed) passes after click.
+  shadow.querySelector('#onetrust-accept-btn-handler').addEventListener('click', function() {
+    var n = shadow.querySelector('#onetrust-banner-sdk');
+    if (n) n.parentNode.removeChild(n);
+  });
 </script>
 </body></html>`;
   const server = createServer((_req, res) => {
