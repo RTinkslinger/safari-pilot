@@ -51,6 +51,8 @@ export const ERROR_CODES = {
   CAPTURE_RACE: 'CAPTURE_RACE',
   CAPTURE_FAILED: 'CAPTURE_FAILED',
   INVALID_PARAMS: 'INVALID_PARAMS',
+  TARGET_NOT_FOUND: 'TARGET_NOT_FOUND',
+  TARGET_HIDDEN: 'TARGET_HIDDEN',
 } as const;
 // SD-22 (2026-04-25): removed 4 dead codes (ELEMENT_NOT_INTERACTABLE,
 // CROSS_ORIGIN_FRAME, DIALOG_UNEXPECTED, FRAME_NOT_FOUND) — declared but
@@ -71,6 +73,20 @@ export const ERROR_METADATA: Partial<Record<ErrorCode, { retryable: boolean; hin
   CAPTURE_RACE:   { retryable: true,  hints: ['Another tab became active during the capture window. Retry; if persistent, reduce concurrent activity in this Safari window.'] },
   CAPTURE_FAILED: { retryable: true,  hints: ['Screenshot capture API failed. Verify Safari extension is enabled and the page is fully loaded.'] },
   INVALID_PARAMS: { retryable: false, hints: ['Tool was called with parameters that violate its input schema.'] },
+  TARGET_NOT_FOUND: {
+    retryable: false,
+    hints: [
+      'No element matched the provided locator. If target is in a cross-origin iframe, the locator cannot reach it.',
+      'Try a broader text substring, a different selector, or call safari_get_text to inspect page structure first.',
+    ],
+  },
+  TARGET_HIDDEN: {
+    retryable: false,
+    hints: [
+      'Element exists but is display:none, visibility:hidden, or inside a closed <details>.',
+      'Tool does NOT auto-expand parents (idempotency). Agent may need to expand a parent element first.',
+    ],
+  },
 };
 
 // ─── Abstract Base ────────────────────────────────────────────────────────────
