@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "category": "cookie-consent",
+  "patterns": [
+    {
+      "id": "test-pattern",
+      "signals": [
+        { "type": "selector", "value": "#test-banner" },
+        { "type": "aria-label-substring", "value": "cookie", "caseInsensitive": true }
+      ],
+      "dismiss": { "action": "click", "selector": "#accept" },
+      "verify": { "type": "node-removed", "stabilityMs": 250 }
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "category": "cookie-consent",
+  "patterns": [
+    {
+      "id": "single-signal",
+      "signals": [{ "type": "selector", "value": "#solo" }],
+      "dismiss": { "action": "click", "selector": "#accept" },
+      "verify": { "type": "node-removed", "stabilityMs": 250 }
+    }
+  ]
+}
