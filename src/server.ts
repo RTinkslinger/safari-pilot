@@ -427,11 +427,11 @@ export class SafariPilotServer {
     );
 
     // ── Overlay dismiss tool (v0.1.31 Task 11) ───────────────────────────────
-    // Resolve overlays/ dir relative to THIS file's location so it works whether
-    // running from dist/ (production) or via tsx (dev). The `..` step resolves
-    // dist/ → dist/overlays or src/ → src/overlays — both have the JSON files
-    // (dev: source files; prod: copied during build via package.json build script).
-    const overlaysDir = pathResolve(dirname(fileURLToPath(import.meta.url)), '../overlays');
+    // Resolve overlays/ dir as a sibling of THIS file's directory so it works
+    // whether running from dist/ (production) or via tsx (dev). dist/server.js
+    // sits next to dist/overlays/; src/server.ts sits next to src/overlays/.
+    // dist/overlays/ is populated by the package.json build script.
+    const overlaysDir = pathResolve(dirname(fileURLToPath(import.meta.url)), './overlays');
     let overlayPatterns: PatternRegistryEntry[] = [];
     try {
       overlayPatterns = loadAllAllowlists(overlaysDir);
