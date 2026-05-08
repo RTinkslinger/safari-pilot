@@ -1,0 +1,45 @@
+{
+  "version": 1,
+  "category": "paywall",
+  "patterns": [
+    {
+      "id": "nyt-soft-paywall",
+      "signals": [
+        { "type": "selector", "value": "#gateway-content, #site-content [data-testid=gateway-container]" },
+        { "type": "aria-label-substring", "value": "subscribe", "caseInsensitive": true }
+      ],
+      "dismiss": {
+        "action": "remove-node",
+        "selector": "#gateway-content, #site-content [data-testid=gateway-container]"
+      },
+      "verify": { "type": "node-removed", "stabilityMs": 250 },
+      "notes": "OPT-IN ONLY (enablePaywallDismiss). Removes overlay element only; does not bypass server-side gating."
+    },
+    {
+      "id": "ft-modal-paywall",
+      "signals": [
+        { "type": "selector", "value": ".o-modal[data-o-component=o-overlay], #o-overlay-paywall" },
+        { "type": "aria-label-substring", "value": "subscribe", "caseInsensitive": true }
+      ],
+      "dismiss": {
+        "action": "remove-node",
+        "selector": ".o-modal[data-o-component=o-overlay], #o-overlay-paywall"
+      },
+      "verify": { "type": "node-removed", "stabilityMs": 250 },
+      "notes": "OPT-IN ONLY. Overlay-only removal; underlying article body may still be gated server-side."
+    },
+    {
+      "id": "bloomberg-overlay",
+      "signals": [
+        { "type": "selector", "value": ".paywall-banner, [data-component=paywall-overlay]" },
+        { "type": "fixed-position", "value": "true" }
+      ],
+      "dismiss": {
+        "action": "remove-node",
+        "selector": ".paywall-banner, [data-component=paywall-overlay]"
+      },
+      "verify": { "type": "node-removed", "stabilityMs": 250 },
+      "notes": "OPT-IN ONLY."
+    }
+  ]
+}

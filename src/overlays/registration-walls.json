@@ -1,0 +1,45 @@
+{
+  "version": 1,
+  "category": "registration-wall",
+  "patterns": [
+    {
+      "id": "generic-newsletter-modal",
+      "signals": [
+        { "type": "selector", "value": "[role=dialog]" },
+        { "type": "aria-label-substring", "value": "subscribe", "caseInsensitive": true }
+      ],
+      "dismiss": {
+        "action": "click",
+        "selector": "[role=dialog] [aria-label*=close i], [role=dialog] [aria-label*=dismiss i]",
+        "fallbackAction": "esc-key"
+      },
+      "verify": { "type": "node-removed", "stabilityMs": 250 }
+    },
+    {
+      "id": "substack-bottom-banner",
+      "signals": [
+        { "type": "selector", "value": ".main-modal" },
+        { "type": "aria-label-substring", "value": "subscribe", "caseInsensitive": true }
+      ],
+      "dismiss": {
+        "action": "click",
+        "selector": ".main-modal button[aria-label*=close i]",
+        "fallbackAction": "esc-key"
+      },
+      "verify": { "type": "node-removed", "stabilityMs": 250 }
+    },
+    {
+      "id": "medium-meter-prompt",
+      "signals": [
+        { "type": "selector", "value": "[data-testid=metered-prompt]" },
+        { "type": "aria-role", "value": "dialog" }
+      ],
+      "dismiss": {
+        "action": "click",
+        "selector": "[data-testid=metered-prompt] [aria-label*=close i]",
+        "fallbackAction": "esc-key"
+      },
+      "verify": { "type": "node-removed", "stabilityMs": 250 }
+    }
+  ]
+}

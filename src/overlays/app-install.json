@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "category": "app-install",
+  "patterns": [
+    {
+      "id": "smart-app-banner",
+      "signals": [
+        { "type": "selector", "value": "meta[name=apple-itunes-app]" },
+        { "type": "selector", "value": ".smart-app-banner, [class*=smartbanner i]" }
+      ],
+      "dismiss": {
+        "action": "click",
+        "selector": ".smart-app-banner [aria-label*=close i], [class*=smartbanner i] [aria-label*=close i]"
+      },
+      "verify": { "type": "node-removed", "stabilityMs": 250 }
+    },
+    {
+      "id": "twitter-open-in-app",
+      "signals": [
+        { "type": "selector", "value": "[data-testid=BottomBar]" },
+        { "type": "aria-label-substring", "value": "open in", "caseInsensitive": true }
+      ],
+      "dismiss": {
+        "action": "click",
+        "selector": "[data-testid=BottomBar] [aria-label*=dismiss i]"
+      },
+      "verify": { "type": "node-removed", "stabilityMs": 250 }
+    }
+  ]
+}

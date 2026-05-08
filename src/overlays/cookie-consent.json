@@ -1,0 +1,82 @@
+{
+  "version": 1,
+  "category": "cookie-consent",
+  "patterns": [
+    {
+      "id": "onetrust-banner",
+      "signals": [
+        { "type": "selector", "value": "#onetrust-banner-sdk" },
+        { "type": "aria-label-substring", "value": "cookie", "caseInsensitive": true }
+      ],
+      "dismiss": {
+        "action": "click",
+        "selector": "#onetrust-accept-btn-handler",
+        "fallbackAction": "click",
+        "fallbackSelector": "#onetrust-reject-all-handler"
+      },
+      "verify": { "type": "node-removed", "stabilityMs": 250 },
+      "notes": "OneTrust GDPR banner; ~30% of GDPR sites use this"
+    },
+    {
+      "id": "cookiebot-dialog",
+      "signals": [
+        { "type": "selector", "value": "#CybotCookiebotDialog" },
+        { "type": "aria-role", "value": "dialog" }
+      ],
+      "dismiss": {
+        "action": "click",
+        "selector": "#CybotCookiebotDialogBodyLevelButtonLevelOptinAllowAll"
+      },
+      "verify": { "type": "node-removed", "stabilityMs": 250 }
+    },
+    {
+      "id": "quantcast-cmp",
+      "signals": [
+        { "type": "selector", "value": ".qc-cmp2-container" },
+        { "type": "aria-label-substring", "value": "consent", "caseInsensitive": true }
+      ],
+      "dismiss": {
+        "action": "click",
+        "selector": ".qc-cmp2-summary-buttons button[mode=primary]"
+      },
+      "verify": { "type": "node-removed", "stabilityMs": 250 }
+    },
+    {
+      "id": "trustarc-banner",
+      "signals": [
+        { "type": "selector", "value": "#truste-consent-track" },
+        { "type": "aria-label-substring", "value": "cookie", "caseInsensitive": true }
+      ],
+      "dismiss": {
+        "action": "click",
+        "selector": "#truste-consent-button"
+      },
+      "verify": { "type": "node-removed", "stabilityMs": 250 }
+    },
+    {
+      "id": "didomi-notice",
+      "signals": [
+        { "type": "selector", "value": "#didomi-notice" },
+        { "type": "aria-role", "value": "dialog" }
+      ],
+      "dismiss": {
+        "action": "click",
+        "selector": "#didomi-notice-agree-button"
+      },
+      "verify": { "type": "node-removed", "stabilityMs": 250 }
+    },
+    {
+      "id": "generic-aria-cookie",
+      "signals": [
+        { "type": "selector", "value": "[role=dialog][aria-label*=cookie i], [role=dialog][aria-label*=consent i]" },
+        { "type": "fixed-position", "value": "true" }
+      ],
+      "dismiss": {
+        "action": "click",
+        "selector": "[role=dialog] button[aria-label*=accept i], [role=dialog] button[aria-label*=agree i]"
+      },
+      "verify": { "type": "node-removed", "stabilityMs": 250 },
+      "notes": "Fallback for generic ARIA-conformant cookie dialogs"
+    }
+  ]
+}
