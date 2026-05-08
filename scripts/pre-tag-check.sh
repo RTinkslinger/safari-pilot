@@ -37,7 +37,7 @@ pass() { green "PASS: $*"; }
 bold "=== Pre-tag check (mirrors release.yml) ==="
 
 # ── 1. Working tree clean? ──────────────────────────────────────────────────
-bold "[1/9] Working tree clean (excluding gitignored)"
+bold "[1/11] Working tree clean (excluding gitignored)"
 if [[ -n "$(git status --porcelain | grep -v '^??' || true)" ]]; then
   red "FAIL: uncommitted tracked changes"
   git status --porcelain | grep -v '^??'
@@ -46,7 +46,7 @@ fi
 pass "no uncommitted tracked changes"
 
 # ── 2. Versions in lockstep ─────────────────────────────────────────────────
-bold "[2/9] Versions in lockstep (package.json + extension/manifest.json)"
+bold "[2/11] Versions in lockstep (package.json + extension/manifest.json)"
 PKG_VER=$(node -p "require('./package.json').version")
 EXT_VER=$(node -p "require('./extension/manifest.json').version")
 if [[ "$PKG_VER" != "$EXT_VER" ]]; then
@@ -55,7 +55,7 @@ fi
 pass "both at $PKG_VER"
 
 # ── 3. Extension .app present and signed ───────────────────────────────────
-bold "[3/9] bin/Safari Pilot.app signed + entitled"
+bold "[3/11] bin/Safari Pilot.app signed + entitled"
 APP="bin/Safari Pilot.app"
 APPEX="$APP/Contents/PlugIns/Safari Pilot Extension.appex"
 if [[ ! -d "$APP" ]]; then fail "$APP missing — run scripts/build-extension.sh"; fi
@@ -75,7 +75,7 @@ xcrun stapler validate "$APP" >/dev/null 2>&1 \
 pass "app + appex signed, entitled (sandbox + network.client), notarization stapled"
 
 # ── 4. Extension .zip is clean (no AppleDouble) ─────────────────────────────
-bold "[4/9] bin/Safari Pilot.zip free of AppleDouble (._*) metadata"
+bold "[4/11] bin/Safari Pilot.zip free of AppleDouble (._*) metadata"
 ZIP="bin/Safari Pilot.zip"
 if [[ ! -f "$ZIP" ]]; then fail "$ZIP missing — run scripts/build-extension.sh"; fi
 DOTFILE_COUNT=$(unzip -l "$ZIP" | grep -c "/\\._" || true)
@@ -89,7 +89,7 @@ fi
 pass "$ZIP clean (0 AppleDouble entries)"
 
 # ── 5. Extracted .zip survives codesign --deep --strict ────────────────────
-bold "[5/9] Extracted .zip survives codesign --deep --strict (mirrors CI T47)"
+bold "[5/11] Extracted .zip survives codesign --deep --strict (mirrors CI T47)"
 TMP=$(mktemp -d)
 trap "rm -rf $TMP" EXIT
 unzip -qq "$ZIP" -d "$TMP"
@@ -100,7 +100,7 @@ xcrun stapler validate "$TMP/Safari Pilot.app" >/dev/null 2>&1 \
 pass "extracted bundle would pass CI T47 verify"
 
 # ── 6. Daemon binary present ────────────────────────────────────────────────
-bold "[6/9] bin/SafariPilotd present and executable"
+bold "[6/11] bin/SafariPilotd present and executable"
 DAEMON="bin/SafariPilotd"
 if [[ ! -f "$DAEMON" ]]; then fail "$DAEMON missing — run scripts/update-daemon.sh OR pull from GitHub Release"; fi
 [[ -x "$DAEMON" ]] || fail "$DAEMON not executable"
@@ -116,14 +116,14 @@ else
 fi
 
 # ── 7. Tests still green ────────────────────────────────────────────────────
-bold "[7/9] Unit tests pass"
+bold "[7/11] Unit tests pass"
 npm run test:unit > /tmp/pre-tag-test-output.log 2>&1 \
   || { red "FAIL: unit tests failing — see /tmp/pre-tag-test-output.log"; tail -20 /tmp/pre-tag-test-output.log; exit 1; }
 COUNT=$(grep -oE "Tests +[0-9]+ passed" /tmp/pre-tag-test-output.log | tail -1 || echo "")
 pass "unit tests green ($COUNT)"
 
 # ── 8. Tag doesn't already exist ────────────────────────────────────────────
-bold "[8/9] Tag v$PKG_VER not yet created"
+bold "[8/11] Tag v$PKG_VER not yet created"
 if git tag -l | grep -qx "v$PKG_VER"; then
   fail "tag v$PKG_VER already exists locally — bump version OR delete tag (git tag -d v$PKG_VER && git push origin :refs/tags/v$PKG_VER)"
 fi
@@ -133,12 +133,28 @@ fi
 pass "v$PKG_VER not yet on local or remote"
 
 # ── 9. Prepublish hook simulation (uses real CI=true env) ───────────────────
-bold "[9/9] Prepublish hook short-circuits on CI markers"
+bold "[9/11] Prepublish hook short-circuits on CI markers"
 HOOK_OUTPUT=$(CI=true bash hooks/pre-publish-verify.sh 2>&1) \
   || fail "prepublish hook fails even with CI=true — would block CI publish (was the original v0.1.24 bug)"
 echo "$HOOK_OUTPUT" | grep -q "skipped on CI" \
   || fail "prepublish hook didn't short-circuit on CI=true — message expected: 'Pre-publish verify: skipped on CI...'"
 pass "prepublish hook will let CI publish proceed"
+
+# ── 10. Allowlist JSON files parse against loader schema (v0.1.31) ──────────
+bold "[10/11] Allowlist JSON files parse against loader (two-signal rule etc.)"
+node -e "
+const { loadAllAllowlists } = require('./dist/overlays/index.js');
+const registry = loadAllAllowlists('./dist/overlays');
+const cats = new Set(registry.map(p => p.category));
+console.log('  ' + registry.length + ' patterns across ' + cats.size + ' categories: ' + Array.from(cats).join(', '));
+" || fail "allowlist parse failed — fix src/overlays/*.json before tagging"
+pass "allowlist OK"
+
+# ── 11. Content-only patch flow proof (v0.1.31) ─────────────────────────────
+bold "[11/11] Content-only patch: allowlist JSON edits do NOT trigger extension rebuild"
+bash tests/ci/content-only-patch.sh \
+  || fail "content-only patch flow broken — allowlist patch path must not require extension rebuild"
+pass "content-only patch path verified"
 
 bold ""
 green "=== ALL CHECKS PASSED — safe to tag v$PKG_VER and push ==="
