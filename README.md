@@ -120,19 +120,24 @@ Monitor news.ycombinator.com for any post about our company
 Open my X.com bookmarks and extract the top 5 posts with author profiles
 ```
 
-## Tool Catalog (82 Tools)
+## Tool Catalog (88 Tools)
 
 ### Navigation (7)
 `safari_navigate` | `safari_navigate_back` | `safari_navigate_forward` | `safari_reload` | `safari_new_tab` | `safari_close_tab` | `safari_list_tabs`
 
-### Interaction (11)
-`safari_click` | `safari_double_click` | `safari_fill` | `safari_select_option` | `safari_check` | `safari_hover` | `safari_type` | `safari_press_key` | `safari_scroll` | `safari_drag` | `safari_handle_dialog`
+### Interaction (12)
+`safari_click` | `safari_double_click` | `safari_fill` | `safari_select_option` | `safari_check` | `safari_hover` | `safari_type` | `safari_press_key` | `safari_scroll` | `safari_scroll_to_element` | `safari_drag` | `safari_handle_dialog`
+
+`safari_scroll_to_element` (v0.1.31) scrolls a specific element into the visible viewport via {selector, text, role+name}. Open shadow root penetration; same-origin iframe traversal. Returns matched-node descriptor + viewport state + multi-match candidates.
+
+### Overlays (1)
+`safari_dismiss_overlays` — detects and dismisses ~14 known overlay patterns (cookie-consent, registration-wall, app-install, paywall) using a curated allowlist with a two-signal-per-pattern rule. id-only sanitized response. Six safety mitigations including a kill switch (`SAFARI_PILOT_DISABLE_OVERLAY_DISMISS=true`) and paywall opt-IN-by-default flag (`SAFARI_PILOT_ENABLE_PAYWALL_DISMISS=true`). New in v0.1.31.
 
 ### File Upload (1)
 `safari_file_upload` — programmatic upload to standard `<input type=file>` elements, including hidden inputs behind `<label>` (use `force: true`). 25 MiB / file × 4 / call. Path B architecture: out-of-band byte transport via daemon staging → extension fetch. Does NOT support drag-and-drop dropzones, custom pickers, or native OS dialogs.
 
-### Extraction (7)
-`safari_snapshot` | `safari_get_text` | `safari_get_html` | `safari_get_attribute` | `safari_evaluate` | `safari_take_screenshot` | `safari_get_console_messages`
+### Extraction (8)
+`safari_snapshot` | `safari_get_text` | `safari_get_html` | `safari_get_attribute` | `safari_evaluate` | `safari_take_screenshot` | `safari_get_console_messages` | `safari_query_all`
 
 ### Network (10)
 `safari_list_network_requests` | `safari_get_network_request` | `safari_intercept_requests` | `safari_network_throttle` | `safari_network_offline` | `safari_mock_request` | `safari_websocket_listen` | `safari_websocket_filter` | `safari_dump_har` | `safari_route_from_har`
@@ -181,6 +186,31 @@ Open my X.com bookmarks and extract the top 5 posts with author profiles
 
 ### System (2)
 `safari_health_check` | `safari_emergency_stop`
+
+### Discovery (1)
+`safari_tool_search` — query the registered tool index with natural-language intent strings; returns ranked tool descriptors. Reduces total-tokens cost when the agent needs a specific capability without preloading the full tool surface.
+
+### Skills (2)
+`safari_run_skill` | `safari_list_skills` — invoke or enumerate plugin skills from `skills/`. Sub-step dispatch bypasses the security pipeline (the outer `safari_run_skill` call is fully secured; inner steps are not individually audited — accepted trade-off for nested skill flows).
+
+## Plugin Skills (8)
+
+`safari_run_skill` and `safari_list_skills` consume `skills/*.SKILL.md` files. Eight ship today:
+
+- **safari-pilot** (base) — entry-point overview of the tool surface.
+- **login** — credential-flow strategy.
+- **paginate-and-scrape** — multi-page extraction recipe.
+- **robust-form-fill** — defensive form-fill with verify-on-readback.
+- **evidence-grounded-screenshot** *(v0.1.31)* — procedural workflow: dismiss → scroll → screenshot.
+- **dismiss-overlays-recovery** *(v0.1.31)* — strategy for recovering when extraction returns suspiciously short content.
+- **visible-evidence-grounding** *(v0.1.31)* — strategy for grounding factual answers in current visible page state, not prior knowledge.
+- **temporal-substitution** *(v0.1.31)* — strategy for substituting past-relative dates ("yesterday", "January 2024") with the nearest available equivalent today; pairs with the SessionStart hook's `Current date: YYYY-MM-DD` injection.
+
+## Slash Commands
+
+- `/safari-pilot:start` — start the daemon + open Safari.
+- `/safari-pilot:stop` — graceful shutdown.
+- `/safari-pilot:stats` *(v0.1.31)* — local-only metrics summary over `~/.safari-pilot/trace.ndjson`. Per-tool count/error-rate/p50/p95, top errors, top domains. Supports `--since 7d|24h|all`, `--by-tool`, `--by-error`, `--by-domain`, `--tail`, `--json`. Test-only: `SAFARI_PILOT_TRACE_OVERRIDE=<path>` env var points at a fake trace file for hermeticity.
 
 ## Architecture
 

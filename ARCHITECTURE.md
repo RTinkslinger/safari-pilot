@@ -198,7 +198,7 @@ Logic:
 | 7 | **TabOwnership** | Identity-based: defers to post-execution if extension engine + domain match | server.ts:512 |
 | — | **Tool Execution** | Calls the tool handler with selected engine | server.ts:576 |
 | 8 | **Post-exec Ownership** | Backfill extensionTabId, refresh URL, verify deferred ownership | server.ts:602 |
-| 9 | **IdpiAnnotator** | Post-execution: scans extraction results for prompt-injection patterns and annotates `_meta` (never blocks; T35) | server.ts:920 |
+| 9 | **IdpiAnnotator** | Post-execution: scans extraction results for prompt-injection patterns and annotates `_meta` (never blocks; T35). `EXTRACTION_TOOLS` Set extended in v0.1.31 to include `safari_dismiss_overlays` so its `content[0].text` summary is scanned. | server.ts:920 |
 | 10 | **AuditLog** | Post-execution: records tool, URL, engine, params, result, timing | server.ts:659 |
 
 **Note (T36, 2026-04-26):** A "ScreenshotRedaction" layer was previously documented at slot 10. It was deleted as a no-op — the module returned a CSS-blur script in `_meta.redactionScript` but the script was never injected into the page before `screencapture -x` ran, and `screencapture` is OS-level so CSS blur in the DOM doesn't apply to it anyway.
@@ -456,14 +456,14 @@ Build steps:
 
 ## Tool Modules
 
-82 tools across 19 modules. 13 modules accept `IEngine` interface (engine-agnostic). 2 modules (navigation, compound) use `AppleScriptEngine` for tab management. 2 modules (downloads, pdf) get engine from server. 1 module (extension-diagnostics) proxies the daemon's `extension_health` dispatch via `DaemonEngine.sendRawCommand`. 1 module (file-upload) takes a `DaemonEngine` injected at constructor time for byte staging via NDJSON `stage_file`.
+88 tools across 22 modules (3 helpers — `_frame-routing-helper.ts`, `har.ts`, `mime.ts` — don't expose tools; `selector-pack.ts` exists but is not registered, so its 2 tools don't ship). 14 modules accept `IEngine` interface (engine-agnostic). 2 modules (navigation, compound) use `AppleScriptEngine` for tab management. 2 modules (downloads, pdf) get engine from server. 1 module (extension-diagnostics) proxies the daemon's `extension_health` dispatch via `DaemonEngine.sendRawCommand`. 1 module (file-upload) takes a `DaemonEngine` injected at constructor time for byte staging via NDJSON `stage_file`.
 
 Every tool declares `requirements.idempotent: boolean` (required field — no default). Non-idempotent tools (click, type, fill, select_option, press_key, hover, drag, scroll, navigate*, reload, cookie writes, storage writes, permission_set, override_*, mock_request, network_offline/throttle, websocket_listen, emergency_stop, evaluate, eval_in_frame, file_upload, authenticate, clear_authentication, compound tools that mutate state) MUST NOT be auto-retried on an ambiguous Extension-engine disconnect. The `EXTENSION_UNCERTAIN` error (Task 7) surfaces disconnect-during-execution and relies on this flag to decide retry safety.
 
 | Module | Tools | Engine Type |
 |--------|-------|-------------|
 | navigation.ts | 7 | AppleScriptEngine |
-| interaction.ts | 11 | IEngine |
+| interaction.ts | 12 | IEngine (includes `safari_scroll_to_element` v0.1.31) |
 | file-upload.ts | 1 | IEngine + DaemonEngine (byte staging) |
 | extraction.ts | 7 | IEngine |
 | network.ts | 10 | IEngine |
@@ -481,6 +481,10 @@ Every tool declares `requirements.idempotent: boolean` (required field — no de
 | downloads.ts | 1 | via server |
 | pdf.ts | 1 | via server |
 | extension-diagnostics.ts | 2 | DaemonEngine (read-only) |
+| overlays.ts | 1 | IEngine (extension-required, v0.1.31) |
+| skills.ts | 2 | IEngine (sub-step dispatch — bypasses pipeline) |
+| selector-pack.ts | 0 | IEngine (module exists; not registered in `listToolDefinitions` or `initialize` — dead code, 2 unshipped tools) |
+| tool-search.ts | 1 | IEngine |
 | server.ts (direct) | 2 | N/A (health_check, emergency_stop) |
 
 **`extension-diagnostics.ts`** adds 2 observability tools: `safari_extension_health` and `safari_extension_debug_dump`. Both are idempotent, read-only, and route through the daemon's `extension_health` dispatch.
@@ -491,13 +495,17 @@ Every tool declares `requirements.idempotent: boolean` (required field — no de
 
 **`file-upload.ts`** (5A.1 / T41, 2026-05-03) adds `safari_file_upload` for programmatic upload to `<input type=file>` elements. Approach 3 architecture: TS handler reads bytes via Node fs → daemon `stage_file` NDJSON command → token-keyed `FileStagingStore` actor (60s TTL) → extension `content-isolated.js` fetches `GET http://127.0.0.1:19475/file-bytes/<token>` → constructs `File` objects in extension context → `window.postMessage` ISOLATED→MAIN with bytes intact via structured clone → `content-main.js` builds `DataTransfer`, calls `input.files = dt.files` (spec-compliant setter; `Object.defineProperty` does NOT update WebKit's internal `[[Files]]` slot that `FormData(form)` reads). 25 MiB / file × 4 / call. Phase 0 architectural gate validated empirically against fixture origin; gate test scaffolding stays in tree as permanent diagnostic. NOT supported: drag-and-drop dropzones, custom pickers, native OS dialogs, label/role/text/placeholder locator types in v1 extension JS (only `selector`/`xpath`/`ref`).
 
+**`interaction.ts` `safari_scroll_to_element` (v0.1.31)** — scrolls a specific element into the visible viewport. Multi-mode input ({selector, text, role+name}) with precedence selector > role+name > text. Open shadow root penetration via `extension/locator.js` `querySelectorWithShadow` + same-origin iframe traversal. Visibility filtering, RAF-driven scroll-settle (50ms grace, 500ms cap). Returns `{scrolledTo: {strategy, matchedNode, matchCount, allMatches}, viewport, scrolledFromY}`. New error codes `TARGET_NOT_FOUND`, `TARGET_HIDDEN` (data-only, no thrown class). Extension-engine only (`requiresAsyncJs: true`). Sentinel `__SP_SCROLL_TO_ELEMENT__:<json>` intercepted in `extension/content-main.js` `case 'execute_script':` early-path — MUST live there, not `background.js` (service worker has no DOM access). Success via `result = X; break;`, errors via `throw Object.assign(new Error(msg), { name: 'CODE' })`.
+
+**`overlays.ts` `safari_dismiss_overlays` (v0.1.31)** — detects and dismisses ~14 known overlay patterns (cookie-consent, registration-wall, app-install, paywall) using a curated allowlist with a two-signal-per-pattern rule. Signal types: `selector`, `aria-label-substring`, `aria-role`, `fixed-position`, `z-index-above`. Allowlist content lives in `src/overlays/*.json`, copied to `dist/overlays/` by build script, loaded at boot via `loadAllAllowlists()` (which validates schema + two-signal-minimum + duplicate-id detection). Returns `{dismissed[], skipped[], overlaysAtStart, overlaysAtEnd}`. `dismissed[]` entries are sanitized to 6 fields ({category, id, selector, action, site, verified}) — page-injected hostile strings cannot leak via response. Extension-engine only (`requiresShadowDom: true`). Sentinel `__SP_DISMISS_OVERLAYS__:<json>` intercepted in `extension/content-main.js`. Six safety mitigations: kill switch (`SAFARI_PILOT_DISABLE_OVERLAY_DISMISS=true` env), paywall opt-IN flag (`SAFARI_PILOT_ENABLE_PAYWALL_DISMISS=true` env, default off), two-signal pattern rule, per-pattern negative-fixture tests (14 paired in `test/fixtures/overlays-negative/`), per-dismissal audit log via standard pipeline, IdpiAnnotator scan extension via `EXTRACTION_TOOLS` Set (server.ts:1053-1059) so `content[0].text` summary is scanned for indirect prompt injection. `extension/locator.js` adds `matchSignal`, `findPatternRoot`, `dismissPattern` helpers exposed via `window.__SP_LOCATOR__`. `matchSignal('selector')` uses `el.matches()` (NOT `hostDoc.querySelector()`) so shadow-encapsulated elements match correctly.
+
 ---
 
 ## Test Architecture
 
 **Status (2026-04-23):** All previous unit, integration, and e2e tests were deleted — they were mock-based fakes that provided false confidence while the product was broken. Tests are being rebuilt from zero with live-only validation.
 
-### E2E Tests (test/e2e/) — 7 files, 34 tests
+### E2E Tests (test/e2e/) — 75 files, ~150 tests (v0.1.31 sprint expanded)
 
 **Shared harness (2026-04-23, T-Harness):** one MCP server per test run, not per file. Production runs one server per Claude Code session; the test suite now mirrors that. `test/helpers/shared-client.ts` exposes `getSharedClient()` — first call spawns + initializes; subsequent calls (any file, any test) return the same instance with a shared `nextId()` monotonic counter.
 
@@ -529,7 +537,7 @@ Carve-outs (files that intentionally do NOT use the shared client):
 - Real Swift tests against real types, with I/O-isolation mocks at the NSAppleScript boundary
 - The MockExecutor / StubExecutor / SequencedMockExecutor types substitute the external NSAppleScript → Safari boundary so tests run without a live Safari, but the SUT (CommandDispatcher, ExtensionBridge, HealthStore, ExtensionHTTPServer, FileStagingStore) is the real production code. Per the test rubric this is acceptable: mocks at the I/O boundary, real types at the SUT boundary.
 
-### Unit Tests (test/unit/) — 398 tests
+### Unit Tests (test/unit/) — 668 tests (104 files)
 - Pure-logic coverage for `src/`: tool handlers, security layers, engine selector, error shapes, escape contract.
 - Per CLAUDE.md unit-test policy: may mock Node boundaries (`fs`, `net`, `child_process`, `AbortSignal`, timers); MUST NOT mock internal modules.
 - T67's `t67-storage-quota-blocks-reconcile.test.ts` is illustrative: structural source-text invariants on `extension/background.js` plus one behavioral test that extracts `writePending` source via regex and eval-sandboxes it with a stubbed `browser.storage.local` to verify quota recovery without escaping.
@@ -598,6 +606,42 @@ Extension dormancy bug — alarm fires but no `/connect` or `/poll` reach the da
 
 ### v0.1.23 — 2026-05-03 (5A.1 safari_file_upload — T41)
 Programmatic file upload to standard `<input type=file>` elements via Approach 3 architecture (out-of-band byte fetch). Daemon NDJSON `stage_file` command + token-keyed `FileStagingStore` actor (60s TTL) + Hummingbird routes `GET/DELETE /file-bytes/<token>`. Extension `content-isolated.js` fetches bytes, constructs `File` objects, posts to `content-main.js` (structured-clone preserves File with bytes intact). content-main.js builds `DataTransfer` and uses spec-compliant `input.files = dt.files` setter (NOT `Object.defineProperty`, which shadows JS reads but doesn't update WebKit's internal `[[Files]]` slot that `FormData(form)` reads at submit). 200ms validation probe reads `input.validationMessage` + sibling `[role=alert]` / `[aria-invalid]`. 10 new error codes in `src/errors.ts`; `paths: []` rejected with `FILE_UPLOAD_EMPTY_PATHS` (use `clear: true` for explicit clearing — removes agent-`.filter()` foot-gun). 25 MiB / file × 4 / call. Phase 0 architectural gate (`test/e2e/5A1-phase0-spike.test.ts`) empirically validated against fixture origin: content-script `fetch('http://127.0.0.1:19475/...')` works under Safari WebExt CSP, `File` survives ISOLATED→MAIN structured-clone with bytes intact. 11/14 5A.1 e2e PASS + 3 SKIPPED (RHF label-locator gap, detached-element race, concurrent multi-MB pipe atomicity — all documented). Fixture-server origin has permissive CSP so the e2e suite cannot exercise strict-CSP-site failure mode (filed as T66 follow-up after Gmail smoke test surfaced it).
+
+### v0.1.32 — 2026-05-09 (v0.1.31 sprint: evidence grounding for WebVoyager)
+
+Sprint scope-labeled "v0.1.31"; published as v0.1.32 because mid-sprint marketing-version bumps were required for Safari extension cache invalidation per `feedback-extension-version-both-fields`. Three v0.1.33 carry-forwards documented in CHANGELOG.
+
+**Added (2 MCP tools, 4 skills, 1 slash command, 1 hook gain):**
+- `safari_scroll_to_element` (interaction.ts) + extension/locator.js helpers (`querySelectorWithShadow`, `resolveScrollTargets`, `waitForScrollSettle`, `serializeNode`) + sentinel `__SP_SCROLL_TO_ELEMENT__:`. 6 e2e assertions PASS, p95 ≈ 291ms.
+- `safari_dismiss_overlays` (overlays.ts NEW) + extension/locator.js dismiss helpers (`matchSignal`, `findPatternRoot`, `dismissPattern`) + sentinel `__SP_DISMISS_OVERLAYS__:`. 14 allowlist patterns across 4 categories (cookie-consent×6, registration-walls×3, app-install×2, paywalls×3). 6 dismiss-base + 5 dismiss-aux + 28 per-pattern = 39 e2e assertions PASS. EXTRACTION_TOOLS Set extended; IdpiAnnotator scans response.
+- `skills/evidence-grounded-screenshot.SKILL.md` (procedural: dismiss → scroll → screenshot)
+- `skills/dismiss-overlays-recovery.SKILL.md` (strategy: recover from blocked extraction)
+- `skills/visible-evidence-grounding.SKILL.md` (strategy: ground in current visible page state)
+- `skills/temporal-substitution.SKILL.md` (strategy: substitute past-relative dates)
+- `/safari-pilot:stats` slash command — local-only metrics summary over `~/.safari-pilot/trace.ndjson` (per-tool count/error-rate/p50/p95, top errors, top domains; supports `--since`, `--by-tool`, `--by-error`, `--by-domain`, `--tail`, `--json`, plus `SAFARI_PILOT_TRACE_OVERRIDE` env for test hermeticity).
+- `hooks/session-start.sh` now emits `{"hookSpecificOutput":{"additionalContext":"Current date: YYYY-MM-DD"}}` JSON to stdout before final exit 0 (preserves existing stderr discipline; for the temporal-substitution skill).
+- `.claude-plugin/plugin.json` registers all 8 skills (was: only safari-pilot/SKILL.md). Three legacy skills (login, paginate-and-scrape, robust-form-fill) were on disk but unregistered until v0.1.31.
+
+**Fixed (2 real bugs caught + fixed mid-sprint):**
+- `extension/locator.js matchSignal('selector')` switched from `hostDoc.querySelector(value)` to `el.matches(value)`. The former returns false for shadow-encapsulated elements because `hostDoc` is the outer light-DOM document. Surfaced by T12 shadow-DOM penetration test.
+- `smart-app-banner` allowlist pattern was unmatchable: required `meta[name=apple-itunes-app]` (head) AND `.smart-app-banner` (body) signals — both `selector` type — to match the same element. Replaced head-meta requirement with `fixed-position` structural discriminator. Surfaced by T14 per-pattern integration sweep. Content-only patch (no extension rebuild needed for the pattern fix itself).
+
+**Internal:**
+- New error codes (data-only via `ERROR_METADATA`, no thrown classes): `TARGET_NOT_FOUND`, `TARGET_HIDDEN`.
+- New `src/overlays/` directory: `index.ts` loader, `types.ts`, 4 JSON files. Loader enforces two-signal-minimum + duplicate-id detection at boot.
+- `src/cli/` directory: `format.ts` + `stats.ts` (NDJSON aggregator).
+- Allowlist content lives in `src/overlays/*.json` and is patch-releasable via `npm publish` (no extension rebuild needed for content-only changes; user must run `npm update safari-pilot` to pick up patches; propagation is not silent).
+- Pre-tag-check (`scripts/pre-tag-check.sh`) extended from 9 to 11 gates: allowlist parse-validate (loader schema + two-signal rule) + content-only patch flow proof (`tests/ci/content-only-patch.sh` mutates one allowlist entry, asserts npm build doesn't touch `bin/Safari Pilot.app` mtime).
+- Test counts: 668 unit (was 656 pre-sprint) / 75 e2e files (was 7 — incl. 14 per-pattern overlays + 4 dismiss-related + 1 scroll + 1 stats e2e + 5 hook unit). Lint clean.
+- v0.1.33 carry-forwards documented in CHANGELOG: daemon `Models.swift` AnyCodable bool/int coercion (NSNumber 0/1 → false/true; tests use `asInt()` normalizer); allowlist pattern over-broadness (`generic-newsletter-modal`, `generic-aria-cookie`, registry-order collision); `skipped[]` field-level sanitization + `MALFORMED_SENTINEL` error name distinct from `NO_LOCATOR`.
+
+**Paywall safety:** 3 paywall patterns ship OPT-IN by default (NYT-soft, FT-modal, Bloomberg-overlay); user must set `SAFARI_PILOT_ENABLE_PAYWALL_DISMISS=true` to activate. Default install does not dismiss paywalls. Two engineering reviews independently flagged this as the highest-residual-risk decision; opt-in default-off was the agreed compromise.
+
+### v0.1.30 — 2026-05-08 (safari_take_screenshot captures Safari WebView only)
+
+**BREAKING:** `safari_take_screenshot` switched from macOS `screencapture` CLI to Safari Web Extension `tabs.captureVisibleTab` API. Captures only the rendered viewport of the target tab at native devicePixelRatio (Retina = 2× viewport pixels). Previous behavior captured whatever was frontmost on screen — almost never Safari during automated benchmarks. `format='jpeg'` now rejected with `INVALID_PARAMS` (silently returned PNG previously).
+
+**Added:** error codes `WINDOW_CLOSED`, `CAPTURE_RACE`, `CAPTURE_FAILED`, `INVALID_PARAMS`. `requiresViewportCapture` flag in `ToolRequirements`; `viewportCapture` in `EngineCapabilities`. Engine selector routes any viewport-capture tool to extension engine (`EngineUnavailableError` when extension offline). WebVoyager harness gains two-tier screenshot capture protocol (agent self-capture + post-hoc fallback) + `capture_failure_rate` field in score output. New `__SP_TAKE_SCREENSHOT__` sentinel in `extension/background.js`. `bench/webvoyager/` driver + score CLI. Build script gains `--skip-notarize` flag (later REMOVED in v0.1.31 per `feedback-no-skip-notarize`).
 
 ### v0.1.24 — 2026-05-03 (T67 storage-quota recovery + release SOP codification)
 - **T67 fix:** `extension/background.js` `wakeSequence` reordered so `connectAndReconcile()` runs second (after read-only `loadTabCache`); housekeeping (`gcPendingStorage`, `cleanupStaleStorageBus`) becomes best-effort and runs after. Each step in its own try/catch with step-tagged trace event (`wake_load_error`, `wake_reconcile_error`, `wake_gc_error`, `wake_cleanup_error`). `writePending` gains quota recovery mirroring `saveTabCache`. Existing wedged installs auto-recover on first wake. Guarded by 6 unit tests in `test/unit/extension/t67-storage-quota-blocks-reconcile.test.ts`.

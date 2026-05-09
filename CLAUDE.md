@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-Safari Pilot is a native Safari browser automation framework for AI agents on macOS. It exposes 76 tools via MCP (stdio), letting Claude Code control Safari directly through AppleScript, a persistent Swift daemon, or a Safari Web Extension — no Chrome needed.
+Safari Pilot is a native Safari browser automation framework for AI agents on macOS. It exposes 88 tools via MCP (stdio), letting Claude Code control Safari directly through AppleScript, a persistent Swift daemon, or a Safari Web Extension — no Chrome needed. As of v0.1.32 it also ships 8 plugin skills (4 new in v0.1.31: evidence-grounded-screenshot, dismiss-overlays-recovery, visible-evidence-grounding, temporal-substitution) and the `/safari-pilot:stats` local-metrics slash command.
 
 ## Ways of Working
 
@@ -135,7 +135,7 @@ Seven pre-execution layers + three post-execution checks run on every tool call 
 7. **Engine Selection** — picks best available engine for tool's requirements
 
 **Post-execution (annotate/audit after tool runs):**
-8. **IdpiAnnotator** — indirect prompt injection detection on extraction tool results only; annotates metadata, never blocks (T35; server.ts:920)
+8. **IdpiAnnotator** — indirect prompt injection detection on extraction tool results; annotates metadata, never blocks (T35; server.ts:920). `EXTRACTION_TOOLS` Set extended in v0.1.31 to include `safari_dismiss_overlays` so its `content[0].text` summary is scanned.
 9. **AuditLog** — records every tool call with params, engine, result, timing (server.ts:596)
 
 (A former layer 8b "ScreenshotRedaction" was deleted in T36 — it returned a redaction script in metadata that was never injected before `screencapture`, and the OS-level capture is immune to CSS blur regardless. A domain-block screenshot policy is tracked as T59.)
@@ -174,7 +174,7 @@ src/
 ├── index.ts              # Entry point — creates and starts MCP server
 ├── server.ts             # SafariPilotServer — tool registration, security orchestration
 ├── types.ts              # Engine, ToolResponse, ToolError, ToolRequirements
-├── errors.ts             # SafariPilotError hierarchy (21 error codes)
+├── errors.ts             # SafariPilotError hierarchy + ERROR_CODES + ERROR_METADATA (data-only codes incl. TARGET_NOT_FOUND, TARGET_HIDDEN)
 ├── engine-selector.ts    # selectEngine() + ENGINE_CAPS capability matrix
 ├── engines/              # IEngine interface + 3 implementations
 │   ├── engine.ts         # IEngine interface, BaseEngine abstract class
@@ -182,15 +182,24 @@ src/
 │   ├── daemon.ts         # Swift daemon with NDJSON IPC over stdin + TCP:19474
 │   └── extension.ts      # Safari Web Extension via daemon's ExtensionBridge
 ├── security/             # 9 security layer implementations
-└── tools/                # 14 tool modules (navigation, interaction, extraction, etc.)
+├── overlays/             # Allowlist loader + types + 4 JSON files (cookie-consent / registration-walls / app-install / paywalls)
+├── cli/                  # /safari-pilot:stats CLI (format.ts + stats.ts)
+└── tools/                # 22 tool modules (incl. overlays.ts NEW v0.1.31)
+extension/
+├── manifest.json         # MAIN-world content_scripts list (locator.js BEFORE content-main.js)
+├── locator.js            # window.__SP_LOCATOR__ helpers (querySelectorWithShadow + scroll + dismiss helpers)
+├── content-main.js       # Sentinel intercepts (__SP_SCROLL_TO_ELEMENT__, __SP_DISMISS_OVERLAYS__, etc.)
+├── content-isolated.js   # ISOLATED-world bridge (storage bus, file-upload byte fetch)
+└── background.js         # MV3 event page (HTTP poll loop, command dispatch)
 daemon/                   # Swift source for SafariPilotd
+skills/                   # 8 plugin skills (3 legacy + 4 v0.1.31 + 1 base)
 test/
-├── unit/                 # No Safari needed — tool handlers, security layers, engines
-├── integration/          # Multi-component workflows
-├── e2e/                  # Real Safari interaction
-├── security/             # Penetration-style tests
-├── canary/               # Installation validation
-└── fixtures/             # Mock data, test servers
+├── unit/                 # No Safari needed — tool handlers, security layers, engines (104 files / 668 tests)
+├── e2e/                  # Real Safari interaction (75 files / ~150 tests)
+├── e2e/overlays/         # 14 per-pattern integration tests (positive + negative pairs)
+└── fixtures/             # localhost HTTP fixture servers (incl. overlays-negative/ — 14 paired safety net)
+tests/
+└── ci/                   # CI-only proofs (e.g. content-only-patch.sh)
 ```
 
 ## Distribution & Update Paths
