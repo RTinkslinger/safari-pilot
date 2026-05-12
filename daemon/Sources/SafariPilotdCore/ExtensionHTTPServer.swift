@@ -78,26 +78,70 @@ public final class ExtensionHTTPServer: @unchecked Sendable {
     // MARK: - Lifecycle
 
     /// Start the HTTP server and disconnect-detection background tasks.
+    ///
+    /// Restart-with-backoff (Issue B, 2026-05-12):
+    /// `runService()` throws on EITHER an initial bind failure OR a runtime
+    /// service crash (e.g. `NIOFcntlFailedError` mid-flight under load). Pre-fix
+    /// both paths logged `HTTP_BIND_FAILED` and escalated to `onBindFailure`,
+    /// which in main.swift `exit(1)`s. Under launchctl KeepAlive that converted
+    /// a transient runtime blip into a permanent crashloop.
+    ///
+    /// Post-fix: if `onServerRunning` ever fired (server was ready at least once),
+    /// runtime failures are recoverable — log `HTTP_SERVICE_FAILED`, sleep with
+    /// exponential backoff (1s, 2s, 4s, 8s, 16s capped at 30s), retry up to
+    /// `maxRuntimeRestarts` total restarts. Beyond that, escalate as if it
+    /// were a bind failure (process exits, launchctl respawns fresh). Initial
+    /// bind failures (never ready) still escalate immediately with the
+    /// original `HTTP_BIND_FAILED` message + behavior.
     public func start() {
         _serverTask = Task { [self] in
-            do {
-                let router = buildRouter()
-                let app = Application(
-                    router: router,
-                    configuration: ApplicationConfiguration(
-                        address: .hostname("127.0.0.1", port: Int(port)),
-                        serverName: "SafariPilot-ExtHTTP"
-                    ),
-                    onServerRunning: { [self] _ in
-                        Logger.info("HTTP_READY port=\(self.port)")
-                        await self.onReady?()
+            let readyFlag = LockedFlag()
+            var attempt = 0
+            let maxRuntimeRestarts = 5
+
+            while !Task.isCancelled {
+                attempt += 1
+                readyFlag.value = false
+
+                do {
+                    let router = buildRouter()
+                    let app = Application(
+                        router: router,
+                        configuration: ApplicationConfiguration(
+                            address: .hostname("127.0.0.1", port: Int(port)),
+                            serverName: "SafariPilot-ExtHTTP"
+                        ),
+                        onServerRunning: { [self, readyFlag] _ in
+                            readyFlag.value = true
+                            Logger.info("HTTP_READY port=\(self.port)")
+                            await self.onReady?()
+                        }
+                    )
+                    let attemptSuffix = attempt > 1 ? " (restart attempt=\(attempt))" : ""
+                    Logger.info("ExtensionHTTPServer starting on 127.0.0.1:\(port)\(attemptSuffix)")
+                    try await app.runService()
+                    // Clean exit (Task cancelled, normal shutdown). Don't loop.
+                    Logger.info("ExtensionHTTPServer runService returned cleanly — exiting start loop")
+                    break
+                } catch {
+                    if !readyFlag.value {
+                        // Initial bind failure — fatal. Same behavior as pre-fix.
+                        Logger.error("HTTP_BIND_FAILED port=\(port) error=\(error)")
+                        self.onBindFailure?(error)
+                        return
                     }
-                )
-                Logger.info("ExtensionHTTPServer starting on 127.0.0.1:\(port)")
-                try await app.runService()
-            } catch {
-                Logger.error("HTTP_BIND_FAILED port=\(port) error=\(error)")
-                self.onBindFailure?(error)
+                    // Runtime service crash. Recoverable.
+                    let restartNo = attempt - 1  // 1st restart attempt has attempt=2, restartNo=1
+                    if restartNo >= maxRuntimeRestarts {
+                        Logger.error("HTTP_SERVICE_FAILED_GIVE_UP port=\(port) after \(restartNo) restarts. Last error: \(error)")
+                        self.onBindFailure?(error)
+                        return
+                    }
+                    let backoffSecs = min(30, 1 << min(restartNo - 1, 5))
+                    Logger.warning("HTTP_SERVICE_FAILED port=\(port) restartNo=\(restartNo)/\(maxRuntimeRestarts) error=\(error). Restarting in \(backoffSecs)s")
+                    self.healthStore.recordHttpBindFailure()
+                    try? await Task.sleep(nanoseconds: UInt64(backoffSecs) * 1_000_000_000)
+                }
             }
         }
 
@@ -107,6 +151,18 @@ public final class ExtensionHTTPServer: @unchecked Sendable {
                 guard !Task.isCancelled, let self = self else { break }
                 self.checkDisconnect()
             }
+        }
+    }
+
+    /// Thread-safe boolean flag shared across the start() retry loop and the
+    /// `onServerRunning` callback. Closures capture this by reference, so the
+    /// callback can flip the flag without inout gymnastics or actor isolation.
+    private final class LockedFlag: @unchecked Sendable {
+        private let lock = NSLock()
+        private var _value: Bool = false
+        var value: Bool {
+            get { lock.lock(); defer { lock.unlock() }; return _value }
+            set { lock.lock(); defer { lock.unlock() }; _value = newValue }
         }
     }
 
