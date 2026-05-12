@@ -275,16 +275,28 @@ export class DaemonEngine extends BaseEngine {
   private async ensureRunning(): Promise<void> {
     if (this.useTcp || (this.proc && !this.proc.killed)) return;
 
-    if (this.tcpPort > 0 && await this.tryTcpConnection()) {
-      this.useTcp = true;
-      return;
+    // Bench-load diagnosis 2026-05-12: a single 200ms TCP probe is too
+    // tight under sustained load — the system daemon may be busy serving
+    // another request when this probe fires. Retry with backoff so we
+    // don't fall into the doomed-spawn path (where the spawned subprocess
+    // FATAL-exits because the system daemon already owns TCP:19474 and
+    // HTTP:19475). The three probes total at most 200+500+1000 = 1.7s
+    // before we conclude no TCP daemon is reachable and spawn a local one.
+    if (this.tcpPort > 0) {
+      const probeTimeouts = [200, 500, 1000];
+      for (const t of probeTimeouts) {
+        if (await this.tryTcpConnection(t)) {
+          this.useTcp = true;
+          return;
+        }
+      }
     }
     if (!this.proc || this.proc.killed) {
       this.spawnDaemon();
     }
   }
 
-  private tryTcpConnection(): Promise<boolean> {
+  private tryTcpConnection(timeoutMs: number = 200): Promise<boolean> {
     return new Promise((resolve) => {
       const sock = createConnection({ host: '127.0.0.1', port: this.tcpPort }, () => {
         const pingPayload = JSON.stringify({ id: 'tcp-probe', method: 'ping' }) + '\n';
@@ -306,7 +318,7 @@ export class DaemonEngine extends BaseEngine {
         });
       });
       sock.on('error', () => resolve(false));
-      sock.setTimeout(200, () => { sock.destroy(); resolve(false); });
+      sock.setTimeout(timeoutMs, () => { sock.destroy(); resolve(false); });
     });
   }
 

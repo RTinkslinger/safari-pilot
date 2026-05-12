@@ -1,4 +1,6 @@
-import { writeFile } from 'node:fs/promises';
+import { writeFile, readFile, unlink } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { generateSnapshotJs, buildRefSelector } from '../aria.js';
 import { escapeForJsSingleQuote } from '../escape.js';
 import { generateQueryAllJs, hasLocatorParams, extractLocatorFromParams, generateLocatorJs, resolveMaybePackSelector } from '../locator.js';
@@ -6,6 +8,8 @@ import type { IEngine } from '../engines/engine.js';
 import type { Engine, ToolResponse, ToolRequirements } from '../types.js';
 import { ScreenshotPolicy } from '../security/screenshot-policy.js';
 import { routeFrameAware } from './_frame-routing-helper.js';
+
+const execFileP = promisify(execFile);
 
 export interface ToolDefinition {
   name: string;
@@ -529,15 +533,77 @@ export class ExtractionTools {
     const start = Date.now();
     const savePath = params['path'] as string | undefined;
 
-    const result = await this.engine.executeJsInTab(tabUrl, '__SP_TAKE_SCREENSHOT__', 30_000);
-    if (!result.ok) {
-      const err = new Error(`Screenshot failed: ${result.error?.message ?? 'unknown'}`);
-      if (result.error?.code) (err as Error & { code?: string }).code = result.error.code;
-      throw err;
+    // Try extension capture first (15s timeout — shorter than the 90s default
+    // so we fall back to screencapture quickly on heavy pages where
+    // browser.tabs.captureVisibleTab routinely hangs).
+    // Investigation 2026-05-12 (Failure B): on Amazon search and Allrecipes
+    // search pages, the extension's __SP_TAKE_SCREENSHOT__ sentinel returns
+    // nothing within 90s — captureVisibleTab + MV3 throttling. Falling
+    // back to macOS `screencapture` produces a usable image and keeps the
+    // bench from blocking on screenshot timeouts.
+    let base64: string | undefined;
+    let degraded = false;
+    let engineUsed: Engine = 'extension';
+
+    // Wrap in our own 15s race because src/engines/extension.ts does
+    // Math.max(timeout, 90_000) — passing 15s alone would still wait 90s
+    // for a stuck extension. Our own race short-circuits to the fallback.
+    const extPromise = this.engine.executeJsInTab(tabUrl, '__SP_TAKE_SCREENSHOT__', 15_000);
+    const timeoutPromise = new Promise<{ ok: false; error: { code: string; message: string }; elapsed_ms: number }>(
+      (resolve) => setTimeout(() => resolve({
+        ok: false,
+        error: { code: 'CAPTURE_TIMEOUT_LOCAL', message: 'Extension screenshot exceeded 15s local cap; falling back to screencapture' },
+        elapsed_ms: 15_000,
+      }), 15_000),
+    );
+    const extResult = await Promise.race([extPromise, timeoutPromise]);
+    if (extResult.ok && typeof extResult.value === 'string' && extResult.value.length > 0) {
+      base64 = extResult.value;
+    } else {
+      // Fallback: macOS screencapture of the whole screen.
+      // Activate Safari + the target tab via AppleScript first so the visible
+      // content matches what the agent navigated to. Capture, base64-encode.
+      degraded = true;
+      engineUsed = 'applescript';
+      try {
+        const tabUrlEscaped = tabUrl.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+        const activateScript = `
+          tell application "Safari"
+            activate
+            repeat with w in (every window)
+              set tList to (every tab of w whose URL is "${tabUrlEscaped}")
+              if (count of tList) > 0 then
+                set index of w to 1
+                set current tab of w to (item 1 of tList)
+                exit repeat
+              end if
+            end repeat
+          end tell
+        `;
+        await execFileP('osascript', ['-e', activateScript], { timeout: 8000 });
+        // Short settle for window-bring-forward + tab switch repaint.
+        await new Promise((r) => setTimeout(r, 350));
+        const tmpFile = `/tmp/sp-screen-${Date.now()}-${Math.floor(Math.random() * 1e6)}.png`;
+        try {
+          // -t png explicit format; -x silent (no sound); -C cursor off; -m capture main display
+          await execFileP('screencapture', ['-t', 'png', '-x', '-m', tmpFile], { timeout: 8000 });
+          const buf = await readFile(tmpFile);
+          base64 = buf.toString('base64');
+          await unlink(tmpFile).catch(() => { /* best-effort */ });
+        } catch (e) {
+          await unlink(tmpFile).catch(() => { /* best-effort */ });
+          throw e;
+        }
+      } catch (fallbackErr: unknown) {
+        const extMsg = extResult.error?.message ?? 'unknown';
+        const fbMsg = fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr);
+        const err = new Error(`Screenshot failed: extension="${extMsg}" fallback="${fbMsg}"`);
+        (err as Error & { code?: string }).code = 'CAPTURE_FAILED';
+        throw err;
+      }
     }
 
-    const base64 = result.value;
-    if (typeof base64 !== 'string' || base64.length === 0) {
+    if (!base64 || base64.length === 0) {
       const err = new Error('Screenshot returned empty payload');
       (err as Error & { code?: string }).code = 'CAPTURE_FAILED';
       throw err;
@@ -550,7 +616,7 @@ export class ExtractionTools {
 
     return {
       content: [{ type: 'image', data: base64, mimeType: 'image/png' }],
-      metadata: { engine: 'extension' as Engine, degraded: false, latencyMs: Date.now() - start },
+      metadata: { engine: engineUsed, degraded, latencyMs: Date.now() - start },
     };
   }
 
