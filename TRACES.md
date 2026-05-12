@@ -16,6 +16,52 @@
 
 ## Current Work
 
+### Iteration 77 - 2026-05-12 — Daemon HTTP-layer hardening (v0.1.33): Issue A + B fixed empirically, CONCURRENCY 8→1
+
+**What:** v0.1.32 T24 bench attempt (`bash bench/webvoyager/run.sh --variant v0.1.32 --sample dev --resume`, c=8, 175 tasks) failed catastrophically — 161 tasks burned with 0 success, all `MCP timeout for initialize`. Root cause investigation under `upp:systematic-debugging` exposed two distinct pre-existing daemon bugs (latent since at least 2026-04-19; daemon binary May 4 / source May 3 — predates the v0.1.31 sprint entirely). User chose **Option 3: Full daemon hardening before any retry.** Both bugs fixed and validated against synthetic + real bench load; the underlying `NIOFcntlFailedError` SwiftNIO trigger remains opaque (3-min 8-worker curl storm did not reproduce) but the daemon is resilient regardless. Branch pivoted from `feat/v0131-evidence-grounding` to `fix/v0132-daemon-hardening`; npm + extension marketing version bumped lockstep to **0.1.33**; CHANGELOG + ARCHITECTURE document the fixes; extension rebuilt + notarized + stapled (build 202605121922).
+
+**The two daemon bugs (Phase 1 evidence):**
+
+1. **Issue A — `HTTP_SELF_TEST` always fails on every daemon start.** Cause: `onServerRunning` callback awaits the self-test closure body, which issues `URLSession.shared.data(for:)` POST `127.0.0.1:19475/connect` to the very server whose accept loop is still parked in `onServerRunning`. Connection sits in the kernel listen queue, never gets accepted, URLSession default-timeout fires after 60s, logs `HTTP_SELF_TEST fail` + `healthStore.recordHttpRequestError()`. Non-fatal but recurring on every daemon restart since 2026-04-19. Visible in `~/.safari-pilot/daemon.log` from that date forward.
+
+2. **Issue B — `runService()` throw under load FATAL-exits the daemon, launchctl crashloops forever.** The `catch` arm of `start()`'s outer Task in `ExtensionHTTPServer.swift` logged `HTTP_BIND_FAILED` and invoked `onBindFailure?(error)`, which in `main.swift` calls `exit(1)`. Callback name was misleading: it fires on ANY `runService()` throw, including transient `NIOFcntlFailedError` mid-flight (crashloop log at 12:58:37Z: `[HummingbirdCore] Waiting on child channel: NIOFcntlFailedError()` → `ServiceGroupError: Service failed(PreludeService<Server<HTTP1Channel>>)` → daemon exit). Under `KeepAlive=true` + `ThrottleInterval=10`, a transient blip becomes a permanent crashloop. The bench's c=8 storm pattern (8 MCP-server spawns + 8 simultaneous tab creations + extension wake events) hits the trigger consistently 13-22 minutes into a run.
+
+**Phase 1 reproduction attempts that did NOT trigger:** 20 concurrent burst POSTs to `/connect` — daemon healthy, 200ms median per request. 180s sustained 8-worker mixed `/connect` + `/poll` + `/result` storm — daemon healthy, 0 crash signatures, 1061 log lines of normal traffic. The NIOFcntlFailedError trigger needs more than HTTP-only load (real Safari interaction, MCP server spawns, fd-table pressure across processes?) — opaque. The daemon-side fix is structural (recovery) rather than trigger-specific.
+
+**v0.1.30 baseline pre-existed both bugs but ran clean:** All three v0.1.30 canonical baseline launch logs (`bench-runs/launch-v0.1.30-baseline-*.log`) show `concurrency=1` despite the `CONCURRENCY` file claiming 8 — operator override that avoided both daemon bugs AND the third issue (Anthropic Max queue serialization). That was an undocumented workaround; this iter promotes c=1 to the documented decision in `CONCURRENCY_DECISION` with reversal triggers spelled out.
+
+**Phase 4 fixes (the two daemon commits):**
+
+- **`1acd277` (Fix 1, Issue A):** `daemon/Sources/SafariPilotd/main.swift` — wrap the self-test body in `Task.detached { ... }` so `onServerRunning` returns immediately, with 200ms `Task.sleep` accept-loop grace and explicit `request.timeoutInterval = 5` on URLRequest (was URLSession-default 60s). Post-fix: `HTTP_SELF_TEST pass status=200` within 236ms of `HTTP_READY` on every fresh daemon start.
+
+- **`5147d5e` (Fix 2, Issue B):** `daemon/Sources/SafariPilotdCore/ExtensionHTTPServer.swift` — `start()` now wraps the Application/runService block in a `while !Task.isCancelled` retry loop with per-attempt `readyFlag` (NSLock-backed `LockedFlag: @unchecked Sendable` private nested class). On catch: if `readyFlag.value` is false (never ready), original fatal-escalation behavior preserved — log `HTTP_BIND_FAILED`, invoke `onBindFailure`, return (which exits). If true (was ready, runtime crash): log `HTTP_SERVICE_FAILED port=… restartNo=N/5`, exponential backoff (1s, 2s, 4s, 8s, 16s capped at 30s), reinstantiate `Application`, loop. After 5 restarts: log `HTTP_SERVICE_FAILED_GIVE_UP` and escalate as bind failure. `healthStore.recordHttpBindFailure()` still fires per restart so `/status.httpBindFailureCount` stays consistent. 156/156 daemon unit tests pass including `testOnBindFailureFiresWhenPortAlreadyBound` (the never-ready branch is preserved bit-for-bit).
+
+**Empirical validation post-fix:**
+- Clean daemon restart: `HTTP_SELF_TEST pass status=200` at 234ms (vs pre-fix 60s fail every time).
+- 30s synthetic 8-worker storm: 0 crash signatures.
+- 1-task bench probe at c=1 (`Allrecipes--9`): completed in 148s, daemon clean.
+- 8-task bench probe at c=8 (`Allrecipes--0..7`): all 8 ran in parallel for ~248s each, **daemon 0 crashes**. But all tasks `TIMED_OUT=true` with empty STDOUT and `agent_final_text=""` — **upstream Anthropic Max queue serialization**, not a daemon issue. Single-shot `claude -p "say OK"` succeeded in 54s; 8-concurrent does not. This is **why** v0.1.30 baseline ran at c=1.
+
+**`e27ff37` (release bookkeeping):**
+- `bench/webvoyager/CONCURRENCY`: 8 → 1. `CONCURRENCY_DECISION` revised with full rationale + reversal triggers (revisit c≥2 when Anthropic Max documents concurrency support AND a real WebVoyager full-643 run at the new c passes the same acceptance criteria).
+- `package.json` + `extension/manifest.json`: 0.1.32 → 0.1.33 (lockstep per `feedback-extension-version-both-fields`).
+- `CHANGELOG.md`: v0.1.33 entry inserted above v0.1.32 — pure-bugfix release, daemon hardening + bench config correction, all v0.1.32 carry-forwards re-listed.
+- `ARCHITECTURE.md`: v0.1.33 version-history entry.
+- `test/e2e/dismiss-overlays.test.ts`: 3 stale "deferred to v0.1.32" comments → "deferred to a future release".
+- `CLAUDE.md` top paragraph: notes v0.1.33 daemon HTTP-layer hardening.
+
+**Extension build (post-fix-commit):** `bash scripts/build-extension.sh` — Xcode archive → export → sign → notarize (Apple notarytool Submission ID `ddb95698-86f3-45ec-ab0a-71735c8f6448`, status Accepted) → stapler → final verification (Notarized Developer ID, Aakash Kumar V37WLKRXUJ). Build artifact: `bin/Safari Pilot.app` v0.1.33 build 202605121922 + `bin/Safari Pilot.zip` (notarize-ready). `open bin/Safari Pilot.app` — Safari registered v0.1.33; daemon `/status` reports `ext: true, sessionTab: true` post-reload.
+
+**Carry-forward from this iter (not in v0.1.33 scope, queued for a future release):**
+- Root-cause the underlying `NIOFcntlFailedError` SwiftNIO trigger. Needs longer-form Hummingbird/NIO investigation; the synthetic harness doesn't reproduce.
+- All v0.1.32 carry-forwards still pending: daemon `Models.swift` AnyCodable bool/int coercion (live bug; tests use `asInt()` normalizer); allowlist pattern over-broadness + registry-order collision (`generic-newsletter-modal` vs `substack-bottom-banner` etc.); `skipped[]` field-level sanitization + `MALFORMED_SENTINEL` error name distinct from `NO_LOCATOR`; `selector-pack.ts` dead-code wire-or-remove.
+
+**Changes this iter (cumulative):** `daemon/Sources/SafariPilotd/main.swift` (+31/-20 in Fix 1), `daemon/Sources/SafariPilotdCore/ExtensionHTTPServer.swift` (+73/-17 in Fix 2), `package.json` + `extension/manifest.json` (lockstep 0.1.32 → 0.1.33), `bench/webvoyager/CONCURRENCY` (8 → 1), `bench/webvoyager/CONCURRENCY_DECISION` (+47 lines), `CHANGELOG.md` (+79 lines, v0.1.33 entry), `ARCHITECTURE.md` (+4 lines, v0.1.33 entry), `CLAUDE.md` (+1 sentence), `test/e2e/dismiss-overlays.test.ts` (deferred-version comments). Three commits on `fix/v0132-daemon-hardening` ahead of `feat/v0131-evidence-grounding`: `1acd277` + `5147d5e` + `e27ff37`. Plus pending: `bin/Safari Pilot.app` + `bin/Safari Pilot.zip` rebuild artifacts staged.
+
+**Context:** User's "ship everything" directive resolved into a daemon-fix sprint after the v0.1.32 T24 bench attempt exposed the latent crashloop. CHECKPOINT.md `Do NOT push the v0.1.32 tag without T24 PASS` rule respected — v0.1.32 tag was never pushed; the work folds forward into v0.1.33 which now has BOTH the v0.1.31 evidence-grounding scope AND daemon hardening. Per `upp:systematic-debugging`: Phase 1 evidence gathering was exhaustive (daemon log analysis, source reading, 3 repro attempts), Phase 4 fixes are surgical (one fix per commit, each independently revertible per CHANGELOG rollback section). Next iter (78) closes the loop with built-artifact commit + pre-tag-check 11/11 + T24 bench at c=1 + tag push + CI watch + main merge. Daemon CLAUDE.md/TRACES.md still untracked from v0.1.30 carry-forward — remain out of scope.
+
+---
+
 ### Iteration 76 - 2026-05-12 — Documentation refresh for v0.1.32 (ARCHITECTURE / CLAUDE / README)
 
 **What:** User asked "update all documentation" — surfaced and corrected substantial doc staleness that had accumulated over the v0.1.29–v0.1.32 sprint cycle. Single commit at `dd5dddd` updated ARCHITECTURE.md + CLAUDE.md + README.md (+103 lines net, 3 files). Also surfaced a v0.1.33 candidate: `selector-pack.ts` ships as dead code.

@@ -18,15 +18,15 @@
 		</data>
 		<key>Resources/Base.lproj/Main.storyboardc/Info.plist</key>
 		<data>
-		S0z+vJgl9oPTAY5mH5I7hfNUu0g=
+		istsbXYxrVyDfz1Zgbum/4O4Vrk=
 		</data>
 		<key>Resources/Base.lproj/Main.storyboardc/MainMenu.nib</key>
 		<data>
-		YjOHvxHqznx5afZZMgncWzY6dM0=
+		N3TiJVoqDvcyMaKMWhmSFhs5Vk8=
 		</data>
 		<key>Resources/Base.lproj/Main.storyboardc/NSWindowController-B8D-0N-5wS.nib</key>
 		<data>
-		Kpwbawc1gJX/isAIjoVErV0d5X8=
+		vYauQRE0Ylkj7iEg4yU8EoyfGgo=
 		</data>
 		<key>Resources/Base.lproj/Main.storyboardc/XfG-lQ-9wD-view-m2S-Jp-Qdl.nib</key>
 		<data>
@@ -51,7 +51,7 @@
 		<dict>
 			<key>cdhash</key>
 			<data>
-			5pmRyrgrXPwMiM2SgUa9h5DR/Vo=
+			G9+FkcUU3D+9yMmFAAVoTauyf1s=
 			</data>
 			<key>requirement</key>
 			<string>anchor apple generic and identifier "com.safari-pilot.app.Extension" and (certificate leaf[field.1.2.840.113635.100.6.1.9] /* exists */ or certificate 1[field.1.2.840.113635.100.6.2.6] /* exists */ and certificate leaf[field.1.2.840.113635.100.6.1.13] /* exists */ and certificate leaf[subject.OU] = V37WLKRXUJ)</string>
@@ -81,21 +81,21 @@
 		<dict>
 			<key>hash2</key>
 			<data>
-			gtOgSFtbJSD5LBz1jgStYoPy4FQccSloBjaOytq+rmc=
+			/h4tyHfgD1voEQjNRrOK5aLzqbyJPIVSomaE8DXBYwI=
 			</data>
 		</dict>
 		<key>Resources/Base.lproj/Main.storyboardc/MainMenu.nib</key>
 		<dict>
 			<key>hash2</key>
 			<data>
-			FOnQUKPQ6//HfkyRrot03+zI7EQfRkEVy0ufjaM7sb4=
+			tIa1tzsdthgYWixbaQ1bpMlXVIdBxWX3skd78i6P3nw=
 			</data>
 		</dict>
 		<key>Resources/Base.lproj/Main.storyboardc/NSWindowController-B8D-0N-5wS.nib</key>
 		<dict>
 			<key>hash2</key>
 			<data>
-			YEVNBsM/ll3VHhj7HSpcE8yTMGc5LimgD1iS77Y7nDA=
+			qhXb4cBpb4n165h9gtg5maRhsjYUNyU56QoD/WO16Uc=
 			</data>
 		</dict>
 		<key>Resources/Base.lproj/Main.storyboardc/XfG-lQ-9wD-view-m2S-Jp-Qdl.nib</key>

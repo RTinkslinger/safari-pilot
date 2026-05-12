@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-Safari Pilot is a native Safari browser automation framework for AI agents on macOS. It exposes 88 tools via MCP (stdio), letting Claude Code control Safari directly through AppleScript, a persistent Swift daemon, or a Safari Web Extension — no Chrome needed. As of v0.1.32 it also ships 8 plugin skills (4 new in v0.1.31: evidence-grounded-screenshot, dismiss-overlays-recovery, visible-evidence-grounding, temporal-substitution) and the `/safari-pilot:stats` local-metrics slash command.
+Safari Pilot is a native Safari browser automation framework for AI agents on macOS. It exposes 88 tools via MCP (stdio), letting Claude Code control Safari directly through AppleScript, a persistent Swift daemon, or a Safari Web Extension — no Chrome needed. As of v0.1.32 it also ships 8 plugin skills (4 new in v0.1.31: evidence-grounded-screenshot, dismiss-overlays-recovery, visible-evidence-grounding, temporal-substitution) and the `/safari-pilot:stats` local-metrics slash command. v0.1.33 adds daemon HTTP-layer hardening — runtime service-crash recovery via in-process retry-with-backoff (replaces the launchctl crashloop on `NIOFcntlFailedError`) and detaches the HTTP self-test from `onServerRunning` (fixes a 60s URLSession deadlock on every startup since 2026-04-19). See CHANGELOG.md.
 
 ## Ways of Working
 
