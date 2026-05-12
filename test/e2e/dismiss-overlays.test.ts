@@ -23,7 +23,7 @@
  * v0.1.31 KNOWN ISSUE — boolean coercion of integer 0/1 in extension result.
  * The storage-bus → daemon → server encoding pipeline coerces integer 0 → false
  * and 1 → true. Numeric fields like `overlaysAtStart` arrive as `false`/`true`.
- * The asInt() normalizer below handles this; fix is deferred to v0.1.32 per
+ * The asInt() normalizer below handles this; fix is deferred to a future release per
  * project-v0132-bool-coercion-carryforward.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
@@ -38,7 +38,7 @@ import { startLegitimateConfirmFixture } from '../fixtures/legitimate-confirm-di
 
 function asInt(v: unknown): number {
   if (typeof v === 'number') return v;
-  // v0.1.31 known issue: daemon Models.swift coerces 0/1 → false/true (deferred to v0.1.32).
+  // v0.1.31 known issue: daemon Models.swift coerces 0/1 → false/true (deferred to a future release).
   if (v === false) return 0;
   if (v === true) return 1;
   return Number(v);
@@ -129,7 +129,7 @@ describe('safari_dismiss_overlays e2e (v0.1.31 Task 12)', () => {
       const { result } = await openTabAndDismiss(fixture.url(), 'onetrust');
       expect(result.dismissed.length).toBeGreaterThan(0);
       expect(result.dismissed[0].id).toBe('onetrust-banner');
-      // v0.1.31 known issue: bool coercion deferred to v0.1.32.
+      // v0.1.31 known issue: bool coercion deferred to a future release.
       // verified is a true bool in source, so this should be true regardless.
       expect(result.dismissed[0].verified).toBe(true);
     } finally {
@@ -163,7 +163,7 @@ describe('safari_dismiss_overlays e2e (v0.1.31 Task 12)', () => {
     try {
       const { result } = await openTabAndDismiss(fixture.url(), 'control');
       expect(result.dismissed).toEqual([]);
-      // v0.1.31 known issue: bool coercion deferred to v0.1.32.
+      // v0.1.31 known issue: bool coercion deferred to a future release.
       expect(asInt(result.overlaysAtStart)).toBe(0);
     } finally {
       await new Promise<void>((r) => fixture.server.close(() => r()));

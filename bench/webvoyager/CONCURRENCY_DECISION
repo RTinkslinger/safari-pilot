@@ -1,6 +1,50 @@
-# Concurrency Decision (PF-6, 2026-05-07)
+# Concurrency Decision (PF-6, 2026-05-07; revised 2026-05-12)
 
-**Decision:** CONCURRENCY=8
+**Current decision:** CONCURRENCY=1 (revised 2026-05-12 — see "Why revised to 1" below)
+
+**Original decision:** CONCURRENCY=8
+
+## Why revised to 1 (2026-05-12)
+
+The v0.1.32 sprint's T24 bench attempt at the original c=8 setting exposed two
+distinct problems:
+
+1. **Daemon HTTP-layer crashloop under c=8 storm.** `runService()` throws on
+   `NIOFcntlFailedError` mid-flight, the (misnamed) `onBindFailure` callback
+   FATAL-exits the daemon, launchctl respawns, repeat indefinitely. **Fixed
+   in v0.1.33** (`5147d5e` — retry-with-backoff + readyFlag differentiation).
+
+2. **Anthropic Max rate-limit / queue serialization at c=8.** Even with the
+   daemon hardened, an 8-task probe (Allrecipes--0..7 at c=8) showed every
+   task `TIMED_OUT=true` with empty STDOUT and `agent_final_text=""` after
+   ~248s wall — Anthropic's concurrency throttle queues prompts when ≥N
+   spawn simultaneously, exceeding the bench's per-task timeout. Single-shot
+   `claude -p` works (54s); 8-concurrent does not. **This is upstream rate
+   limiting, not a daemon bug.**
+
+   The original PF-6 microbench measured `safari_health_check` (a no-network
+   client-side probe), which doesn't exercise Anthropic's API at all and so
+   didn't surface the queue serialization that real WebVoyager prompts hit.
+
+3. **Empirical precedent.** All three v0.1.30 canonical baseline runs
+   (2026-05-08) ran at `--concurrency 1` despite the file claiming 8 — the
+   operator had been quietly overriding to avoid bug 1 (which we hadn't yet
+   diagnosed). v0.1.30's canonical scoreboard was generated at c=1; that's
+   the matched-precedent comparison point.
+
+The empirical c=1 wall-time on v0.1.30 baseline 175-task dev sample was
+~7 hours (vs ~3.7h theoretical at c=8 if both bugs were fixed). The 1.9×
+cost is worth paying for runs that actually produce scores.
+
+## Reversal trigger to revisit
+
+Revisit c≥2 when **both** of these hold:
+- Anthropic Max concurrency policy documented to support N≥2 simultaneous
+  `claude -p` invocations without queueing (or `claude` CLI gains an
+  explicit max-concurrency flag with a known-good lower setting).
+- A real WebVoyager full-643 run at the new concurrency completes with
+  `capture_failure_rate ≤ baseline + 0.5pp` and per-site delta stays within
+  noise. Microbenches are insufficient — they don't exercise the API queue.
 
 ## Measurement
 

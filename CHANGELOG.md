@@ -1,5 +1,84 @@
 # Changelog
 
+## v0.1.33 (2026-05-12) — Daemon HTTP-layer hardening
+
+Pure-bugfix release. No new tools, skills, or commands. The TS-side feature
+work that shipped in v0.1.32 still applies; this release adds two daemon Swift
+fixes that surfaced during the v0.1.32 ship-gate T24 attempt and a benchmark
+configuration correction.
+
+### Fixed
+
+- **Daemon HTTP self-test no longer deadlocks on every startup.** Pre-fix,
+  `HTTP_SELF_TEST` failed with a 60s URLSession timeout on every clean
+  daemon start since at least 2026-04-19, recording a phantom
+  `recordHttpRequestError()` each cycle. Cause: synchronous self-test inside
+  Hummingbird's `onServerRunning` deadlocked on the very server it was
+  probing — the accept loop couldn't process the loopback request until
+  `onServerRunning` returned, but `onServerRunning` was awaiting the
+  self-test's response. Fix: `Task.detached` + 200ms grace + explicit 5s
+  URLRequest timeout. Self-test now passes status=200 within ~236ms of
+  `HTTP_READY` (commit `1acd277`).
+
+- **Daemon recovers HTTP-layer runtime crashes instead of FATAL-exiting.**
+  Pre-fix, `runService()` throwing for ANY reason — including transient
+  `NIOFcntlFailedError` mid-flight under sustained load — logged
+  `HTTP_BIND_FAILED` and called `onBindFailure` → `exit(1)` → launchctl
+  KeepAlive respawn. That converted a transient runtime blip into a
+  permanent process crashloop. Fix: track `readyFlag` per `start()` attempt;
+  if `onServerRunning` ever fired (server was ready), restart the
+  Hummingbird `Application` in-process with exponential backoff
+  (1s, 2s, 4s, 8s, 16s capped at 30s) for up to 5 attempts. Initial bind
+  failures (never ready) retain the original fatal-exit behavior. Beyond
+  5 runtime restarts, escalate as bind failure (visible exit, launchctl
+  respawns fresh) (commit `5147d5e`).
+
+  Empirically validated post-fix: 30s synthetic 8-worker HTTP storm, 1-task
+  bench probe at c=1, 8-task bench probe at c=8 — all produced zero
+  `HTTP_BIND_FAILED` / `HTTP_SERVICE_FAILED` / `NIOFcntlFailedError` events
+  in `~/.safari-pilot/daemon.log`. 156 daemon unit tests pass including
+  `testOnBindFailureFiresWhenPortAlreadyBound` (preserves bind-failure-fatal
+  on the "never ready" branch).
+
+### Changed
+
+- **`bench/webvoyager/CONCURRENCY`: 8 → 1.** Aligns the config with v0.1.30
+  canonical baseline precedent (all three v0.1.30 runs were launched at
+  `--concurrency 1` despite the file claiming 8 — operator override that
+  wasn't documented). The 8-task probe at c=8 post-daemon-fix exposed an
+  upstream issue: Anthropic Max queues 8-concurrent `claude -p` invocations,
+  exceeding the bench's 248s per-task timeout with empty STDOUT and
+  `agent_final_text=""`. Single-shot `claude -p` works (~54s for `OK`);
+  8-concurrent does not. Original PF-6 microbench used
+  `safari_health_check`, a no-network client-side probe that doesn't touch
+  Anthropic's API at all, so didn't surface this. Rationale and reversal
+  trigger now documented in `bench/webvoyager/CONCURRENCY_DECISION`.
+
+### Known limitations carried forward to a future release
+
+- **`NIOFcntlFailedError` upstream trigger not root-caused.** Synthetic
+  8-worker HTTP storm over 3 minutes did not reproduce; the trigger seems
+  to require sustained mixed real-Safari interaction. The v0.1.33 fix makes
+  the daemon resilient regardless. Deeper SwiftNIO investigation is open.
+- All v0.1.32 carry-forwards remain: daemon `Models.swift` AnyCodable bool/
+  int coercion, allowlist pattern over-broadness + registry-order collision,
+  `skipped[]` field-level sanitization + `MALFORMED_SENTINEL` error name,
+  `selector-pack.ts` dead-code wire-or-remove.
+
+### Rollback
+
+If v0.1.33 introduces a regression versus v0.1.32:
+- The HTTP service fix is well-encapsulated in `ExtensionHTTPServer.start()`.
+  Revert commit `5147d5e` to restore pre-fix FATAL-exit behavior. The
+  daemon Swift API surface is unchanged.
+- The self-test detach (`1acd277`) is similarly isolated. Revert returns
+  to the pre-fix always-fails-at-60s behavior, which was non-fatal.
+- `bench/webvoyager/CONCURRENCY` can be reverted to `8` if a future
+  Anthropic Max policy change makes that viable; the daemon hardening
+  stays.
+
+---
+
 ## v0.1.32 (2026-05-08)
 
 (Released as v0.1.32 because the dev cycle required mid-sprint marketing-version
