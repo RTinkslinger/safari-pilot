@@ -16,6 +16,26 @@
 
 ## Current Work
 
+### Iteration 76 - 2026-05-12 — Documentation refresh for v0.1.32 (ARCHITECTURE / CLAUDE / README)
+
+**What:** User asked "update all documentation" — surfaced and corrected substantial doc staleness that had accumulated over the v0.1.29–v0.1.32 sprint cycle. Single commit at `dd5dddd` updated ARCHITECTURE.md + CLAUDE.md + README.md (+103 lines net, 3 files). Also surfaced a v0.1.33 candidate: `selector-pack.ts` ships as dead code.
+
+**What was stale and is now fixed:**
+- Tool count was 82 (README) / 76 (CLAUDE.md) / 82 (ARCHITECTURE.md) — real MCP runtime exposure is **88** (87 from `listToolDefinitions()` + `safari_health_check` registered at initialize-time). Discrepancy of 6 in README — 5 prior un-documented modules (`safari_query_all` from extraction, `safari_tool_search`, `safari_run_skill`, `safari_list_skills`, plus dead `safari_register_selector`/`safari_unregister_selector`) + 1 new this sprint (`safari_dismiss_overlays`, since the scroll tool already fits inside Interaction).
+- Tool Modules table in ARCHITECTURE.md was missing 4 modules (overlays.ts, skills.ts, tool-search.ts, selector-pack.ts) and undercounted interaction.ts (11 → 12 with `safari_scroll_to_element`).
+- Test counts in ARCHITECTURE.md were stale: 7 e2e files / 34 tests → 75 files / ~150 tests; 398 unit → 668.
+- Version history in ARCHITECTURE.md stopped at v0.1.24 — added v0.1.30 (safari_take_screenshot WebView capture) + v0.1.32 (this sprint).
+- README.md tool catalog was missing entire sections for Overlays, Discovery (safari_tool_search), and Skills (safari_run_skill / safari_list_skills). Plugin Skills + Slash Commands sections didn't exist at all.
+- IdpiAnnotator row in both ARCHITECTURE.md and CLAUDE.md security-pipeline tables didn't reflect the EXTRACTION_TOOLS Set extension for `safari_dismiss_overlays`.
+- Project Layout in CLAUDE.md predated `src/overlays/`, `src/cli/`, `extension/locator.js`, `skills/` directory, `tests/ci/`. Updated to reflect current layout.
+
+**v0.1.33 candidate surfaced by the audit:** `src/tools/selector-pack.ts` exposes 2 tool definitions (`safari_register_selector`, `safari_unregister_selector`) but is wired into neither the static `listToolDefinitions()` modules array (server.ts:264-285) nor the runtime `initialize()` modules array (server.ts:399-455). Both tools fail with "no handler" if any caller tried to invoke them. Documented in ARCHITECTURE.md tool-modules table as "0 tools, dead code" and listed in CHANGELOG carry-forwards. Decision needed: wire it or remove it.
+
+**Changes:** `ARCHITECTURE.md` (+54 lines net), `CLAUDE.md` (+29), `README.md` (+40). Math verified: `grep ^### .* \([0-9]+\)` sums to 88 across README sections = real MCP runtime exposure.
+
+**Context:** No code changes this iter — pure documentation. Working tree clean after commit. Branch `feat/v0131-evidence-grounding` now at HEAD `dd5dddd`, **24 commits ahead of `main`**. Bench gate (T24) remains the only ship blocker. Today is 2026-05-12 — 4 days since v0.1.30 partial-67 baseline; Anthropic Max quota window should be open if user is ready to drive T24.
+---
+
 ### Iteration 75 - 2026-05-08 — v0.1.31 sprint complete: T12-T23 shipped, pre-tag-check 11/11 PASS, ready for bench gate
 
 **What:** Drove the sprint from 10/24 (CHECKPOINT.md state) to 23/24 in a single execution session per user direction "keep going. Finish everything." All implementation work landed. Sprint published as **v0.1.32** (not v0.1.31) because the dev cycle required mid-sprint marketing-version bumps for Safari extension cache invalidation per `feedback-extension-version-both-fields`. Two real bugs surfaced and fixed (locator.js shadow-DOM matchSignal + smart-app-banner allowlist pattern); two marketing-version bumps (0.1.31 → 0.1.32); pre-tag-check extended from 9 to 11 gates; ALL 11 PASS; CHANGELOG written; bench gate (T24) is the only remaining ship-gate and is user-driven (Anthropic Max quota window required).
