@@ -193,27 +193,38 @@ if #available(macOS 14.0, *) {
         healthStore: healthStore,
         stagingStore: dispatcher.stagingStore,
         onReady: {
-            // Self-test: verify HTTP server is actually serving
-            // Uses POST /connect (instant) instead of GET /poll (5s long-hold)
-            do {
-                let url = URL(string: "http://127.0.0.1:19475/connect")!
-                var request = URLRequest(url: url)
-                request.httpMethod = "POST"
-                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-                request.httpBody = try JSONSerialization.data(withJSONObject: [
-                    "executedIds": [] as [String],
-                    "pendingIds": [] as [String],
-                ])
-                let (_, response) = try await URLSession.shared.data(for: request)
-                let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-                if status == 200 {
-                    Logger.info("HTTP_SELF_TEST pass status=\(status)")
-                } else {
-                    Logger.warning("HTTP_SELF_TEST unexpected status=\(status)")
+            // Self-test: verify HTTP server is actually serving.
+            // Detached + grace: onServerRunning is awaited inline by Hummingbird's
+            // ServiceLifecycle, so a synchronous self-test deadlocks on the very
+            // server it's probing — the loopback URLSession request never gets
+            // accepted, hits the URLSession 60s default timeout, and records a
+            // phantom error on every daemon start. Investigation 2026-05-12 (Issue A).
+            // Fix: run in Task.detached so onServerRunning returns immediately,
+            // with 200ms grace so the accept loop has primed itself, and an
+            // explicit 5s URLRequest timeout so a real future failure fails fast.
+            Task.detached {
+                try? await Task.sleep(nanoseconds: 200_000_000)
+                do {
+                    let url = URL(string: "http://127.0.0.1:19475/connect")!
+                    var request = URLRequest(url: url)
+                    request.httpMethod = "POST"
+                    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                    request.timeoutInterval = 5
+                    request.httpBody = try JSONSerialization.data(withJSONObject: [
+                        "executedIds": [] as [String],
+                        "pendingIds": [] as [String],
+                    ])
+                    let (_, response) = try await URLSession.shared.data(for: request)
+                    let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+                    if status == 200 {
+                        Logger.info("HTTP_SELF_TEST pass status=\(status)")
+                    } else {
+                        Logger.warning("HTTP_SELF_TEST unexpected status=\(status)")
+                    }
+                } catch {
+                    Logger.error("HTTP_SELF_TEST fail error=\(error)")
+                    healthStore.recordHttpRequestError()
                 }
-            } catch {
-                Logger.error("HTTP_SELF_TEST fail error=\(error)")
-                healthStore.recordHttpRequestError()
             }
         },
         onBindFailure: { error in
