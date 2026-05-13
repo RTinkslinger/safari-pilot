@@ -19,6 +19,7 @@ interface Args {
   byTool: boolean;
   byError: boolean;
   byDomain: boolean;
+  byCsp: boolean;
   tail: boolean;
 }
 
@@ -29,6 +30,7 @@ function parseArgs(argv: string[]): Args {
     byTool: false,
     byError: false,
     byDomain: false,
+    byCsp: false,
     tail: false,
   };
   for (let i = 0; i < argv.length; i++) {
@@ -37,10 +39,11 @@ function parseArgs(argv: string[]): Args {
     else if (argv[i] === '--by-tool') a.byTool = true;
     else if (argv[i] === '--by-error') a.byError = true;
     else if (argv[i] === '--by-domain') a.byDomain = true;
+    else if (argv[i] === '--by-csp') a.byCsp = true;
     else if (argv[i] === '--tail') a.tail = true;
   }
-  if (!a.byTool && !a.byError && !a.byDomain && !a.tail) {
-    a.byTool = a.byError = a.byDomain = true; // default: all three
+  if (!a.byTool && !a.byError && !a.byDomain && !a.byCsp && !a.tail) {
+    a.byTool = a.byError = a.byDomain = a.byCsp = true; // default: all sections
   }
   return a;
 }
@@ -201,6 +204,46 @@ function main(): void {
       });
     console.log('Top domains');
     console.log(formatTable(['Domain', 'Count', 'Err', 'Err%'], rows));
+    console.log();
+  }
+
+  if (args.byCsp) {
+    let cspBlockedTotal = 0;
+    let cspHardBlockTotal = 0;
+    const cspBlockedBySite = new Map<string, number>();
+    const cspHardBlockBySite = new Map<string, number>();
+    for (const r of records) {
+      if (r.ok || !r.error) continue;
+      const code = r.error.code;
+      if (code !== 'CSP_BLOCKED' && code !== 'CSP_HARD_BLOCK') continue;
+      const site = (r.domain || '(no-domain)').replace(/^www\./, '');
+      if (code === 'CSP_HARD_BLOCK') {
+        cspHardBlockTotal++;
+        cspHardBlockBySite.set(site, (cspHardBlockBySite.get(site) || 0) + 1);
+      } else {
+        cspBlockedTotal++;
+        cspBlockedBySite.set(site, (cspBlockedBySite.get(site) || 0) + 1);
+      }
+    }
+    if (cspBlockedTotal > 0 || cspHardBlockTotal > 0) {
+      console.log('CSP / Trusted Types blocks');
+      console.log(`  CSP_BLOCKED:    ${cspBlockedTotal}`);
+      console.log(`  CSP_HARD_BLOCK: ${cspHardBlockTotal}`);
+      const sites = new Set<string>([
+        ...cspBlockedBySite.keys(),
+        ...cspHardBlockBySite.keys(),
+      ]);
+      if (sites.size > 0) {
+        const rows = [...sites].sort().map((site) => [
+          site,
+          String(cspBlockedBySite.get(site) || 0),
+          String(cspHardBlockBySite.get(site) || 0),
+        ]);
+        console.log(
+          formatTable(['Site', 'CSP_BLOCKED', 'CSP_HARD_BLOCK'], rows),
+        );
+      }
+    }
   }
 }
 
