@@ -951,6 +951,61 @@
               };
               break;
             }
+            // ── EARLY INTERCEPT: __SP_EXTRACT_METADATA__:<json> (v0.1.34 Task 15e) ──
+            // CSP-immune safari_extract_metadata. Reproduces the previous
+            // JS-string body using native DOM APIs. Result-envelope shape
+            // preserved verbatim: { meta, canonical, openGraph, twitter, jsonLd, url }
+            if (typeof params.script === 'string' && params.script.startsWith('__SP_EXTRACT_METADATA__:')) {
+              const getMeta = (n) => {
+                const el = document.querySelector('meta[name="' + n + '"]') ||
+                           document.querySelector('meta[property="' + n + '"]');
+                return el ? el.getAttribute('content') : null;
+              };
+
+              const meta = {
+                title: document.title || null,
+                description: getMeta('description'),
+                keywords: getMeta('keywords'),
+                author: getMeta('author'),
+                robots: getMeta('robots'),
+                viewport: getMeta('viewport'),
+              };
+
+              const canonicalEl = document.querySelector('link[rel="canonical"]');
+              const canonical = canonicalEl ? canonicalEl.getAttribute('href') : null;
+
+              const og = {};
+              const ogMetas = document.querySelectorAll('meta[property^="og:"]');
+              for (let i = 0; i < ogMetas.length; i++) {
+                const prop = ogMetas[i].getAttribute('property').replace('og:', '');
+                og[prop] = ogMetas[i].getAttribute('content');
+              }
+
+              const twitter = {};
+              const twMetas = document.querySelectorAll('meta[name^="twitter:"]');
+              for (let j = 0; j < twMetas.length; j++) {
+                const nm = twMetas[j].getAttribute('name').replace('twitter:', '');
+                twitter[nm] = twMetas[j].getAttribute('content');
+              }
+
+              const jsonLd = [];
+              const ldScripts = document.querySelectorAll('script[type="application/ld+json"]');
+              for (let k = 0; k < ldScripts.length; k++) {
+                try {
+                  jsonLd.push(JSON.parse(ldScripts[k].textContent));
+                } catch (_e) { /* skip malformed */ }
+              }
+
+              result = {
+                meta,
+                canonical,
+                openGraph: og,
+                twitter,
+                jsonLd,
+                url: location.href,
+              };
+              break;
+            }
             // ── EARLY INTERCEPT: __SP_EXTRACT_IMAGES__:<json> (v0.1.34 Task 15d) ──
             // CSP-immune safari_extract_images. Reproduces the previous
             // JS-string body using native DOM APIs. Result-envelope shape

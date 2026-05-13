@@ -1,6 +1,5 @@
 import type { ToolResponse, ToolRequirements } from '../types.js';
 import type { IEngine } from '../engines/engine.js';
-import { escapeForJsSingleQuote } from '../escape.js';
 
 export interface ToolDefinition {
   name: string;
@@ -116,7 +115,8 @@ export class StructuredExtractionTools {
           },
           required: ['tabUrl'],
         },
-        requirements: { idempotent: true },
+        // v0.1.34 T15e: __SP_EXTRACT_METADATA__ sentinel for CSP-immunity.
+        requirements: { idempotent: true, requiresCspBypass: true },
       },
     ];
   }
@@ -218,65 +218,12 @@ export class StructuredExtractionTools {
     const start = Date.now();
     const tabUrl = params['tabUrl'] as string;
 
-    const js = `
-      function getMeta(name) {
-        var el = document.querySelector('meta[name="' + name + '"]') ||
-                 document.querySelector('meta[property="' + name + '"]');
-        return el ? el.getAttribute('content') : null;
-      }
+    // v0.1.34 T15e: __SP_EXTRACT_METADATA__ sentinel for CSP-immunity on
+    // Trusted-Types-strict pages. Result-envelope shape preserved verbatim:
+    //   { meta, canonical, openGraph, twitter, jsonLd, url }
+    const sentinel = '__SP_EXTRACT_METADATA__:' + JSON.stringify({});
 
-      // Standard meta
-      var meta = {
-        title: document.title || null,
-        description: getMeta('description'),
-        keywords: getMeta('keywords'),
-        author: getMeta('author'),
-        robots: getMeta('robots'),
-        viewport: getMeta('viewport'),
-      };
-
-      // Canonical URL
-      var canonicalEl = document.querySelector('link[rel="canonical"]');
-      var canonical = canonicalEl ? canonicalEl.getAttribute('href') : null;
-
-      // Open Graph
-      var og = {};
-      var ogMetas = document.querySelectorAll('meta[property^="og:"]');
-      for (var i = 0; i < ogMetas.length; i++) {
-        var prop = ogMetas[i].getAttribute('property').replace('og:', '');
-        og[prop] = ogMetas[i].getAttribute('content');
-      }
-
-      // Twitter Cards
-      var twitter = {};
-      var twMetas = document.querySelectorAll('meta[name^="twitter:"]');
-      for (var j = 0; j < twMetas.length; j++) {
-        var name = twMetas[j].getAttribute('name').replace('twitter:', '');
-        twitter[name] = twMetas[j].getAttribute('content');
-      }
-
-      // JSON-LD
-      var jsonLd = [];
-      var ldScripts = document.querySelectorAll('script[type="application/ld+json"]');
-      for (var k = 0; k < ldScripts.length; k++) {
-        try {
-          jsonLd.push(JSON.parse(ldScripts[k].textContent));
-        } catch (e) {
-          // skip malformed
-        }
-      }
-
-      return {
-        meta: meta,
-        canonical: canonical,
-        openGraph: og,
-        twitter: twitter,
-        jsonLd: jsonLd,
-        url: location.href,
-      };
-    `;
-
-    const result = await this.engine.executeJsInTab(tabUrl, js);
+    const result = await this.engine.executeJsInTab(tabUrl, sentinel);
     if (!result.ok) throw new Error(result.error?.message ?? 'Extract metadata failed');
 
     return this.makeResponse(result.value ? JSON.parse(result.value) : {}, Date.now() - start);
