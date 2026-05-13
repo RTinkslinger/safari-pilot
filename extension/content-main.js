@@ -951,6 +951,48 @@
               };
               break;
             }
+            // ── EARLY INTERCEPT: __SP_EXTRACT_LINKS__:<json> (v0.1.34 Task 15c) ──
+            // CSP-immune safari_extract_links. Reproduces the previous
+            // JS-string body using native DOM APIs. Result-envelope shape
+            // preserved verbatim: { links: [{href, text, context, internal}], count }
+            if (typeof params.script === 'string' && params.script.startsWith('__SP_EXTRACT_LINKS__:')) {
+              const args = JSON.parse(params.script.slice('__SP_EXTRACT_LINKS__:'.length));
+              const filterMode = args.filter || 'all';
+              const pageOrigin = location.origin;
+              const anchors = document.querySelectorAll('a[href]');
+              const links = [];
+
+              for (let i = 0; i < anchors.length; i++) {
+                const a = anchors[i];
+                const href = a.href || '';
+                const t = (a.innerText || a.textContent || '').trim().slice(0, 200);
+
+                let isInternal = false;
+                try {
+                  isInternal = new URL(href).origin === pageOrigin;
+                } catch (e) {
+                  isInternal = !href.startsWith('http') || href.startsWith(pageOrigin);
+                }
+
+                if (filterMode === 'internal' && !isInternal) continue;
+                if (filterMode === 'external' && isInternal) continue;
+
+                let context = '';
+                let node = a.parentElement;
+                while (node && node !== document.body) {
+                  const tag = node.tagName ? node.tagName.toUpperCase() : '';
+                  if (/^H[1-6]$/.test(tag) || tag === 'P' || tag === 'LI') {
+                    context = (node.innerText || node.textContent || '').trim().slice(0, 200);
+                    break;
+                  }
+                  node = node.parentElement;
+                }
+
+                links.push({ href, text: t, context, internal: isInternal });
+              }
+              result = { links, count: links.length };
+              break;
+            }
             // ── EARLY INTERCEPT: __SP_EXTRACT_TABLES__:<json> (v0.1.34 Task 15b) ──
             // CSP-immune safari_extract_tables. Reproduces the previous
             // JS-string body using native DOM APIs. Result-envelope shape

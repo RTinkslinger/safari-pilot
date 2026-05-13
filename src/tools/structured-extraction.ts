@@ -78,7 +78,8 @@ export class StructuredExtractionTools {
           },
           required: ['tabUrl'],
         },
-        requirements: { idempotent: true },
+        // v0.1.34 T15c: __SP_EXTRACT_LINKS__ sentinel for CSP-immunity.
+        requirements: { idempotent: true, requiresCspBypass: true },
       },
       {
         name: 'safari_extract_images',
@@ -184,53 +185,12 @@ export class StructuredExtractionTools {
     const tabUrl = params['tabUrl'] as string;
     const filter = (params['filter'] as string | undefined) ?? 'all';
 
-    const js = `
-      var filterMode = '${filter}';
-      var pageOrigin = location.origin;
-      var anchors = document.querySelectorAll('a[href]');
-      var links = [];
+    // v0.1.34 T15c: __SP_EXTRACT_LINKS__ sentinel for CSP-immunity on
+    // Trusted-Types-strict pages. Result-envelope shape preserved verbatim:
+    //   { links: [{href, text, context, internal}], count: number }
+    const sentinel = '__SP_EXTRACT_LINKS__:' + JSON.stringify({ filter });
 
-      for (var i = 0; i < anchors.length; i++) {
-        var a = anchors[i];
-        var href = a.href || '';
-        var text = (a.innerText || a.textContent || '').trim().slice(0, 200);
-
-        // Determine internal vs external
-        var isInternal = false;
-        try {
-          isInternal = new URL(href).origin === pageOrigin;
-        } catch (e) {
-          // relative or non-standard href
-          isInternal = !href.startsWith('http') || href.startsWith(pageOrigin);
-        }
-
-        if (filterMode === 'internal' && !isInternal) continue;
-        if (filterMode === 'external' && isInternal) continue;
-
-        // Find surrounding context: nearest heading or paragraph ancestor
-        var context = '';
-        var node = a.parentElement;
-        while (node && node !== document.body) {
-          var tag = node.tagName ? node.tagName.toUpperCase() : '';
-          if (/^H[1-6]$/.test(tag) || tag === 'P' || tag === 'LI') {
-            context = (node.innerText || node.textContent || '').trim().slice(0, 200);
-            break;
-          }
-          node = node.parentElement;
-        }
-
-        links.push({
-          href: href,
-          text: text,
-          context: context,
-          internal: isInternal,
-        });
-      }
-
-      return { links: links, count: links.length };
-    `;
-
-    const result = await this.engine.executeJsInTab(tabUrl, js);
+    const result = await this.engine.executeJsInTab(tabUrl, sentinel);
     if (!result.ok) throw new Error(result.error?.message ?? 'Extract links failed');
 
     return this.makeResponse(result.value ? JSON.parse(result.value) : { links: [], count: 0 }, Date.now() - start);
