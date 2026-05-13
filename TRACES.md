@@ -16,6 +16,110 @@
 
 ## Current Work
 
+### Iteration 79 - 2026-05-13 — Bench finalized 175/175 + judge run → v0.1.33 acceptance PASS
+
+**What:** Resumed inline-bench from the 40/175 pause (CHECKPOINT). Completed the remaining 135 tasks across 11 sites in one continuous run with two transient incidents (Anthropic API 529 storm — recovered after one cycle; cleanup-AppleScript hang on GitHub--21 and Google Flights--24 — recovered by reading the existing stream.jsonl + score.json regenerated). Ran `bench/webvoyager/judge-inline-runs.ts` (NEW one-shot orchestrator, sister to runner.ts's judge call) over all 174 PENDING_JUDGE+screenshot tasks. **Final WebVoyager v0.1.33 score: 128/175 = 73.1% SUCCESS, 0.0% capture failure rate across all 15 sites.**
+
+**Per-site final** (compared to v0.1.30 baseline where available — 6/15 sites overlap):
+
+| Site | v0.1.30 baseline | v0.1.33 | Δ |
+|---|---|---|---|
+| Allrecipes | 12/12 (100%) | 12/12 (100%) | = |
+| Amazon | 5/12 (42%) | 11/12 (92%) | **+6** |
+| Apple | 4/12 (33%) | 5/12 (42%) | **+1** |
+| ArXiv | 8/12 (67%) | 10/12 (83%) | **+2** |
+| BBC News | 5/12 (42%) | 9/12 (75%) | **+4** |
+| Booking | 4/7 (57%, partial) | 8/12 (67%) | **+4** |
+| Cambridge Dict | (no baseline) | 9/12 (75%) | — |
+| Coursera | (no baseline) | 8/12 (67%) | — |
+| ESPN | (no baseline) | 6/12 (50%) | — |
+| GitHub | (no baseline) | 10/12 (83%) | — |
+| Google Flights | (no baseline) | 3/11 (27%) | — |
+| Google Map | (no baseline) | 10/11 (91%) | — |
+| Google Search | (no baseline) | 7/11 (64%) | — |
+| Huggingface | (no baseline) | 10/11 (91%) | — |
+| Wolfram Alpha | (no baseline) | 10/11 (91%) | — |
+
+**Acceptance verdict (per T24):** ALL CRITERIA PASS.
+1. Allrecipes 12/12 holds — ✓
+2. Baseline-≥80% sites don't drop more than 1 task — Allrecipes was the only such site, holds at 12/12 — ✓
+3. capture_failure_rate ≤ 10.4% — 0.0% << 10.4% — ✓ (extension `__SP_TAKE_SCREENSHOT__` + screencapture fallback together captured every page)
+
+**Two additional bugs caught + worked around this iter (not yet committed):**
+
+3. **macOS BSD `mktemp /tmp/wv-prompt-XXXXXX.txt` is literal, not template.** GNU mktemp's X's-in-middle pattern doesn't exist in BSD; mktemp tried to create the literal `XXXXXX.txt` file. Worked the first ~50 runs (each `rm -f` cleaned up), broke after a TaskStop killed the harness before its cleanup. Fixed in `/tmp/run-one-task.sh` (template → `/tmp/wv-prompt.XXXXXX`).
+
+4. **Harness cleanup AppleScript hangs sometimes** (twice this iter: GitHub--21, Google Flights--24). Safari may queue the multi-tab close behind another osascript request. Wrapped in `perl -e 'alarm 8; exec @ARGV'` (since `gtimeout`/`timeout` are not on macOS by default) — frees the harness in 8s if Safari isn't responding. Both incidents recovered by reading the existing `stream.jsonl` and regenerating `score.json` from the `result/success` event.
+
+**Inline-bench cumulative spend (whole sprint):** $104.49 / 175 canonical tasks / 2900 turns / 5.3h cumulative agent runtime (sum of `agent_duration_ms`). Wall-clock across user sessions ~12-14h (heavy parallel discussion + tool roundtrip costs).
+
+**Changes:**
+- `TRACES.md` (this entry).
+- `bench/webvoyager/judge-inline-runs.ts` (NEW — one-shot judge orchestrator that mirrors runner.ts's judge call without re-running the agent. Reads `/tmp/wv-inline-runs/*-r1.score.json`, rewrites verdicts via `runJudge()`, writes `scoreboard.json` via `aggregateScoreboard()`. Sister utility, not in the canonical bench pipeline.).
+- Operational fixes to `/tmp/run-one-task.sh` (mktemp + alarm-cleanup) — harness still lives in `/tmp` not the repo; carry-forward to v0.1.34 if the inline path becomes supported.
+
+**Context:** v0.1.33 is now BENCH-GATE-CLEAR. Pre-tag-check.sh + tag push + CI watch are the remaining steps; tag push requires user authorization since it triggers CI build + npm publish.
+
+---
+
+### Iteration 78 - 2026-05-13 — TS-side bench robustness (Fix A1 + Fix B) + inline 1-by-1 bench at 40/175 SUCCESS
+
+**What:** Iter 77 fixed the daemon Swift layer (Issues A + B). Resuming the bench surfaced two MORE pre-existing bugs in the TS / extension layer that were masked by the daemon crashloop. Both fixed inline this iter (`130f9ba`); inline-bench run advanced from 0 → 40/175 tasks at 97.5% pass rate (39 SUCCESS, 1 FAILURE). Paused at user request after ArXiv 4/12. v0.1.33 ship-ready pending the remaining 135 task runs + judge scoring.
+
+**The two TS-side bugs (Phase 1 evidence):**
+
+1. **MCP server `Daemon exited code=1 signal=none` mid-command.** `src/engines/daemon.ts ensureRunning()` did a single 200ms TCP probe before falling back to spawning a local subprocess daemon. Under sustained bench load the system daemon may be busy for >200ms; the probe fails; MCP server spawns its own `./bin/SafariPilotd` subprocess; that subprocess FATAL-exits with `TCP_BIND_FAILED port=19474` because the system daemon already owns the ports; MCP server surfaces the subprocess exit as the user-facing error. Surfaced on Allrecipes--6 and Allrecipes--13 mid-task.
+
+2. **Extension `__SP_TAKE_SCREENSHOT__` sentinel times out 90s on heavy search pages.** `src/engines/extension.ts` has `Math.max(timeout ?? 90_000, 90_000)` — passing a shorter timeout from callers doesn't actually shorten the wait. On Amazon search and Allrecipes search the `browser.tabs.captureVisibleTab` path inside `extension/background.js` reliably hangs (likely MV3 background-page throttling or WebKit capture API contention under sustained load). Three sequential 90s retries × 8s setup = ~5min wasted per task before agent gives up. Surfaced on Allrecipes--44 first (bench-load-only), then Amazon--37 mid-task.
+
+**Phase 4 fixes (the single commit, two surgical edits):**
+
+- **`130f9ba` Fix A1 (`src/engines/daemon.ts`):** `ensureRunning()` now tries TCP probe 3× with backoff `200/500/1000ms` (total ≤1.7s) before falling back to spawn. `tryTcpConnection()` accepts a `timeoutMs` parameter. Verified empirically: Allrecipes--6 had failed before the fix with "Daemon exited code=1"; SUCCEEDed in 50s after the fix.
+
+- **`130f9ba` Fix B (`src/tools/extraction.ts`):** `handleTakeScreenshot()` now races extension `__SP_TAKE_SCREENSHOT__` against a local 15s `Promise.race` (the 90s Math.max-override inside extension.ts can't be reduced without other regressions). On local-timeout OR explicit extension failure, activate the target tab via AppleScript and invoke `screencapture -t png` to a tmp file, read base64, return. Result tagged `degraded=true` + `engine: applescript` in metadata. Verified empirically: Amazon--37 had failed before the fix with 3× 90s screenshot timeouts; SUCCEEDed in 71s after the fix (screencapture fired at ~17s post-15s race).
+
+**Inline-bench harness (operational artifact, `/tmp/run-one-task.sh`, NOT yet in repo):**
+
+Bash wrapper mirroring `bench/webvoyager/adapter.ts buildPrompt`, spawning `claude --bare --mcp-config .mcp.json` for each task (skips QMD hooks + global CLAUDE.md auto-discovery, saving ~65s/task startup vs the bench's regular `claude -p`). Per-task pre-snapshot of Safari tab URLs via AppleScript; after agent exits, closes tabs whose URLs are NOT in the snapshot (matches `bench/webvoyager/mcp-direct.ts cleanupNewTabs`). Verbose `--output-format stream-json` piped through `/tmp/sp-stream-pretty.py` produces one event per tool call / agent text / final result. Each task writes 4 artifacts: `score.json` + `transcript.txt` + `stream.jsonl` + `pretty.log` to `/tmp/wv-inline-runs/`.
+
+**Sample-seed footgun caught + corrected (~$5 wasted):**
+
+Initial 12 inline tasks ran on `--seed default` (my mistake); the bench's `run.sh` uses `--seed "v0.1.x-dev-sample"`. Different seed → different stratified sample. Of the first 12 inline runs, only 3 (Allrecipes--2, 8, 25) overlapped with the canonical sample. Resampled with correct seed and verified diff against v0.1.30 baseline Allrecipes IDs (12/12 match). Re-ran the missing 9 Allrecipes tasks from the correct sample. Should be codified in `bench/webvoyager/CONCURRENCY_DECISION` or sibling as a footgun note (v0.1.34 carry-forward).
+
+**Bench progress at iter close (paused per user request):**
+
+| Site | Done | SUCCESS | FAIL | Notes |
+|---|---|---|---|---|
+| Allrecipes | 12/12 | 12 | 0 | **CHECKPOINT criterion #1 MET** (Allrecipes 12/12 holds) |
+| Amazon | 12/12 | 11 | 1 | Amazon--5 add-to-cart blocked by Apple-ID sign-in + India shipping. Task inherently flaky on this Mac. |
+| Apple | 12/12 | 12 | 0 | Apple--41 hit CSP on shop pages; agent recovered via Bash+curl. v0.1.34 candidate: non-eval execute path. |
+| ArXiv | 4/12 | 4 | 0 | ArXiv--26, 13, 40, 11. Eight remaining (incl. ArXiv--18 killed mid-flight by `pause`). |
+| **Totals** | **40/175** | **39** | **1** | **97.5% pass rate pre-judge.** No daemon crashes. |
+
+API spend: ~$23 in Anthropic Max tokens. Per-task average $0.58. Range $0.11 (Apple--25) to $1.15 (Amazon--8).
+
+**Five real bugs caught + fixed across iters 77+78:**
+
+1. Daemon HTTP_SELF_TEST onServerRunning deadlock (`1acd277`, iter 77) — detached.
+2. Daemon `runService()` throw → FATAL exit crashloop (`5147d5e`, iter 77) — retries with backoff.
+3. MCP server TCP-probe 200ms timeout too tight under load (`130f9ba`, this iter) — 3 probes with backoff.
+4. Extension `__SP_TAKE_SCREENSHOT__` 90s hangs on heavy pages (`130f9ba`, this iter) — `screencapture` fallback.
+5. Sample seed footgun (operational, this iter) — resample with `--seed "v0.1.x-dev-sample"`.
+
+**Changes this iter:**
+
+- `src/engines/daemon.ts` (+22/-3): TCP retry loop in `ensureRunning()`, `tryTcpConnection()` accepts timeoutMs.
+- `src/tools/extraction.ts` (+72/-12): Promise.race against local 15s + `screencapture` fallback path; new imports (`readFile`, `unlink`, `execFile`, `promisify`).
+- `/tmp/run-one-task.sh` (NEW, ~140 lines, in `/tmp/` only — not in repo).
+- `/tmp/sp-stream-pretty.py` (NEW, ~50 lines, stream-json pretty-printer — not in repo).
+- `/tmp/wv-175-tasks.jsonl` (NEW, 175 sampled tasks with correct seed).
+- `/tmp/wv-inline-runs/` (NEW, 40 task artifact bundles ×4 files each = ~160 files).
+- One commit: `130f9ba` on `fix/v0132-daemon-hardening` (HEAD).
+
+**Context:** Branch `fix/v0132-daemon-hardening` at HEAD `130f9ba`, 30 commits ahead of `main`. v0.1.33 marketing version set in `package.json` + `extension/manifest.json`. Extension v0.1.33 build 202605121922 notarized + stapled + active in Safari. Daemon PID 76143 alive since 18:55 yesterday with 0 service failures since Fix 2 landed. 668 unit tests pass; pre-tag-check 11/11 PASS at last run (pre-`130f9ba` — should re-run before tag push). 0 capture failures across the 40 bench tasks: 39 via extension `__SP_TAKE_SCREENSHOT__`, 1 via screencapture fallback on Amazon--37. Resume plan: cat the remaining 135 task IDs from `/tmp/wv-175-tasks.jsonl`, iterate with `bash /tmp/run-one-task.sh <ID>`, then run `bench/webvoyager/judge.ts` over `/tmp/wv-inline-runs/`. See CHECKPOINT.md for full resumption playbook.
+
+---
+
 ### Iteration 77 - 2026-05-12 — Daemon HTTP-layer hardening (v0.1.33): Issue A + B fixed empirically, CONCURRENCY 8→1
 
 **What:** v0.1.32 T24 bench attempt (`bash bench/webvoyager/run.sh --variant v0.1.32 --sample dev --resume`, c=8, 175 tasks) failed catastrophically — 161 tasks burned with 0 success, all `MCP timeout for initialize`. Root cause investigation under `upp:systematic-debugging` exposed two distinct pre-existing daemon bugs (latent since at least 2026-04-19; daemon binary May 4 / source May 3 — predates the v0.1.31 sprint entirely). User chose **Option 3: Full daemon hardening before any retry.** Both bugs fixed and validated against synthetic + real bench load; the underlying `NIOFcntlFailedError` SwiftNIO trigger remains opaque (3-min 8-worker curl storm did not reproduce) but the daemon is resilient regardless. Branch pivoted from `feat/v0131-evidence-grounding` to `fix/v0132-daemon-hardening`; npm + extension marketing version bumped lockstep to **0.1.33**; CHANGELOG + ARCHITECTURE document the fixes; extension rebuilt + notarized + stapled (build 202605121922).
