@@ -743,6 +743,62 @@
               };
               break;
             }
+            // ── EARLY INTERCEPT: __SP_CLICK__:<json> (v0.1.34 Task 7) ──
+            // CSP-immune safari_click. Mirrors the previous actionJs body verbatim:
+            // MouseEvent dispatch (mousedown → mouseup → click/contextmenu/auxclick),
+            // modifier flags, native link-following for primary <a> clicks, and
+            // downloadContext payload for safari_download_link integration.
+            if (typeof params.script === 'string' && params.script.startsWith('__SP_CLICK__:')) {
+              const args = JSON.parse(params.script.slice('__SP_CLICK__:'.length));
+              const el = document.querySelector(args.selector);
+              if (!el) {
+                throw Object.assign(
+                  new Error('Element not found: ' + args.selector),
+                  { name: 'ELEMENT_NOT_FOUND' },
+                );
+              }
+              const buttonNum = args.buttonNum;
+              const m = args.modifiers || {};
+              const rect = el.getBoundingClientRect();
+              const opts = {
+                bubbles: true, cancelable: true, view: window,
+                clientX: rect.x + rect.width / 2, clientY: rect.y + rect.height / 2,
+                button: buttonNum,
+                buttons: 1 << buttonNum,
+                ctrlKey: !!m.ctrl, shiftKey: !!m.shift, altKey: !!m.alt, metaKey: !!m.meta,
+              };
+              const terminalEvent = buttonNum === 0 ? 'click' : buttonNum === 2 ? 'contextmenu' : 'auxclick';
+              el.dispatchEvent(new MouseEvent('mousedown', opts));
+              el.dispatchEvent(new MouseEvent('mouseup', opts));
+              el.dispatchEvent(new MouseEvent(terminalEvent, opts));
+
+              const linkEl = el.tagName === 'A' ? el : (el.closest ? el.closest('a') : null);
+              let navigatedTo = null;
+              if (buttonNum === 0 && linkEl && linkEl.href && !linkEl.hasAttribute('download')) {
+                const tgt = linkEl.getAttribute('target');
+                if (!tgt || tgt === '_self') navigatedTo = linkEl.href;
+              }
+
+              result = {
+                clicked: true,
+                navigatedTo: navigatedTo,
+                element: {
+                  tagName: el.tagName,
+                  id: el.id || undefined,
+                  textContent: (el.textContent || '').slice(0, 100),
+                },
+                downloadContext: linkEl ? {
+                  href: linkEl.href || undefined,
+                  downloadAttr: linkEl.getAttribute('download') == null ? undefined : linkEl.getAttribute('download'),
+                  isDownloadLink: linkEl.hasAttribute('download'),
+                } : undefined,
+              };
+
+              if (navigatedTo) {
+                window.location.href = navigatedTo;
+              }
+              break;
+            }
             // ── existing default execute_script path ──
             const commandId = params.commandId;
             if (commandId && window.__safariPilotExecutedCommands.has(commandId)) {

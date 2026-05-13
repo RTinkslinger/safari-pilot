@@ -416,74 +416,19 @@ export class InteractionTools {
     const buttonName = (params['button'] as string) ?? 'left';
     const buttonNum = buttonName === 'right' ? 2 : buttonName === 'middle' ? 1 : 0;
     const mods = Array.isArray(params['modifiers']) ? (params['modifiers'] as string[]) : [];
-    const ctrlKey = mods.includes('ctrl');
-    const shiftKey = mods.includes('shift');
-    const altKey = mods.includes('alt');
-    const metaKey = mods.includes('meta');
-    // Per W3C UI Events:
-    //   primary (button=0): mousedown → mouseup → click
-    //   right   (button=2): mousedown → mouseup → contextmenu  (no 'click')
-    //   middle  (button=1): mousedown → mouseup → auxclick     (no 'click')
-    const terminalEvent = buttonNum === 0 ? 'click' : buttonNum === 2 ? 'contextmenu' : 'auxclick';
-    // Native link-following only fires for primary click. Right opens context;
-    // middle is "open in new tab" which our automation cannot replicate via JS.
-    const followLinks = buttonNum === 0 ? 'true' : 'false';
 
     const selector = await this.resolveElement(tabUrl, params, true);
-    const escapedSelector = escapeForJsSingleQuote(selector);
 
-    const actionJs = `
-      var el = document.querySelector('${escapedSelector}');
-      if (!el) throw Object.assign(new Error('Element not found: ${escapedSelector}'), { name: 'ELEMENT_NOT_FOUND' });
-
-      var rect = el.getBoundingClientRect();
-      var opts = {
-        bubbles: true, cancelable: true, view: window,
-        clientX: rect.x + rect.width/2, clientY: rect.y + rect.height/2,
-        button: ${buttonNum},
-        buttons: ${1 << buttonNum},
-        ctrlKey: ${ctrlKey},
-        shiftKey: ${shiftKey},
-        altKey: ${altKey},
-        metaKey: ${metaKey},
-      };
-      el.dispatchEvent(new MouseEvent('mousedown', opts));
-      el.dispatchEvent(new MouseEvent('mouseup', opts));
-      el.dispatchEvent(new MouseEvent('${terminalEvent}', opts));
-
-      var linkEl = el.tagName === 'A' ? el : el.closest('a');
-      var navigatedTo = null;
-
-      // dispatchEvent fires JS handlers but does NOT trigger Safari's native
-      // link-following behavior. For anchor elements + primary click, explicitly navigate.
-      if (${followLinks} && linkEl && linkEl.href && !linkEl.hasAttribute('download')) {
-        var target = linkEl.getAttribute('target');
-        if (!target || target === '_self') {
-          navigatedTo = linkEl.href;
-        }
-      }
-
-      var result = {
-        clicked: true,
-        navigatedTo: navigatedTo,
-        element: {
-          tagName: el.tagName,
-          id: el.id || undefined,
-          textContent: (el.textContent || '').slice(0, 100),
-        },
-        downloadContext: linkEl ? {
-          href: linkEl.href || undefined,
-          downloadAttr: linkEl.getAttribute('download') ?? undefined,
-          isDownloadLink: linkEl.hasAttribute('download'),
-        } : undefined
-      };
-
-      if (navigatedTo) {
-        window.location.href = navigatedTo;
-      }
-
-      return result;
-    `;
+    // v0.1.34 Task 7 — CSP-immune sentinel. The JS-string transport was vulnerable to
+    // Trusted Types (`require-trusted-types-for 'script'`) because `new Function(params.script)`
+    // triggers the policy. Sentinel routes through __SP_CLICK__ → MAIN-world content-main.js
+    // handler, which dispatches MouseEvents natively (no Function constructor). All behavior
+    // preserved: button/modifiers/contextmenu/auxclick/link-following/downloadContext.
+    const actionJs = '__SP_CLICK__:' + JSON.stringify({
+      selector,
+      buttonNum,
+      modifiers: { ctrl: mods.includes('ctrl'), shift: mods.includes('shift'), alt: mods.includes('alt'), meta: mods.includes('meta') },
+    });
 
     const response = await this.waitAndExecute(tabUrl, selector, 'click', actionJs, { timeout, force });
 
