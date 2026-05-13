@@ -512,7 +512,62 @@ export class ExtractionTools {
     `;
 
     const result = await this.engine.executeJsInTab(tabUrl, js, timeout);
-    if (!result.ok) throw new Error(result.error?.message ?? 'Evaluate failed');
+    if (!result.ok) {
+      const rawMsg = result.error?.message ?? 'safari_evaluate failed';
+      // Match Trusted Types / CSP eval refusal patterns. Safari surfaces these as
+      // "Refused to evaluate a string as JavaScript because this document requires
+      // a 'Trusted Type' assignment" OR "...because 'unsafe-eval' is not an
+      // allowed source". v0.1.34 Task 3: wrap with CSP_BLOCKED / CSP_HARD_BLOCK
+      // and an alternative_tools hint pointing at the sentinel-based tools
+      // (safari_get_page_info, safari_click, etc. — added T4-T15).
+      const isTT = /trusted[- ]?type|trustedTypes/i.test(rawMsg);
+      const isEvalBlock = /unsafe-eval|refused to evaluate/i.test(rawMsg);
+      if (isTT || isEvalBlock) {
+        // Probe the tab via the __SP_TT_PROBE__ sentinel (installed in extension
+        // from v0.1.34 Task 2) to distinguish CSP_BLOCKED (soft — Layer 3 policy
+        // registered; sentinel-based tools work) from CSP_HARD_BLOCK (hard —
+        // page's trusted-types allowlist excludes 'safari-pilot'; even the
+        // policy registration was refused). Probe failure defaults to soft.
+        let isHardBlock = false;
+        try {
+          const probe = await this.engine.executeJsInTab(tabUrl, '__SP_TT_PROBE__:{}', 5_000);
+          if (probe.ok && probe.value) {
+            const parsed = JSON.parse(probe.value);
+            isHardBlock = parsed.hardBlock === true;
+          }
+        } catch { /* probe failure — default to CSP_BLOCKED */ }
+
+        const code = isHardBlock ? 'CSP_HARD_BLOCK' : 'CSP_BLOCKED';
+        const cspMode: string = isHardBlock ? 'hard-block' : (isTT ? 'tt-strict' : 'eval-blocked');
+        const hint = {
+          cspMode,
+          alternative_tools: [
+            'safari_get_page_info',
+            'safari_get_meta_tags',
+            'safari_extract_text_window',
+            'safari_click',
+            'safari_fill',
+            'safari_type',
+            'safari_scroll',
+            'safari_get_text',
+            'safari_query_all',
+            'safari_snapshot',
+          ],
+          rationale:
+            'safari_evaluate failed because this page enforces strict CSP / Trusted Types. ' +
+            'Use the named alternative tools — they route through extension sentinels that bypass page CSP. ' +
+            'For DOM reads use the get_* / extract_* tools; for interaction use click/fill/type/scroll.',
+        };
+        const wrapped = new Error(
+          code + ': ' + rawMsg + ' | hint: ' + JSON.stringify(hint),
+        );
+        (wrapped as Error & { code?: string }).code = code;
+        throw wrapped;
+      }
+      const err = new Error(rawMsg);
+      if (result.error?.code) (err as Error & { code?: string }).code = result.error.code;
+      throw err;
+    }
 
     return this.makeResponse(result.value ? JSON.parse(result.value) : {}, Date.now() - start);
   }
