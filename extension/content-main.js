@@ -951,6 +951,28 @@
               };
               break;
             }
+            // ── EARLY INTERCEPT: __SP_SNAPSHOT__:<json> (v0.1.34 Task 14) ──
+            // CSP-immune safari_snapshot. Delegates to
+            // __SP_LOCATOR__.buildSnapshot (ported from src/aria.ts
+            // generateSnapshotJs). Result-envelope shape preserved verbatim:
+            //   {snapshot, url, title, elementCount, interactiveCount, refMap}
+            if (typeof params.script === 'string' && params.script.startsWith('__SP_SNAPSHOT__:')) {
+              const args = JSON.parse(params.script.slice('__SP_SNAPSHOT__:'.length));
+              const L = window.__SP_LOCATOR__;
+              if (!L || typeof L.buildSnapshot !== 'function') {
+                throw Object.assign(
+                  new Error('__SP_LOCATOR__.buildSnapshot not available'),
+                  { name: 'NO_LOCATOR' },
+                );
+              }
+              result = L.buildSnapshot({
+                scopeSelector: args.scopeSelector,
+                maxDepth: args.maxDepth,
+                includeHidden: args.includeHidden,
+                format: args.format,
+              });
+              break;
+            }
             // ── EARLY INTERCEPT: __SP_QUERY_ALL__:<json> (v0.1.34 Task 13) ──
             // CSP-immune safari_query_all. Two payload variants:
             //   selector branch: { selector, limit } → document.querySelectorAll

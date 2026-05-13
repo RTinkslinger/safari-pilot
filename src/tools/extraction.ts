@@ -1,7 +1,7 @@
 import { writeFile, readFile, unlink } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { generateSnapshotJs, buildRefSelector } from '../aria.js';
+import { buildRefSelector } from '../aria.js';
 import { escapeForJsSingleQuote } from '../escape.js';
 import { hasLocatorParams, extractLocatorFromParams, buildLocatorSentinel, resolveMaybePackSelector } from '../locator.js';
 import type { IEngine } from '../engines/engine.js';
@@ -74,7 +74,9 @@ export class ExtractionTools {
           },
           required: ['tabUrl'],
         },
-        requirements: { idempotent: true },
+        // v0.1.34 T14: leaf read now sentinel-routed via __SP_SNAPSHOT__ →
+        // __SP_LOCATOR__.buildSnapshot, CSP-immune on TT-strict pages.
+        requirements: { idempotent: true, requiresCspBypass: true },
       },
       {
         name: 'safari_get_text',
@@ -284,14 +286,19 @@ export class ExtractionTools {
     const includeHidden = params['includeHidden'] === true;
     const format = (params['format'] as string | undefined) ?? 'yaml';
 
-    const js = generateSnapshotJs({
+    // v0.1.34 T14: __SP_SNAPSHOT__ sentinel for CSP-immunity. In-page handler
+    // in content-main.js calls __SP_LOCATOR__.buildSnapshot (ported verbatim
+    // from src/aria.ts generateSnapshotJs). Result-envelope shape preserved
+    // verbatim: {snapshot, url, title, elementCount, interactiveCount, refMap}.
+    // Legacy generateSnapshotJs IIFE retained for AppleScript fallback path.
+    const sentinel = '__SP_SNAPSHOT__:' + JSON.stringify({
       scopeSelector: scope === 'page' ? undefined : scope,
       maxDepth,
       includeHidden,
-      format: format as 'yaml' | 'json',
+      format,
     });
 
-    const result = await this.engine.executeJsInTab(tabUrl, js);
+    const result = await this.engine.executeJsInTab(tabUrl, sentinel);
     if (!result.ok) throw new Error(result.error?.message ?? 'Snapshot failed');
 
     return this.makeResponse(result.value ? JSON.parse(result.value) : {}, Date.now() - start);
