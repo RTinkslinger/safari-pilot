@@ -951,6 +951,41 @@
               };
               break;
             }
+            // ── EARLY INTERCEPT: __SP_GET_TEXT__:<json> (v0.1.34 Task 12) ──
+            // CSP-immune safari_get_text. Mirrors the previous JS-string body:
+            //   multi:false → {text, length, truncated}   (full-page when no selector)
+            //   multi:true  → {matches: string[], count}  (selector required)
+            if (typeof params.script === 'string' && params.script.startsWith('__SP_GET_TEXT__:')) {
+              const args = JSON.parse(params.script.slice('__SP_GET_TEXT__:'.length));
+              const sel = args.selector;
+              const max = typeof args.maxLength === 'number' ? args.maxLength : 50000;
+              if (args.multi) {
+                if (!sel) {
+                  throw Object.assign(
+                    new Error('multi:true requires a selector'),
+                    { name: 'INVALID_PARAMS' },
+                  );
+                }
+                const els = document.querySelectorAll(sel);
+                const matches = [];
+                for (let i = 0; i < els.length; i++) {
+                  const t = els[i].innerText || els[i].textContent || '';
+                  matches.push(t.slice(0, max));
+                }
+                result = { matches, count: els.length };
+              } else {
+                const el = sel ? document.querySelector(sel) : document.body;
+                if (!el) {
+                  throw Object.assign(
+                    new Error('Element not found'),
+                    { name: 'ELEMENT_NOT_FOUND' },
+                  );
+                }
+                const text = el.innerText || el.textContent || '';
+                result = { text: text.slice(0, max), length: text.length, truncated: text.length > max };
+              }
+              break;
+            }
             // ── existing default execute_script path ──
             const commandId = params.commandId;
             if (commandId && window.__safariPilotExecutedCommands.has(commandId)) {

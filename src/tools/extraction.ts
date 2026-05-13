@@ -325,31 +325,19 @@ export class ExtractionTools {
       }
     }
 
-    const escapedSelector = selector ? escapeForJsSingleQuote(selector) : '';
     const multi = params['multi'] === true;
-    // 5A.6: multi:true returns {matches: string[], count} via querySelectorAll;
-    // multi:false (default) preserves the original {text, length, truncated}.
-    const js = multi
-      ? `
-      if (!${selector ? 'true' : 'false'}) throw Object.assign(new Error('multi:true requires a selector'), { name: 'INVALID_PARAMS' });
-      var els = document.querySelectorAll('${escapedSelector}');
-      var max = ${maxLength};
-      var matches = [];
-      for (var i = 0; i < els.length; i++) {
-        var t = els[i].innerText || els[i].textContent || '';
-        matches.push(t.slice(0, max));
-      }
-      return { matches: matches, count: els.length };
-    `
-      : `
-      var el = ${selector ? `document.querySelector('${escapedSelector}')` : 'document.body'};
-      if (!el) throw Object.assign(new Error('Element not found'), { name: 'ELEMENT_NOT_FOUND' });
-      var max = ${maxLength};
-      var text = el.innerText || el.textContent || '';
-      return { text: text.slice(0, max), length: text.length, truncated: text.length > max };
-    `;
+    // v0.1.34 T12: __SP_GET_TEXT__ sentinel for CSP-immunity on Trusted-Types-strict
+    // pages. Extension engine intercepts in MAIN world (no `new Function()` compile).
+    // Result-envelope shape preserved verbatim:
+    //   multi:false → {text, length, truncated}
+    //   multi:true  → {matches: string[], count}
+    const sentinel = '__SP_GET_TEXT__:' + JSON.stringify({
+      selector: selector ?? null,
+      maxLength,
+      multi,
+    });
 
-    const result = await routeFrameAware(this.engine, { tabUrl, frameId }, js);
+    const result = await routeFrameAware(this.engine, { tabUrl, frameId }, sentinel);
     if (!result.ok) throw new Error(result.error?.message ?? 'Get text failed');
 
     return this.makeResponse(result.value ? JSON.parse(result.value) : {}, Date.now() - start);

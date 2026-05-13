@@ -63,37 +63,34 @@ async function runTool(
 
 describe('5A.6 — extraction tools support multi: true (querySelectorAll)', () => {
   describe('safari_get_text', () => {
-    it('multi:true uses querySelectorAll(<selector>), reads .innerText|.textContent, returns {matches, count}', async () => {
+    // v0.1.34 T12: safari_get_text now emits a __SP_GET_TEXT__:<json> sentinel
+    // (intercepted in extension/content-main.js MAIN world). Unit tests assert
+    // the sentinel JSON envelope encodes the same intent the legacy JS-string
+    // expressed — multi-flag, selector, maxLength — and the in-page sentinel
+    // handler implements the per-element .innerText / .textContent read +
+    // {matches, count} vs {text, length, truncated} shape. The handler logic
+    // is verified by test/e2e/csp-extraction-sentinels.test.ts.
+    it('multi:true emits sentinel with multi=true and selector', async () => {
       const script = await runTool('safari_get_text', {
         tabUrl: 'https://example.com/',
         selector: 'li',
         multi: true,
       });
-      // Selector must flow into querySelectorAll — generator can't hardcode 'body'.
-      expect(script, 'expected querySelectorAll(\'li\')').toMatch(/querySelectorAll\('li'\)/);
-      // Per-element extraction must use a text-reading expression — generator
-      // can't accidentally emit .outerHTML or .getAttribute and pass the test.
-      expect(
-        /\.innerText\b|\.textContent\b/.test(script),
-        'expected per-element .innerText or .textContent in multi mode',
-      ).toBe(true);
-      expect(script, 'expected matches array in response').toMatch(/matches\s*:/);
-      expect(script, 'expected count in response shape').toMatch(/\bcount\s*:/);
+      expect(script.startsWith('__SP_GET_TEXT__:'), 'expected __SP_GET_TEXT__ sentinel').toBe(true);
+      const payload = JSON.parse(script.slice('__SP_GET_TEXT__:'.length));
+      expect(payload.selector).toBe('li');
+      expect(payload.multi).toBe(true);
     });
 
-    it('multi:false (default) preserves single-element querySelector + text shape', async () => {
+    it('multi:false (default) emits sentinel with multi=false', async () => {
       const script = await runTool('safari_get_text', {
         tabUrl: 'https://example.com/',
         selector: 'li',
       });
-      // Bare querySelector (NOT querySelectorAll). Word-boundary regex.
-      expect(script, 'default mode must use querySelector (not All)').toMatch(/querySelector\([^A]/);
-      expect(
-        /querySelectorAll\(/.test(script),
-        'default mode must NOT use querySelectorAll',
-      ).toBe(false);
-      // Single-element shape: top-level `text` field, not nested under matches.
-      expect(script, 'expected single-element text response shape').toMatch(/\btext\s*:/);
+      expect(script.startsWith('__SP_GET_TEXT__:'), 'expected __SP_GET_TEXT__ sentinel').toBe(true);
+      const payload = JSON.parse(script.slice('__SP_GET_TEXT__:'.length));
+      expect(payload.selector).toBe('li');
+      expect(payload.multi).toBe(false);
     });
   });
 
