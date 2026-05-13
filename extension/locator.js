@@ -1243,6 +1243,90 @@
     };
   }
 
+  // ── v0.1.34 T15a: smartScrape — CSP-immune safari_smart_scrape ──────────────
+  // Ported verbatim from src/tools/structured-extraction.ts handleSmartScrape
+  // JS-string body. Five-strategy heuristic per field: label→input, heading→
+  // sibling, dt→dd, th→adjacent td, meta tag. Surface preserved verbatim:
+  //   { data: { [field]: value | null }, fieldsExtracted: number }
+  function smartScrape(opts) {
+    const schema = opts && opts.schema ? opts.schema : {};
+    const scopeSel = opts && opts.scope ? opts.scope : '';
+    const root = scopeSel ? document.querySelector(scopeSel) : document.body;
+    if (!root) {
+      throw Object.assign(new Error('Scope element not found'), { name: 'ELEMENT_NOT_FOUND' });
+    }
+
+    function normalise(str) {
+      return String(str || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    }
+
+    function findValueForField(fieldName) {
+      const key = normalise(fieldName);
+
+      // 1. label→input pairs
+      const labels = root.querySelectorAll('label');
+      for (let i = 0; i < labels.length; i++) {
+        const lbl = labels[i];
+        if (normalise(lbl.textContent) === key || normalise(lbl.textContent).indexOf(key) !== -1) {
+          const forId = lbl.getAttribute('for');
+          if (forId) {
+            const inp = document.getElementById(forId);
+            if (inp) return inp.value || inp.textContent || inp.getAttribute('placeholder') || null;
+          }
+          const nested = lbl.querySelector('input, select, textarea');
+          if (nested) return nested.value || null;
+        }
+      }
+
+      // 2. heading→sibling content pairs
+      const headings = root.querySelectorAll('h1,h2,h3,h4,h5,h6');
+      for (let h = 0; h < headings.length; h++) {
+        const hEl = headings[h];
+        if (normalise(hEl.textContent).indexOf(key) !== -1) {
+          const next = hEl.nextElementSibling;
+          if (next) return (next.innerText || next.textContent || '').trim().slice(0, 500);
+        }
+      }
+
+      // 3. definition lists (dt→dd)
+      const dts = root.querySelectorAll('dt');
+      for (let d = 0; d < dts.length; d++) {
+        const dt = dts[d];
+        if (normalise(dt.textContent).indexOf(key) !== -1) {
+          const dd = dt.nextElementSibling;
+          if (dd && dd.tagName === 'DD') return (dd.innerText || dd.textContent || '').trim();
+        }
+      }
+
+      // 4. table headers (th cell) → adjacent td in same row
+      const rows = root.querySelectorAll('tr');
+      for (let r = 0; r < rows.length; r++) {
+        const row = rows[r];
+        const cells = row.querySelectorAll('th, td');
+        for (let c = 0; c < cells.length; c++) {
+          if (cells[c].tagName === 'TH' && normalise(cells[c].textContent).indexOf(key) !== -1) {
+            const td = cells[c + 1];
+            if (td) return (td.innerText || td.textContent || '').trim();
+          }
+        }
+      }
+
+      // 5. meta tags / data attributes
+      const metaEl = document.querySelector('meta[name="' + String(fieldName).toLowerCase() + '"]');
+      if (metaEl) return metaEl.getAttribute('content');
+
+      return null;
+    }
+
+    const result = {};
+    const props = schema.properties || schema;
+    Object.keys(props).forEach(function (field) {
+      result[field] = findValueForField(field);
+    });
+
+    return { data: result, fieldsExtracted: Object.keys(result).length };
+  }
+
   // Expose on window for content-main.js sentinel intercepts.
   window.__SP_LOCATOR__ = {
     querySelectorWithShadow,
@@ -1255,5 +1339,6 @@
     resolveLocator,
     resolveLocatorAll,
     buildSnapshot,
+    smartScrape,
   };
 })();

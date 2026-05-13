@@ -39,7 +39,9 @@ export class StructuredExtractionTools {
           },
           required: ['tabUrl', 'schema'],
         },
-        requirements: { idempotent: true },
+        // v0.1.34 T15a: __SP_SMART_SCRAPE__ sentinel for CSP-immunity on
+        // Trusted-Types-strict pages. requiresCspBypass pins to Extension engine.
+        requirements: { idempotent: true, requiresCspBypass: true },
       },
       {
         name: 'safari_extract_tables',
@@ -141,87 +143,17 @@ export class StructuredExtractionTools {
     const schema = params['schema'] as Record<string, unknown>;
     const scope = params['scope'] as string | undefined;
 
-    const schemaJson = JSON.stringify(schema);
-    const escapedScope = scope ? escapeForJsSingleQuote(scope) : '';
+    // v0.1.34 T15a: __SP_SMART_SCRAPE__ sentinel for CSP-immunity on
+    // Trusted-Types-strict pages. Extension engine intercepts in MAIN world
+    // (no `new Function()` compile), delegates to __SP_LOCATOR__.smartScrape
+    // (ported verbatim from the previous JS-string body). Result-envelope
+    // shape preserved verbatim: { data: { [field]: value | null }, fieldsExtracted: number }
+    const sentinel = '__SP_SMART_SCRAPE__:' + JSON.stringify({
+      schema,
+      scope: scope ?? null,
+    });
 
-    const js = `
-      var schema = ${schemaJson};
-      var scopeSel = '${escapedScope}';
-      var root = scopeSel ? document.querySelector(scopeSel) : document.body;
-      if (!root) throw Object.assign(new Error('Scope element not found'), { name: 'ELEMENT_NOT_FOUND' });
-
-      function normalise(str) {
-        return String(str || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-      }
-
-      function findValueForField(fieldName) {
-        var key = normalise(fieldName);
-
-        // 1. label→input pairs
-        var labels = root.querySelectorAll('label');
-        for (var i = 0; i < labels.length; i++) {
-          var lbl = labels[i];
-          if (normalise(lbl.textContent) === key || normalise(lbl.textContent).indexOf(key) !== -1) {
-            var forId = lbl.getAttribute('for');
-            if (forId) {
-              var inp = document.getElementById(forId);
-              if (inp) return inp.value || inp.textContent || inp.getAttribute('placeholder') || null;
-            }
-            var nested = lbl.querySelector('input, select, textarea');
-            if (nested) return nested.value || null;
-          }
-        }
-
-        // 2. heading→sibling content pairs
-        var headings = root.querySelectorAll('h1,h2,h3,h4,h5,h6');
-        for (var h = 0; h < headings.length; h++) {
-          var hEl = headings[h];
-          if (normalise(hEl.textContent).indexOf(key) !== -1) {
-            var next = hEl.nextElementSibling;
-            if (next) return (next.innerText || next.textContent || '').trim().slice(0, 500);
-          }
-        }
-
-        // 3. definition lists (dt→dd)
-        var dts = root.querySelectorAll('dt');
-        for (var d = 0; d < dts.length; d++) {
-          var dt = dts[d];
-          if (normalise(dt.textContent).indexOf(key) !== -1) {
-            var dd = dt.nextElementSibling;
-            if (dd && dd.tagName === 'DD') return (dd.innerText || dd.textContent || '').trim();
-          }
-        }
-
-        // 4. table headers (th cell) → adjacent td in same row
-        var rows = root.querySelectorAll('tr');
-        for (var r = 0; r < rows.length; r++) {
-          var row = rows[r];
-          var cells = row.querySelectorAll('th, td');
-          for (var c = 0; c < cells.length; c++) {
-            if (cells[c].tagName === 'TH' && normalise(cells[c].textContent).indexOf(key) !== -1) {
-              var td = cells[c + 1];
-              if (td) return (td.innerText || td.textContent || '').trim();
-            }
-          }
-        }
-
-        // 5. meta tags / data attributes
-        var metaEl = document.querySelector('meta[name="' + fieldName.toLowerCase() + '"]');
-        if (metaEl) return metaEl.getAttribute('content');
-
-        return null;
-      }
-
-      var result = {};
-      var props = schema.properties || schema;
-      Object.keys(props).forEach(function(field) {
-        result[field] = findValueForField(field);
-      });
-
-      return { data: result, fieldsExtracted: Object.keys(result).length };
-    `;
-
-    const result = await this.engine.executeJsInTab(tabUrl, js);
+    const result = await this.engine.executeJsInTab(tabUrl, sentinel);
     if (!result.ok) throw new Error(result.error?.message ?? 'Smart scrape failed');
 
     return this.makeResponse(result.value ? JSON.parse(result.value) : {}, Date.now() - start);

@@ -951,6 +951,24 @@
               };
               break;
             }
+            // ── EARLY INTERCEPT: __SP_SMART_SCRAPE__:<json> (v0.1.34 Task 15a) ──
+            // CSP-immune safari_smart_scrape. Delegates to
+            // __SP_LOCATOR__.smartScrape (ported verbatim from
+            // src/tools/structured-extraction.ts handleSmartScrape).
+            // Result-envelope shape preserved verbatim:
+            //   { data: { [field]: value | null }, fieldsExtracted: number }
+            if (typeof params.script === 'string' && params.script.startsWith('__SP_SMART_SCRAPE__:')) {
+              const args = JSON.parse(params.script.slice('__SP_SMART_SCRAPE__:'.length));
+              const L = window.__SP_LOCATOR__;
+              if (!L || typeof L.smartScrape !== 'function') {
+                throw Object.assign(
+                  new Error('__SP_LOCATOR__.smartScrape not available'),
+                  { name: 'NO_LOCATOR' },
+                );
+              }
+              result = L.smartScrape({ schema: args.schema, scope: args.scope });
+              break;
+            }
             // ── EARLY INTERCEPT: __SP_SNAPSHOT__:<json> (v0.1.34 Task 14) ──
             // CSP-immune safari_snapshot. Delegates to
             // __SP_LOCATOR__.buildSnapshot (ported from src/aria.ts

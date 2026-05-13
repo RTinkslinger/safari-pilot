@@ -156,5 +156,19 @@ describe('T7b drift detector — src/locator.ts ↔ extension/locator.js', () =>
     it('extension/locator.js exposes resolveLocatorAll on window.__SP_LOCATOR__', () => {
       expect(EXT_LOCATOR).toMatch(/window\.__SP_LOCATOR__\s*=\s*\{[\s\S]*resolveLocatorAll/);
     });
+
+    // v0.1.34 T15a: safari_smart_scrape CSP-immune leaf-read path.
+    it('content-main.js routes __SP_SMART_SCRAPE__ to smartScrape', () => {
+      const contentMain = readFileSync(
+        join(__dirname, '../../../extension/content-main.js'),
+        'utf8',
+      );
+      expect(contentMain).toContain('__SP_SMART_SCRAPE__:');
+      expect(contentMain).toContain('L.smartScrape');
+    });
+
+    it('extension/locator.js exposes smartScrape on window.__SP_LOCATOR__', () => {
+      expect(EXT_LOCATOR).toMatch(/window\.__SP_LOCATOR__\s*=\s*\{[\s\S]*smartScrape/);
+    });
   });
 });
