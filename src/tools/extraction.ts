@@ -538,7 +538,11 @@ export class ExtractionTools {
         } catch { /* probe failure — default to CSP_BLOCKED */ }
 
         const code = isHardBlock ? 'CSP_HARD_BLOCK' : 'CSP_BLOCKED';
-        const cspMode: string = isHardBlock ? 'hard-block' : (isTT ? 'tt-strict' : 'eval-blocked');
+        // Precedence: check eval-block first because Safari's no-eval message also contains
+        // the substring 'trusted-types-eval', which would otherwise make isTT match. Concrete:
+        //   tt-strict only:  "...requires a 'Trusted Type' assignment"           → isTT && !isEvalBlock → 'tt-strict'
+        //   no-eval:         "'unsafe-eval' or 'trusted-types-eval' is not..."  → isTT && isEvalBlock  → 'eval-blocked'
+        const cspMode: string = isHardBlock ? 'hard-block' : (isEvalBlock ? 'eval-blocked' : 'tt-strict');
         const hint = {
           cspMode,
           alternative_tools: [
