@@ -951,6 +951,34 @@
               };
               break;
             }
+            // ── EARLY INTERCEPT: __SP_EXTRACT_IMAGES__:<json> (v0.1.34 Task 15d) ──
+            // CSP-immune safari_extract_images. Reproduces the previous
+            // JS-string body using native DOM APIs. Result-envelope shape
+            // preserved verbatim:
+            //   { images: [{src, alt, width, height, naturalWidth, naturalHeight}], count }
+            if (typeof params.script === 'string' && params.script.startsWith('__SP_EXTRACT_IMAGES__:')) {
+              const args = JSON.parse(params.script.slice('__SP_EXTRACT_IMAGES__:'.length));
+              const minW = typeof args.minWidth === 'number' ? args.minWidth : 0;
+              const minH = typeof args.minHeight === 'number' ? args.minHeight : 0;
+              const imgs = document.querySelectorAll('img');
+              const images = [];
+              for (let i = 0; i < imgs.length; i++) {
+                const img = imgs[i];
+                const w = img.width || img.offsetWidth || 0;
+                const h = img.height || img.offsetHeight || 0;
+                if (w < minW || h < minH) continue;
+                images.push({
+                  src: img.src || img.getAttribute('src') || '',
+                  alt: img.alt || '',
+                  width: w,
+                  height: h,
+                  naturalWidth: img.naturalWidth || 0,
+                  naturalHeight: img.naturalHeight || 0,
+                });
+              }
+              result = { images, count: images.length };
+              break;
+            }
             // ── EARLY INTERCEPT: __SP_EXTRACT_LINKS__:<json> (v0.1.34 Task 15c) ──
             // CSP-immune safari_extract_links. Reproduces the previous
             // JS-string body using native DOM APIs. Result-envelope shape

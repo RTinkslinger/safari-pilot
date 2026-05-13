@@ -102,7 +102,8 @@ export class StructuredExtractionTools {
           },
           required: ['tabUrl'],
         },
-        requirements: { idempotent: true },
+        // v0.1.34 T15d: __SP_EXTRACT_IMAGES__ sentinel for CSP-immunity.
+        requirements: { idempotent: true, requiresCspBypass: true },
       },
       {
         name: 'safari_extract_metadata',
@@ -202,32 +203,12 @@ export class StructuredExtractionTools {
     const minWidth = typeof params['minWidth'] === 'number' ? params['minWidth'] : 0;
     const minHeight = typeof params['minHeight'] === 'number' ? params['minHeight'] : 0;
 
-    const js = `
-      var minW = ${minWidth};
-      var minH = ${minHeight};
-      var imgs = document.querySelectorAll('img');
-      var images = [];
+    // v0.1.34 T15d: __SP_EXTRACT_IMAGES__ sentinel for CSP-immunity on
+    // Trusted-Types-strict pages. Result-envelope shape preserved verbatim:
+    //   { images: [{src, alt, width, height, naturalWidth, naturalHeight}], count }
+    const sentinel = '__SP_EXTRACT_IMAGES__:' + JSON.stringify({ minWidth, minHeight });
 
-      for (var i = 0; i < imgs.length; i++) {
-        var img = imgs[i];
-        var w = img.width || img.offsetWidth || 0;
-        var h = img.height || img.offsetHeight || 0;
-        if (w < minW || h < minH) continue;
-
-        images.push({
-          src: img.src || img.getAttribute('src') || '',
-          alt: img.alt || '',
-          width: w,
-          height: h,
-          naturalWidth: img.naturalWidth || 0,
-          naturalHeight: img.naturalHeight || 0,
-        });
-      }
-
-      return { images: images, count: images.length };
-    `;
-
-    const result = await this.engine.executeJsInTab(tabUrl, js);
+    const result = await this.engine.executeJsInTab(tabUrl, sentinel);
     if (!result.ok) throw new Error(result.error?.message ?? 'Extract images failed');
 
     return this.makeResponse(result.value ? JSON.parse(result.value) : { images: [], count: 0 }, Date.now() - start);
