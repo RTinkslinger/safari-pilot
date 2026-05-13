@@ -30,6 +30,7 @@ import { PdfTools } from './tools/pdf.js';
 import { ExtensionDiagnosticsTools } from './tools/extension-diagnostics.js';
 import { FileUploadTools } from './tools/file-upload.js';
 import { OverlayTools } from './tools/overlays.js';
+import { PageInfoTools } from './tools/page-info.js';
 import { loadAllAllowlists } from './overlays/index.js';
 import type { PatternRegistryEntry } from './overlays/types.js';
 import { ToolIndex } from './discovery/tool-index.js';
@@ -289,6 +290,7 @@ export class SafariPilotServer {
       new SelectorPackTools(proxy, this.config.selectorPack),
       // OverlayTools: I/O-free static lister — empty patterns + flags off.
       new OverlayTools({ engine: proxy, patterns: [], disableOverlayDismiss: false, enablePaywallDismiss: false }),
+      new PageInfoTools(proxy),
     ];
 
     // Build the tool index from all existing modules and add the search meta-tool.
@@ -449,6 +451,9 @@ export class SafariPilotServer {
       enablePaywallDismiss,
     });
 
+    // v0.1.34 Tasks 4-6: ISOLATED-world page-info capability tools.
+    const pageInfoTools = new PageInfoTools(proxy);
+
     // Register all tools from all modules.
     // Each module may have getHandler returning Handler (NavigationTools) or Handler | undefined.
     type ToolModule = {
@@ -483,6 +488,7 @@ export class SafariPilotServer {
       extensionDiagnosticsTools,
       selectorPackTools,
       overlayTools as unknown as ToolModule,
+      pageInfoTools,
     ];
 
     // Build the tool index from all registered modules, then add the search meta-tool.
