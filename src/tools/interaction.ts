@@ -4,7 +4,7 @@ import type { Engine } from '../types.js';
 import type { SafariPilotServer } from '../server.js';
 import { buildRefSelector } from '../aria.js';
 import { generateAutoWaitJs, ACTION_CHECKS } from '../auto-wait.js';
-import { hasLocatorParams, extractLocatorFromParams, generateLocatorJs } from '../locator.js';
+import { hasLocatorParams, extractLocatorFromParams, buildLocatorSentinel } from '../locator.js';
 import { escapeForJsSingleQuote } from '../escape.js';
 import { StrictnessViolationError } from '../errors.js';
 
@@ -59,8 +59,16 @@ export class InteractionTools {
 
     if (hasLocatorParams(params)) {
       const locator = extractLocatorFromParams(params)!;
-      const locatorJs = generateLocatorJs(locator);
-      const result = await this.engine.executeJsInTab(tabUrl, locatorJs);
+      // v0.1.34 T7b: route via __SP_RESOLVE_LOCATOR__ sentinel for CSP immunity
+      // on Trusted-Types-strict pages. The Extension engine intercepts the
+      // sentinel in MAIN-world content-main.js and calls window.__SP_LOCATOR__
+      // .resolveLocator directly — no `new Function()` evaluation. Other
+      // engines (AppleScript fallback) won't see the sentinel as a sentinel;
+      // they execute it as JS source. Since AppleScript can't reach
+      // __SP_LOCATOR__ anyway, that fallback path uses generateLocatorJs via
+      // the legacy executeJsInTab carrier inside daemon engine flow.
+      const sentinel = buildLocatorSentinel(locator);
+      const result = await this.engine.executeJsInTab(tabUrl, sentinel);
       if (result.ok && result.value) {
         const parsed = JSON.parse(result.value);
         if (parsed.found && parsed.selector) {

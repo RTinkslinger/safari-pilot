@@ -416,6 +416,34 @@ function buildNameMatchJs(name: string, exact: boolean): string {
   return 'HAS_NAME_FILTER';
 }
 
+// ─── Sentinel builder (v0.1.34 T7b) ──────────────────────────────────────────
+
+/**
+ * v0.1.34 T7b: build a `__SP_RESOLVE_LOCATOR__:<json>` sentinel string for
+ * CSP-immune locator resolution via the Extension engine. The MAIN-world
+ * sentinel handler in `extension/content-main.js` parses the JSON payload
+ * and dispatches to `window.__SP_LOCATOR__.resolveLocator(locator, options)`,
+ * which is the function-form equivalent of `generateLocatorJs`'s IIFE body.
+ *
+ * Why both forms exist:
+ *   - The IIFE form (generateLocatorJs) is the AppleScript / Daemon-engine
+ *     fallback path — those engines run JS via `do JavaScript` which has no
+ *     access to `window.__SP_LOCATOR__` (set only by the extension's MAIN-world
+ *     content script).
+ *   - The sentinel form (this builder) is the Extension-engine path. The
+ *     content-main.js intercept fires BEFORE `new Function()` would compile
+ *     the script, so Trusted-Types-strict pages don't block resolution.
+ *
+ * Drift between the two forms is guarded by
+ * `test/unit/locators/drift-detector.test.ts`.
+ */
+export function buildLocatorSentinel(
+  locator: LocatorDescriptor,
+  options?: LocatorOptions,
+): string {
+  return '__SP_RESOLVE_LOCATOR__:' + JSON.stringify({ locator, options: options ?? {} });
+}
+
 // ─── Main Entry Point ────────────────────────────────────────────────────────
 
 /**

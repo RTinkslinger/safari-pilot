@@ -743,6 +743,27 @@
               };
               break;
             }
+            // ── EARLY INTERCEPT: __SP_RESOLVE_LOCATOR__:<json> (v0.1.34 Task 7b) ──
+            // CSP-immune locator resolution for the playwright-style accessible
+            // locator path (role/text/label/testId/placeholder/xpath + chain).
+            // Replaces the TS-side generateLocatorJs JS-string call which hits
+            // `new Function()` and fails on Trusted-Types-strict pages. Returns
+            // the same envelope shape: { found, selector?, element?, matchCount?,
+            // strictnessSatisfied?, hint? }. AppleScript fallback path keeps
+            // using the IIFE form from src/locator.ts (no __SP_LOCATOR__ outside
+            // the extension).
+            if (typeof params.script === 'string' && params.script.startsWith('__SP_RESOLVE_LOCATOR__:')) {
+              const payload = JSON.parse(params.script.slice('__SP_RESOLVE_LOCATOR__:'.length));
+              const L = window.__SP_LOCATOR__;
+              if (!L || typeof L.resolveLocator !== 'function') {
+                throw Object.assign(
+                  new Error('__SP_LOCATOR__.resolveLocator not available'),
+                  { name: 'NO_LOCATOR' },
+                );
+              }
+              result = L.resolveLocator(payload.locator || payload, payload.options || {});
+              break;
+            }
             // ── EARLY INTERCEPT: __SP_CLICK__:<json> (v0.1.34 Task 7) ──
             // CSP-immune safari_click. Mirrors the previous actionJs body verbatim:
             // MouseEvent dispatch (mousedown → mouseup → click/contextmenu/auxclick),

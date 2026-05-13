@@ -3,7 +3,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { generateSnapshotJs, buildRefSelector } from '../aria.js';
 import { escapeForJsSingleQuote } from '../escape.js';
-import { generateQueryAllJs, hasLocatorParams, extractLocatorFromParams, generateLocatorJs, resolveMaybePackSelector } from '../locator.js';
+import { generateQueryAllJs, hasLocatorParams, extractLocatorFromParams, buildLocatorSentinel, resolveMaybePackSelector } from '../locator.js';
 import type { IEngine } from '../engines/engine.js';
 import type { Engine, ToolResponse, ToolRequirements } from '../types.js';
 import { ScreenshotPolicy } from '../security/screenshot-policy.js';
@@ -310,7 +310,10 @@ export class ExtractionTools {
     selector = await resolveMaybePackSelector(this.engine, { tabUrl, frameId }, selector);
     if (!selector && hasLocatorParams(params)) {
       const locator = extractLocatorFromParams(params)!;
-      const locatorJs = generateLocatorJs(locator);
+      // v0.1.34 T7b: __SP_RESOLVE_LOCATOR__ sentinel → CSP-immune resolution
+      // on Trusted-Types-strict pages (Extension engine intercepts in MAIN
+      // world; legacy generateLocatorJs IIFE retained for AppleScript path).
+      const locatorJs = buildLocatorSentinel(locator);
       const locatorResult = await routeFrameAware(this.engine, { tabUrl, frameId }, locatorJs);
       if (locatorResult.ok && locatorResult.value) {
         const parsed = JSON.parse(locatorResult.value);
@@ -367,7 +370,10 @@ export class ExtractionTools {
     selector = await resolveMaybePackSelector(this.engine, { tabUrl, frameId }, selector);
     if (!selector && hasLocatorParams(params)) {
       const locator = extractLocatorFromParams(params)!;
-      const locatorJs = generateLocatorJs(locator);
+      // v0.1.34 T7b: __SP_RESOLVE_LOCATOR__ sentinel → CSP-immune resolution
+      // on Trusted-Types-strict pages (Extension engine intercepts in MAIN
+      // world; legacy generateLocatorJs IIFE retained for AppleScript path).
+      const locatorJs = buildLocatorSentinel(locator);
       const locatorResult = await routeFrameAware(this.engine, { tabUrl, frameId }, locatorJs);
       if (locatorResult.ok && locatorResult.value) {
         const parsed = JSON.parse(locatorResult.value);
@@ -421,7 +427,10 @@ export class ExtractionTools {
     selector = await resolveMaybePackSelector(this.engine, { tabUrl, frameId }, selector);
     if (!selector && hasLocatorParams(params)) {
       const locator = extractLocatorFromParams(params)!;
-      const locatorJs = generateLocatorJs(locator);
+      // v0.1.34 T7b: __SP_RESOLVE_LOCATOR__ sentinel → CSP-immune resolution
+      // on Trusted-Types-strict pages (Extension engine intercepts in MAIN
+      // world; legacy generateLocatorJs IIFE retained for AppleScript path).
+      const locatorJs = buildLocatorSentinel(locator);
       const locatorResult = await routeFrameAware(this.engine, { tabUrl, frameId }, locatorJs);
       if (locatorResult.ok && locatorResult.value) {
         const parsed = JSON.parse(locatorResult.value);
