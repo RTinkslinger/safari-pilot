@@ -61,12 +61,15 @@ export class InteractionTools {
       const locator = extractLocatorFromParams(params)!;
       // v0.1.34 T7b: route via __SP_RESOLVE_LOCATOR__ sentinel for CSP immunity
       // on Trusted-Types-strict pages. The Extension engine intercepts the
-      // sentinel in MAIN-world content-main.js and calls window.__SP_LOCATOR__
-      // .resolveLocator directly — no `new Function()` evaluation. Other
-      // engines (AppleScript fallback) won't see the sentinel as a sentinel;
-      // they execute it as JS source. Since AppleScript can't reach
-      // __SP_LOCATOR__ anyway, that fallback path uses generateLocatorJs via
-      // the legacy executeJsInTab carrier inside daemon engine flow.
+      // sentinel string in MAIN-world content-main.js and calls
+      // window.__SP_LOCATOR__.resolveLocator directly — no `new Function()`
+      // evaluation. Sentinel resolution REQUIRES the Extension engine; no
+      // __SP_LOCATOR__ exists in the AppleScript/Daemon JS worlds, and they
+      // would execute the literal `__SP_RESOLVE_LOCATOR__:<json>` string as
+      // JS source (syntax error). The owning tool's
+      // `requirements.requiresCspBypass: true` gates engine selection at the
+      // dispatcher; if Extension is unavailable, EngineUnavailableError fires
+      // before this code is reached.
       const sentinel = buildLocatorSentinel(locator);
       const result = await this.engine.executeJsInTab(tabUrl, sentinel);
       if (result.ok && result.value) {
@@ -172,7 +175,7 @@ export class InteractionTools {
           },
           required: ['tabUrl'],
         },
-        requirements: { idempotent: false },
+        requirements: { idempotent: false, requiresCspBypass: true },
       },
       {
         name: 'safari_double_click',
@@ -213,7 +216,7 @@ export class InteractionTools {
           },
           required: ['tabUrl', 'value'],
         },
-        requirements: { idempotent: false },
+        requirements: { idempotent: false, requiresCspBypass: true },
       },
       {
         name: 'safari_select_option',
@@ -279,7 +282,7 @@ export class InteractionTools {
           },
           required: ['tabUrl', 'content'],
         },
-        requirements: { idempotent: false },
+        requirements: { idempotent: false, requiresCspBypass: true },
       },
       {
         name: 'safari_press_key',
@@ -330,7 +333,7 @@ export class InteractionTools {
           },
           required: ['tabUrl'],
         },
-        requirements: { idempotent: false },
+        requirements: { idempotent: false, requiresCspBypass: true },
       },
       {
         name: 'safari_drag',

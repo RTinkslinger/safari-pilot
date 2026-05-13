@@ -16,6 +16,22 @@
 
 ## Current Work
 
+### Iteration 81 - 2026-05-13 — v0.1.34 mid-sprint verification gate (T11): dev.3 rebuilt, 19/19 CSP e2e GREEN
+
+**What:** v0.1.34 sprint mid-flight rebuild + verification gate. After T2-T10 + T7b landed extension-side changes without being baked into the installed binary (still dev.2), bumped to 0.1.34-dev.3, rebuilt + notarized + stapled the extension, re-registered with Safari, and ran the full CSP-related e2e set. All 19 tests GREEN on the TT-strict fixture. Empirically validates that the 7 new sentinels (`__SP_TT_PROBE__`, `__SP_GET_PAGE_INFO__`, `__SP_GET_META_TAGS__`, `__SP_EXTRACT_TEXT_WINDOW__`, `__SP_CLICK__`, `__SP_FILL__`, `__SP_TYPE__`, `__SP_SCROLL__`, `__SP_RESOLVE_LOCATOR__`) + Layer 3 TT policy registration + the full `resolveLocator` body port to `__SP_LOCATOR__` all work end-to-end against real Safari, not just in theory.
+
+**Changes:**
+- `src/tools/interaction.ts` — fixed misleading comment at resolveElement (lines 62-73): the AppleScript fallback path was claimed to use generateLocatorJs, but buildLocatorSentinel emits a literal `__SP_RESOLVE_LOCATOR__:<json>` string that AppleScript would execute as JS source (syntax error). Comment now correctly states the path REQUIRES Extension engine; engine-selector gates via `requiresCspBypass`.
+- `src/tools/interaction.ts` — added `requiresCspBypass: true` to safari_click, safari_fill, safari_type, safari_scroll.
+- `src/tools/extraction.ts` — added `requiresCspBypass: true` to safari_get_text, safari_get_html, safari_get_attribute (all 3 route locators through `buildLocatorSentinel`).
+- `test/e2e/csp-interaction-sentinels.test.ts` — added 2 new tests covering T7b's role+name and text locator paths through `__SP_RESOLVE_LOCATOR__` on TT-strict pages (4 → 6 tests).
+- `package.json` + `extension/manifest.json` — version 0.1.34-dev.2 → 0.1.34-dev.3 (lockstep per `feedback-extension-version-both-fields`).
+- `bin/Safari Pilot.app`, `bin/Safari Pilot.zip` — rebuilt + notarized (submission 46a66147-72cd-449a-91cc-32d498ce5cb5, Accepted), stapled, verified entitlements.
+
+**Context:** This is the empirical-reality gate for v0.1.34's Section-8 sentinel refactor. Pre-gate: T2-T10 + T7b were theoretical — extension-side sentinel handlers were committed to source but never run against Safari since dev.2. Post-gate: the architecture is structurally working end-to-end. Test breakdown by file: csp-interaction-sentinels 6/6 (4 selector + 2 locator), page-info-tools 7/7 (page_info + meta_tags + extract_text_window), csp-tt-policy-registration 2/2 (Layer 3 TT probe), csp-evaluate-blocked-error 3/3 (CSP_BLOCKED/CSP_HARD_BLOCK error UX), csp-baseline-tt-strict 1/1 (v0.1.33 regression baseline, expected failure of bare safari_evaluate still reproduces). Total: 19/19 e2e + 679/679 unit. **Behavior change for callers:** the 7 refactored tools used to silently degrade to AppleScript when Extension was unavailable; they now fail-fast with `EngineUnavailableError`. This is intentional — pre-v0.1.34 "fallback" was passing the literal sentinel string to AppleScript which executed it as JS source and either errored noisily or wrote garbage. Fail-fast surfaces real install problems instead of masking them. Remaining v0.1.34 sprint: T12-T14 extraction sentinels (get_text / query_all / snapshot), T15 smart_scrape + audit sweep, T16 legacyMainWorld rollback flag, T17 stats CLI CSP counters, T18 bench gate, T19 docs, T20 ship.
+
+---
+
 ### Iteration 80 - 2026-05-13 — v0.1.34 architectural-pivot attempt failed; falling back to spec Section 8
 
 **What:** Attempted spec Section 3's architectural pivot: duplicate `new Function(params.script)` dispatcher into ISOLATED-world content-isolated.js, route via `cspMode` per-tab so strict-CSP pages execute in CSP-exempt ISOLATED. Spent ~1h on Slice 1's empirical-verification gate (Task 2 in plan `904fd81`). Three rebuilds at 0.1.34, 0.1.34-dev.1, 0.1.34-dev.2 with progressively more diagnostic sentinels. **The gate failed for a reason different than the synthesis assumed.**

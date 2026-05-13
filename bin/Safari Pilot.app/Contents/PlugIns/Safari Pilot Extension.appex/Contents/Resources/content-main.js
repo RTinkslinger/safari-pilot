@@ -743,6 +743,214 @@
               };
               break;
             }
+            // ── EARLY INTERCEPT: __SP_RESOLVE_LOCATOR__:<json> (v0.1.34 Task 7b) ──
+            // CSP-immune locator resolution for the playwright-style accessible
+            // locator path (role/text/label/testId/placeholder/xpath + chain).
+            // Replaces the TS-side generateLocatorJs JS-string call which hits
+            // `new Function()` and fails on Trusted-Types-strict pages. Returns
+            // the same envelope shape: { found, selector?, element?, matchCount?,
+            // strictnessSatisfied?, hint? }. AppleScript fallback path keeps
+            // using the IIFE form from src/locator.ts (no __SP_LOCATOR__ outside
+            // the extension).
+            if (typeof params.script === 'string' && params.script.startsWith('__SP_RESOLVE_LOCATOR__:')) {
+              const payload = JSON.parse(params.script.slice('__SP_RESOLVE_LOCATOR__:'.length));
+              const L = window.__SP_LOCATOR__;
+              if (!L || typeof L.resolveLocator !== 'function') {
+                throw Object.assign(
+                  new Error('__SP_LOCATOR__.resolveLocator not available'),
+                  { name: 'NO_LOCATOR' },
+                );
+              }
+              result = L.resolveLocator(payload.locator || payload, payload.options || {});
+              break;
+            }
+            // ── EARLY INTERCEPT: __SP_CLICK__:<json> (v0.1.34 Task 7) ──
+            // CSP-immune safari_click. Mirrors the previous actionJs body verbatim:
+            // MouseEvent dispatch (mousedown → mouseup → click/contextmenu/auxclick),
+            // modifier flags, native link-following for primary <a> clicks, and
+            // downloadContext payload for safari_download_link integration.
+            if (typeof params.script === 'string' && params.script.startsWith('__SP_CLICK__:')) {
+              const args = JSON.parse(params.script.slice('__SP_CLICK__:'.length));
+              const el = document.querySelector(args.selector);
+              if (!el) {
+                throw Object.assign(
+                  new Error('Element not found: ' + args.selector),
+                  { name: 'ELEMENT_NOT_FOUND' },
+                );
+              }
+              const buttonNum = args.buttonNum;
+              const m = args.modifiers || {};
+              const rect = el.getBoundingClientRect();
+              const opts = {
+                bubbles: true, cancelable: true, view: window,
+                clientX: rect.x + rect.width / 2, clientY: rect.y + rect.height / 2,
+                button: buttonNum,
+                buttons: 1 << buttonNum,
+                ctrlKey: !!m.ctrl, shiftKey: !!m.shift, altKey: !!m.alt, metaKey: !!m.meta,
+              };
+              const terminalEvent = buttonNum === 0 ? 'click' : buttonNum === 2 ? 'contextmenu' : 'auxclick';
+              el.dispatchEvent(new MouseEvent('mousedown', opts));
+              el.dispatchEvent(new MouseEvent('mouseup', opts));
+              el.dispatchEvent(new MouseEvent(terminalEvent, opts));
+
+              const linkEl = el.tagName === 'A' ? el : (el.closest ? el.closest('a') : null);
+              let navigatedTo = null;
+              if (buttonNum === 0 && linkEl && linkEl.href && !linkEl.hasAttribute('download')) {
+                const tgt = linkEl.getAttribute('target');
+                if (!tgt || tgt === '_self') navigatedTo = linkEl.href;
+              }
+
+              result = {
+                clicked: true,
+                navigatedTo: navigatedTo,
+                element: {
+                  tagName: el.tagName,
+                  id: el.id || undefined,
+                  textContent: (el.textContent || '').slice(0, 100),
+                },
+                downloadContext: linkEl ? {
+                  href: linkEl.href || undefined,
+                  downloadAttr: linkEl.getAttribute('download') == null ? undefined : linkEl.getAttribute('download'),
+                  isDownloadLink: linkEl.hasAttribute('download'),
+                } : undefined,
+              };
+
+              if (navigatedTo) {
+                window.location.href = navigatedTo;
+              }
+              break;
+            }
+            // ── EARLY INTERCEPT: __SP_FILL__:<json> (v0.1.34 Task 8) ──
+            // CSP-immune safari_fill. Mirrors the previous actionJs verbatim:
+            // framework auto-detect (react/vue/vanilla), React native-setter
+            // trick for controlled inputs, Vue path, clearFirst, pressEnterAfter.
+            if (typeof params.script === 'string' && params.script.startsWith('__SP_FILL__:')) {
+              const args = JSON.parse(params.script.slice('__SP_FILL__:'.length));
+              const el = document.querySelector(args.selector);
+              if (!el) {
+                throw Object.assign(
+                  new Error('Element not found: ' + args.selector),
+                  { name: 'ELEMENT_NOT_FOUND' },
+                );
+              }
+
+              let detectedFramework = 'vanilla';
+              if (Object.keys(el).some((k) => k.startsWith('__reactFiber$'))) {
+                detectedFramework = 'react';
+              } else if (el.__vue__ || el.__vueParentComponent) {
+                detectedFramework = 'vue';
+              }
+              const fw = args.framework === 'auto' ? detectedFramework : args.framework;
+
+              if (args.clearFirst) {
+                el.focus();
+                el.value = '';
+                el.dispatchEvent(new Event('input', { bubbles: true }));
+              }
+
+              if (fw === 'react') {
+                const inputDesc = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
+                const textareaDesc = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value');
+                const nativeSetter = inputDesc ? inputDesc.set : (textareaDesc ? textareaDesc.set : null);
+                if (nativeSetter) {
+                  nativeSetter.call(el, args.value);
+                } else {
+                  el.value = args.value;
+                }
+                el.dispatchEvent(new Event('input', { bubbles: true }));
+                el.dispatchEvent(new Event('change', { bubbles: true }));
+                el.dispatchEvent(new FocusEvent('blur', { bubbles: true }));
+              } else if (fw === 'vue') {
+                el.value = args.value;
+                el.dispatchEvent(new Event('input', { bubbles: true }));
+                el.dispatchEvent(new Event('change', { bubbles: true }));
+              } else {
+                el.focus();
+                el.value = args.value;
+                el.dispatchEvent(new Event('input', { bubbles: true }));
+                el.dispatchEvent(new Event('change', { bubbles: true }));
+                el.dispatchEvent(new FocusEvent('blur', { bubbles: true }));
+              }
+
+              if (args.pressEnterAfter) {
+                el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true }));
+              }
+
+              result = {
+                filled: true,
+                element: { tagName: el.tagName, id: el.id || undefined, name: el.name || undefined, type: el.type || undefined },
+                framework: fw,
+                verifiedValue: el.value,
+              };
+              break;
+            }
+            // ── EARLY INTERCEPT: __SP_TYPE__:<json> (v0.1.34 Task 9) ──
+            // CSP-immune safari_type. Per-character keyboard event dispatch in
+            // MAIN world. Mirrors the previous JS-string loop verbatim:
+            // focus → for each char: keydown / keypress / append to value /
+            // input / keyup.
+            if (typeof params.script === 'string' && params.script.startsWith('__SP_TYPE__:')) {
+              const args = JSON.parse(params.script.slice('__SP_TYPE__:'.length));
+              const el = document.querySelector(args.selector);
+              if (!el) {
+                throw Object.assign(
+                  new Error('Element not found'),
+                  { name: 'ELEMENT_NOT_FOUND' },
+                );
+              }
+              el.focus();
+              const text = String(args.content || '');
+              for (let i = 0; i < text.length; i++) {
+                const ch = text[i];
+                const code = 'Key' + ch.toUpperCase();
+                el.dispatchEvent(new KeyboardEvent('keydown', { key: ch, code, bubbles: true }));
+                el.dispatchEvent(new KeyboardEvent('keypress', { key: ch, code, bubbles: true }));
+                el.value = (el.value || '') + ch;
+                el.dispatchEvent(new Event('input', { bubbles: true }));
+                el.dispatchEvent(new KeyboardEvent('keyup', { key: ch, code, bubbles: true }));
+              }
+              result = { typed: true, length: text.length };
+              break;
+            }
+            // ── EARLY INTERCEPT: __SP_SCROLL__:<json> (v0.1.34 Task 10) ──
+            // CSP-immune safari_scroll. Mirrors the previous actionJs branching:
+            // toTop / toBottom / toElement / delta directional. Operates on the
+            // document.documentElement by default, or a passed targetSelector
+            // for scroll-inside-container.
+            if (typeof params.script === 'string' && params.script.startsWith('__SP_SCROLL__:')) {
+              const args = JSON.parse(params.script.slice('__SP_SCROLL__:'.length));
+              const target = args.targetSelector
+                ? document.querySelector(args.targetSelector)
+                : document.documentElement;
+              if (!target) {
+                throw Object.assign(
+                  new Error('Scroll target not found'),
+                  { name: 'ELEMENT_NOT_FOUND' },
+                );
+              }
+              if (args.toTop) {
+                target.scrollTo({ top: 0, behavior: 'smooth' });
+              } else if (args.toBottom) {
+                target.scrollTo({ top: target.scrollHeight, behavior: 'smooth' });
+              } else if (args.toElement) {
+                const scrollTarget = document.querySelector(args.toElement);
+                if (scrollTarget) scrollTarget.scrollIntoView({ behavior: 'smooth' });
+              } else {
+                const amt = args.amount;
+                const dir = args.direction;
+                if (dir === 'down') target.scrollBy({ top: amt, behavior: 'smooth' });
+                else if (dir === 'up') target.scrollBy({ top: -amt, behavior: 'smooth' });
+                else if (dir === 'right') target.scrollBy({ left: amt, behavior: 'smooth' });
+                else if (dir === 'left') target.scrollBy({ left: -amt, behavior: 'smooth' });
+              }
+              result = {
+                scrolled: true,
+                scrollPosition: { x: target.scrollLeft || window.scrollX, y: target.scrollTop || window.scrollY },
+                atTop: (target.scrollTop || window.scrollY) === 0,
+                atBottom: (target.scrollTop || window.scrollY) + (target.clientHeight || window.innerHeight) >= (target.scrollHeight - 1),
+              };
+              break;
+            }
             // ── existing default execute_script path ──
             const commandId = params.commandId;
             if (commandId && window.__safariPilotExecutedCommands.has(commandId)) {

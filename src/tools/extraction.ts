@@ -106,7 +106,7 @@ export class ExtractionTools {
           },
           required: ['tabUrl'],
         },
-        requirements: { idempotent: true, requiresFramesCrossOrigin: true },
+        requirements: { idempotent: true, requiresFramesCrossOrigin: true, requiresCspBypass: true },
       },
       {
         name: 'safari_get_html',
@@ -142,7 +142,7 @@ export class ExtractionTools {
           },
           required: ['tabUrl'],
         },
-        requirements: { idempotent: true, requiresFramesCrossOrigin: true },
+        requirements: { idempotent: true, requiresFramesCrossOrigin: true, requiresCspBypass: true },
       },
       {
         name: 'safari_get_attribute',
@@ -174,7 +174,7 @@ export class ExtractionTools {
           },
           required: ['tabUrl', 'attribute'],
         },
-        requirements: { idempotent: true, requiresFramesCrossOrigin: true },
+        requirements: { idempotent: true, requiresFramesCrossOrigin: true, requiresCspBypass: true },
       },
       {
         name: 'safari_evaluate',

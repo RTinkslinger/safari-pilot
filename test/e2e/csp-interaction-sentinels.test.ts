@@ -117,4 +117,27 @@ describe('CSP interaction sentinels (v0.1.34 Tasks 7-10)', () => {
 
     await callTool(client, 'safari_scroll', { tabUrl, direction: 'down', amount: 300 }, nextId(), 15_000);
   }, 60_000);
+
+  it('safari_click works with role+name locator on tt-strict pages (T11_locator_role)', async () => {
+    // T7b regression: locator resolution must go through __SP_RESOLVE_LOCATOR__
+    // sentinel on TT-strict pages. No `new Function()` allowed.
+    const target = `${fx.url()}?sp_t11_role=${Date.now()}`;
+    const newTab = await callTool(client, 'safari_new_tab', { url: target }, nextId(), 15_000);
+    const tabUrl = newTab['tabUrl'] as string;
+    openedTabUrls.push(tabUrl);
+    await new Promise((r) => setTimeout(r, 1500));
+
+    await callTool(client, 'safari_click', { tabUrl, role: 'button', name: 'Click me' }, nextId(), 15_000);
+  }, 60_000);
+
+  it('safari_click works with text locator on tt-strict pages (T11_locator_text)', async () => {
+    // T7b regression: text locator path also runs through the resolve sentinel.
+    const target = `${fx.url()}?sp_t11_text=${Date.now()}`;
+    const newTab = await callTool(client, 'safari_new_tab', { url: target }, nextId(), 15_000);
+    const tabUrl = newTab['tabUrl'] as string;
+    openedTabUrls.push(tabUrl);
+    await new Promise((r) => setTimeout(r, 1500));
+
+    await callTool(client, 'safari_click', { tabUrl, text: 'Click me' }, nextId(), 15_000);
+  }, 60_000);
 });
