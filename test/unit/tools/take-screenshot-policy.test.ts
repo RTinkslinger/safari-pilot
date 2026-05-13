@@ -50,10 +50,14 @@ describe('safari_take_screenshot — ScreenshotPolicy gates engine call', () => 
     const handler = tools.getHandler('safari_take_screenshot')!;
 
     await handler({ tabUrl: 'https://allowed.example.com/page' });
+    // 15s extension cap (was 30s pre-130f9ba). The extension layer applies
+    // Math.max(timeout, 90_000), so the effective cap is 90s on the extension
+    // side; the handler's local 15s race short-circuits stuck pages to the
+    // screencapture fallback. See src/tools/extraction.ts handleTakeScreenshot.
     expect(engine.executeJsInTab).toHaveBeenCalledWith(
       'https://allowed.example.com/page',
       '__SP_TAKE_SCREENSHOT__',
-      30_000,
+      15_000,
     );
   });
 
