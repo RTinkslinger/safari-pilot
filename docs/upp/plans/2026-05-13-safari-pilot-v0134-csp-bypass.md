@@ -260,6 +260,8 @@ Locate the existing `(function(){ ... })()` IIFE wrapping the content script and
 
 - [ ] **Step 2: Write the failing e2e test**
 
+The verification surface for Layer 3 is `__SP_TT_PROBE__` — a sentinel handler added in this task (originally planned for T3, moved here because `safari_get_console_messages` routes through `new Function` at extraction.ts:658 and would itself fail on the TT-strict page). The probe reads `window.__SP_TT_POLICY__` and `window.__SP_TT_HARD_BLOCK` via a structured result. T3 consumes this same probe for its error-UX branch logic.
+
 Create `test/e2e/csp-tt-policy-registration.test.ts`:
 
 ```typescript
@@ -296,13 +298,14 @@ describe('Layer 3: Trusted Types policy registration', () => {
     // Brief settle for content scripts to inject + run init.
     await new Promise((r) => setTimeout(r, 800));
 
-    // Sentinel-based read of the policy global — avoids safari_evaluate which fails on tt-strict.
-    const result = await callTool(client, 'safari_get_page_info', { tabUrl });
-    // safari_get_page_info doesn't yet expose __SP_TT_POLICY__ — until task 4 lands,
-    // assert via an alternate channel: the content-main.js init logs to console.
-    const console = await callTool(client, 'safari_get_console_messages', { tabUrl });
-    expect(JSON.stringify(console)).toMatch(/__SP_TT_POLICY__ registered/);
-    expect(JSON.stringify(console)).not.toMatch(/__SP_TT_HARD_BLOCK/);
+    // Sentinel-immune probe: safari_evaluate sends the script string verbatim;
+    // content-main.js intercepts the __SP_TT_PROBE__ prefix BEFORE new Function,
+    // so it works on TT-strict pages.
+    const result = await callTool(client, 'safari_evaluate', { tabUrl, script: '__SP_TT_PROBE__:{}' });
+    const text = (result as { content: Array<{ text: string }> }).content[0].text;
+    const parsed = JSON.parse(text);
+    expect(parsed.policyRegistered).toBe(true);
+    expect(parsed.hardBlock).toBe(false);
   });
 
   it('sets __SP_TT_HARD_BLOCK on tt-strict pages with an allowlist excluding safari-pilot', async () => {
@@ -312,8 +315,12 @@ describe('Layer 3: Trusted Types policy registration', () => {
     await callTool(client, 'safari_new_tab', { url: tabUrl });
     await new Promise((r) => setTimeout(r, 800));
 
-    const console = await callTool(client, 'safari_get_console_messages', { tabUrl });
-    expect(JSON.stringify(console)).toMatch(/__SP_TT_HARD_BLOCK/);
+    const result = await callTool(client, 'safari_evaluate', { tabUrl, script: '__SP_TT_PROBE__:{}' });
+    const text = (result as { content: Array<{ text: string }> }).content[0].text;
+    const parsed = JSON.parse(text);
+    expect(parsed.hardBlock).toBe(true);
+    // On hard-block pages, createPolicy threw TypeError — so policyRegistered is false.
+    expect(parsed.policyRegistered).toBe(false);
   });
 });
 ```
@@ -356,9 +363,30 @@ npx vitest run test/e2e/csp-tt-policy-registration.test.ts
 
 Expected: both tests FAIL. The first because `__SP_TT_POLICY__ registered` log line doesn't exist yet. The second similarly for `__SP_TT_HARD_BLOCK`.
 
-- [ ] **Step 5: Implement Layer 3 in content-main.js**
+- [ ] **Step 5: Implement Layer 3 in content-main.js (init block + `__SP_TT_PROBE__` sentinel handler)**
 
-In `extension/content-main.js`, locate the existing IIFE init near the top (search for `window.__SP_LOCATOR__` usage to find the right scope). Add a new init block AFTER any existing window-global setup and BEFORE the storage-bus listener registration:
+This step adds TWO things to `extension/content-main.js`:
+
+**(a)** A top-of-file IIFE that registers the Trusted Types policy at content-script load time. Add this AFTER any existing window-global setup and BEFORE the storage-bus listener registration. Search for `window.__SP_LOCATOR__` usage to find the right scope.
+
+**(b)** A new early-intercept sentinel inside `case 'execute_script':` (alongside the existing `__SP_SCROLL_TO_ELEMENT__` and `__SP_DISMISS_OVERLAYS__` intercepts, BEFORE the `new _Function(params.script)` line). This is the verification surface for the test in Step 2 AND is consumed by T3's error UX. Snippet:
+
+```javascript
+// ── EARLY INTERCEPT: __SP_TT_PROBE__:<json> (v0.1.34 Task 2) ──
+// Reads Layer 3 init state. Used by csp-tt-policy-registration.test.ts AND by
+// T3's safari_evaluate CSP_BLOCKED error UX to distinguish CSP_BLOCKED from
+// CSP_HARD_BLOCK. Args ignored (probe takes no parameters; the trailing JSON
+// is required only to satisfy the prefix-then-colon convention).
+if (typeof params.script === 'string' && params.script.startsWith('__SP_TT_PROBE__:')) {
+  result = {
+    hardBlock: window.__SP_TT_HARD_BLOCK === true,
+    policyRegistered: typeof window.__SP_TT_POLICY__ !== 'undefined',
+  };
+  break;
+}
+```
+
+The init block (the (a) part):
 
 ```javascript
 // ── Layer 3: Trusted Types policy registration (v0.1.34) ──
@@ -632,22 +660,15 @@ if (!result.ok) {
 }
 ```
 
-- [ ] **Step 6: Add `__SP_TT_PROBE__` sentinel handler in content-main.js**
+- [ ] **Step 6: Confirm `__SP_TT_PROBE__` is already in content-main.js (added in T2)**
 
-This is the minimum probe needed for the error UX to distinguish hard-block from normal CSP_BLOCKED. Add it inside `case 'execute_script':` in `extension/content-main.js`, BEFORE the `new _Function(params.script)` line, alongside the existing `__SP_SCROLL_TO_ELEMENT__` and `__SP_DISMISS_OVERLAYS__` intercepts:
+The probe sentinel handler was added in T2 Step 5 (moved from T3 during plan execution to break a chicken-and-egg with `safari_get_console_messages`). Verify it exists:
 
-```javascript
-// ── EARLY INTERCEPT: __SP_TT_PROBE__:<json> (v0.1.34 Task 3) ──
-// Used by safari_evaluate's error UX to distinguish CSP_BLOCKED (recoverable
-// with alternative tools) from CSP_HARD_BLOCK (policy name allowlist excludes us).
-if (typeof params.script === 'string' && params.script.startsWith('__SP_TT_PROBE__:')) {
-  result = {
-    hardBlock: window.__SP_TT_HARD_BLOCK === true,
-    policyRegistered: typeof window.__SP_TT_POLICY__ !== 'undefined',
-  };
-  break;
-}
+```bash
+grep -n "__SP_TT_PROBE__" extension/content-main.js
 ```
+
+Expected: one match in `case 'execute_script':`. If missing, T2 was incomplete — return BLOCKED and re-run T2.
 
 - [ ] **Step 7: Bump dev marketing version + rebuild + reinstall**
 
