@@ -670,14 +670,9 @@ grep -n "__SP_TT_PROBE__" extension/content-main.js
 
 Expected: one match in `case 'execute_script':`. If missing, T2 was incomplete — return BLOCKED and re-run T2.
 
-- [ ] **Step 7: Bump dev marketing version + rebuild + reinstall**
+- [ ] **Step 7: No extension rebuild needed (T2 already installed __SP_TT_PROBE__ at 0.1.34-dev.1)**
 
-```bash
-node -e "const p=require('./package.json'); p.version='0.1.34-dev.2'; require('fs').writeFileSync('./package.json', JSON.stringify(p, null, 2) + '\n');"
-node -e "const m=require('./extension/manifest.json'); m.version='0.1.34-dev.2'; require('fs').writeFileSync('./extension/manifest.json', JSON.stringify(m, null, 2) + '\n');"
-bash scripts/build-extension.sh
-open "bin/Safari Pilot.app"
-```
+T3 is TS-only changes (extraction.ts handler + tests + fixtures). The probe sentinel is already in the installed extension from T2. Skip rebuild.
 
 - [ ] **Step 8: Run the e2e test — verify all three pass**
 
@@ -691,7 +686,7 @@ Expected: all 3 tests PASS. `CSP_BLOCKED` appears in the TT-strict and no-eval c
 - [ ] **Step 9: Commit**
 
 ```bash
-git add src/tools/extraction.ts extension/content-main.js extension/manifest.json package.json test/fixtures/csp-script-src-no-eval.ts test/e2e/csp-evaluate-blocked-error.test.ts bin/
+git add src/tools/extraction.ts test/fixtures/csp-script-src-no-eval.ts test/e2e/csp-evaluate-blocked-error.test.ts
 git commit -m "feat(extraction): CSP_BLOCKED / CSP_HARD_BLOCK error UX on safari_evaluate with alternative_tools hint"
 ```
 
