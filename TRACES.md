@@ -16,6 +16,20 @@
 
 ## Current Work
 
+### Iteration 82 - 2026-05-14 — T18 bench gate BLOCKED on smoke: sentinels for safari_get_text + safari_snapshot regress against v0.1.33 baseline
+
+**What:** Started T18 (v0.1.34 bench gate, ~$78 approved). Promoted `bench/webvoyager/run-one-task.sh` from /tmp into repo with `WV_OUT_DIR` + `WV_VARIANT` env hooks so v0.1.34 runs don't pollute the v0.1.33 baseline at `/tmp/wv-inline-runs/`. Backed up baseline to `/tmp/wv-inline-runs-baseline-v0.1.33/`. Generated 47-task rerun list (46 FAILURE + 1 UNKNOWN Amazon--5) and 59-task stratified spot-check (4-per-site, 3 for Google Flights). Ran 2 smoke tasks per advisor recommendation **before** committing to the full bench. Both smoke tasks exposed regressions on T12/T14 sentinels, halting the gate.
+
+**Changes:** `bench/webvoyager/run-one-task.sh` (promoted from /tmp, parameterized variant + output dir), `bench/webvoyager/stream-pretty.py` (vendored from /tmp). Durable smoke artifacts + BLOCKED.md report at `bench-runs/webvoyager-v0.1.34-bench-20260513/` (gitignored).
+
+**Smoke results vs v0.1.33 baseline:**
+- Apple--12 (baseline SUCCESS 4t/$0.14): v0.1.34 used 7t/$0.39. `safari_get_text` + `safari_snapshot` both returned `MCP error -32603: Unexpected token ':'`. Agent recovered via `safari_get_page_info` (T4 sentinel — works).
+- GitHub--19 (baseline SUCCESS): v0.1.34 used 9t/$0.27. `safari_get_text` + `safari_snapshot` both returned the full Trusted-Types CSP refusal `Refused to evaluate a string as JavaScript because 'unsafe-eval' or 'trusted-types-eval' is not an allowed source ... "script-src github.githubassets.com"`. Agent recovered via `safari_navigate` + `safari_extract_text_window` (T6 sentinel — works).
+
+**Context:** Two distinct failure modes confirm T12 (safari_get_text → __SP_GET_TEXT__) and T14 (safari_snapshot → __SP_SNAPSHOT__) sentinels are NOT actually CSP-immune as designed. Apple-path emits `Unexpected token ':'` (likely envelope-escape bug — unescaped page text with colons leaking into storage-bus response wrapper). GitHub-path emits the full TT CSP refusal (likely the dispatch is NOT routing through the sentinel and is falling back to a `new Function`/`eval` path that CSP blocks). Note: T11's e2e gate ran 19/19 GREEN on a localhost TT-strict fixture, but real-world CSP-strict sites (Apple, GitHub) expose the regression. The localhost fixture's CSP is `require-trusted-types-for 'script'` only; production sites add `script-src` directives that may trigger different code paths. Hypotheses for next-session systematic-debugging: H1 sentinels not in installed v0.1.34-dev.3 binary; H2 sentinel handlers emit unescaped strings; H3 engine-selector routing to daemon engine; H4 stale dist. Did NOT proceed to full bench. Total smoke spend ~$0.66. Per `feedback-debugging-discipline`, fix path is upp:systematic-debugging.
+
+---
+
 ### Iteration 81 - 2026-05-13 — v0.1.34 mid-sprint verification gate (T11): dev.3 rebuilt, 19/19 CSP e2e GREEN
 
 **What:** v0.1.34 sprint mid-flight rebuild + verification gate. After T2-T10 + T7b landed extension-side changes without being baked into the installed binary (still dev.2), bumped to 0.1.34-dev.3, rebuilt + notarized + stapled the extension, re-registered with Safari, and ran the full CSP-related e2e set. All 19 tests GREEN on the TT-strict fixture. Empirically validates that the 7 new sentinels (`__SP_TT_PROBE__`, `__SP_GET_PAGE_INFO__`, `__SP_GET_META_TAGS__`, `__SP_EXTRACT_TEXT_WINDOW__`, `__SP_CLICK__`, `__SP_FILL__`, `__SP_TYPE__`, `__SP_SCROLL__`, `__SP_RESOLVE_LOCATOR__`) + Layer 3 TT policy registration + the full `resolveLocator` body port to `__SP_LOCATOR__` all work end-to-end against real Safari, not just in theory.
