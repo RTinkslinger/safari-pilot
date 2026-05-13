@@ -689,37 +689,18 @@ export class InteractionTools {
 
     // scroll optionally targets an element (if omitted, scrolls page)
     const hasTarget = params['ref'] || params['selector'] || hasLocatorParams(params);
-    let escapedSelector = '';
+    let targetSelector: string | undefined;
     if (hasTarget) {
-      const selector = await this.resolveElement(tabUrl, params);
-      escapedSelector = escapeForJsSingleQuote(selector);
+      targetSelector = await this.resolveElement(tabUrl, params);
     }
 
-    const escapedToElement = toElement ? escapeForJsSingleQuote(toElement) : '';
-
-    const js = `
-      var target = ${escapedSelector ? `document.querySelector('${escapedSelector}')` : 'document.documentElement'};
-      if (!target) throw Object.assign(new Error('Scroll target not found'), { name: 'ELEMENT_NOT_FOUND' });
-
-      ${toTop ? 'target.scrollTo({ top: 0, behavior: "smooth" });' : ''}
-      ${toBottom ? 'target.scrollTo({ top: target.scrollHeight, behavior: "smooth" });' : ''}
-      ${toElement ? `var scrollTarget = document.querySelector('${escapedToElement}'); if (scrollTarget) scrollTarget.scrollIntoView({ behavior: 'smooth' });` : ''}
-      ${!toTop && !toBottom && !toElement ? `
-        var amt = ${amount};
-        var dir = '${direction}';
-        if (dir === 'down') target.scrollBy({ top: amt, behavior: 'smooth' });
-        else if (dir === 'up') target.scrollBy({ top: -amt, behavior: 'smooth' });
-        else if (dir === 'right') target.scrollBy({ left: amt, behavior: 'smooth' });
-        else if (dir === 'left') target.scrollBy({ left: -amt, behavior: 'smooth' });
-      ` : ''}
-
-      return {
-        scrolled: true,
-        scrollPosition: { x: target.scrollLeft || window.scrollX, y: target.scrollTop || window.scrollY },
-        atTop: (target.scrollTop || window.scrollY) === 0,
-        atBottom: (target.scrollTop || window.scrollY) + (target.clientHeight || window.innerHeight) >= (target.scrollHeight - 1),
-      };
-    `;
+    // v0.1.34 Task 10 — CSP-immune sentinel transport. Sentinel handler in
+    // extension/content-main.js replays the previous actionJs branching
+    // verbatim: scroll a container or the document; toTop/toBottom/toElement
+    // modes; up/down/left/right deltas; same result shape.
+    const js = '__SP_SCROLL__:' + JSON.stringify({
+      targetSelector, direction, amount, toTop, toBottom, toElement,
+    });
 
     // scroll has no actionability checks, execute directly
     const result = await this.engine.executeJsInTab(tabUrl, js);

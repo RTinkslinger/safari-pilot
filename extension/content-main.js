@@ -891,6 +891,45 @@
               result = { typed: true, length: text.length };
               break;
             }
+            // ── EARLY INTERCEPT: __SP_SCROLL__:<json> (v0.1.34 Task 10) ──
+            // CSP-immune safari_scroll. Mirrors the previous actionJs branching:
+            // toTop / toBottom / toElement / delta directional. Operates on the
+            // document.documentElement by default, or a passed targetSelector
+            // for scroll-inside-container.
+            if (typeof params.script === 'string' && params.script.startsWith('__SP_SCROLL__:')) {
+              const args = JSON.parse(params.script.slice('__SP_SCROLL__:'.length));
+              const target = args.targetSelector
+                ? document.querySelector(args.targetSelector)
+                : document.documentElement;
+              if (!target) {
+                throw Object.assign(
+                  new Error('Scroll target not found'),
+                  { name: 'ELEMENT_NOT_FOUND' },
+                );
+              }
+              if (args.toTop) {
+                target.scrollTo({ top: 0, behavior: 'smooth' });
+              } else if (args.toBottom) {
+                target.scrollTo({ top: target.scrollHeight, behavior: 'smooth' });
+              } else if (args.toElement) {
+                const scrollTarget = document.querySelector(args.toElement);
+                if (scrollTarget) scrollTarget.scrollIntoView({ behavior: 'smooth' });
+              } else {
+                const amt = args.amount;
+                const dir = args.direction;
+                if (dir === 'down') target.scrollBy({ top: amt, behavior: 'smooth' });
+                else if (dir === 'up') target.scrollBy({ top: -amt, behavior: 'smooth' });
+                else if (dir === 'right') target.scrollBy({ left: amt, behavior: 'smooth' });
+                else if (dir === 'left') target.scrollBy({ left: -amt, behavior: 'smooth' });
+              }
+              result = {
+                scrolled: true,
+                scrollPosition: { x: target.scrollLeft || window.scrollX, y: target.scrollTop || window.scrollY },
+                atTop: (target.scrollTop || window.scrollY) === 0,
+                atBottom: (target.scrollTop || window.scrollY) + (target.clientHeight || window.innerHeight) >= (target.scrollHeight - 1),
+              };
+              break;
+            }
             // ── existing default execute_script path ──
             const commandId = params.commandId;
             if (commandId && window.__safariPilotExecutedCommands.has(commandId)) {
