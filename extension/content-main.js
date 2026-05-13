@@ -863,6 +863,34 @@
               };
               break;
             }
+            // ── EARLY INTERCEPT: __SP_TYPE__:<json> (v0.1.34 Task 9) ──
+            // CSP-immune safari_type. Per-character keyboard event dispatch in
+            // MAIN world. Mirrors the previous JS-string loop verbatim:
+            // focus → for each char: keydown / keypress / append to value /
+            // input / keyup.
+            if (typeof params.script === 'string' && params.script.startsWith('__SP_TYPE__:')) {
+              const args = JSON.parse(params.script.slice('__SP_TYPE__:'.length));
+              const el = document.querySelector(args.selector);
+              if (!el) {
+                throw Object.assign(
+                  new Error('Element not found'),
+                  { name: 'ELEMENT_NOT_FOUND' },
+                );
+              }
+              el.focus();
+              const text = String(args.content || '');
+              for (let i = 0; i < text.length; i++) {
+                const ch = text[i];
+                const code = 'Key' + ch.toUpperCase();
+                el.dispatchEvent(new KeyboardEvent('keydown', { key: ch, code, bubbles: true }));
+                el.dispatchEvent(new KeyboardEvent('keypress', { key: ch, code, bubbles: true }));
+                el.value = (el.value || '') + ch;
+                el.dispatchEvent(new Event('input', { bubbles: true }));
+                el.dispatchEvent(new KeyboardEvent('keyup', { key: ch, code, bubbles: true }));
+              }
+              result = { typed: true, length: text.length };
+              break;
+            }
             // ── existing default execute_script path ──
             const commandId = params.commandId;
             if (commandId && window.__safariPilotExecutedCommands.has(commandId)) {

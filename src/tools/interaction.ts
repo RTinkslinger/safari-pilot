@@ -611,26 +611,11 @@ export class InteractionTools {
     const content = params['content'] as string;
 
     const selector = await this.resolveElement(tabUrl, params, true);
-    const escapedSelector = escapeForJsSingleQuote(selector);
-    const escapedText = escapeForJsSingleQuote(content);
 
-    const js = `
-      var el = document.querySelector('${escapedSelector}');
-      if (!el) throw Object.assign(new Error('Element not found'), { name: 'ELEMENT_NOT_FOUND' });
-      el.focus();
-
-      var text = '${escapedText}';
-      for (var i = 0; i < text.length; i++) {
-        var char = text[i];
-        el.dispatchEvent(new KeyboardEvent('keydown', { key: char, code: 'Key' + char.toUpperCase(), bubbles: true }));
-        el.dispatchEvent(new KeyboardEvent('keypress', { key: char, code: 'Key' + char.toUpperCase(), bubbles: true }));
-        el.value += char;
-        el.dispatchEvent(new Event('input', { bubbles: true }));
-        el.dispatchEvent(new KeyboardEvent('keyup', { key: char, code: 'Key' + char.toUpperCase(), bubbles: true }));
-      }
-
-      return { typed: true, length: text.length };
-    `;
+    // v0.1.34 Task 9 — CSP-immune sentinel transport. Sentinel handler in
+    // extension/content-main.js replays the per-character keydown/keypress/
+    // input/keyup loop natively in MAIN world.
+    const js = '__SP_TYPE__:' + JSON.stringify({ selector, content });
 
     // type has no actionability checks (ACTION_CHECKS.type = []), execute directly
     const result = await this.engine.executeJsInTab(tabUrl, js);
