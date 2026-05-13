@@ -4,9 +4,10 @@ import type { Engine } from '../types.js';
 import type { SafariPilotServer } from '../server.js';
 import { buildRefSelector } from '../aria.js';
 import { generateAutoWaitJs, ACTION_CHECKS } from '../auto-wait.js';
-import { hasLocatorParams, extractLocatorFromParams, buildLocatorSentinel } from '../locator.js';
+import { hasLocatorParams, extractLocatorFromParams, buildLocatorSentinel, generateLocatorJs } from '../locator.js';
 import { escapeForJsSingleQuote } from '../escape.js';
 import { StrictnessViolationError } from '../errors.js';
+import { loadConfig } from '../config.js';
 
 export interface ToolDefinition {
   name: string;
@@ -21,10 +22,16 @@ export class InteractionTools {
   private engine: IEngine;
   private server: SafariPilotServer;
   private handlers: Map<string, Handler> = new Map();
+  /** v0.1.34 T16: rollback flag — when true, the 4 refactored interaction tools
+   *  (click, fill, type, scroll) dispatch via the verbatim v0.1.33 JS-string
+   *  paths preserved as `*Legacy` companions. Read once at construction; flag
+   *  changes require server restart. */
+  private readonly legacyMainWorld: boolean;
 
   constructor(engine: IEngine, server: SafariPilotServer) {
     this.engine = engine;
     this.server = server;
+    this.legacyMainWorld = loadConfig().legacyMainWorld === true;
     this.registerHandlers();
   }
 
@@ -53,6 +60,7 @@ export class InteractionTools {
     tabUrl: string,
     params: Record<string, unknown>,
     strict = false,
+    legacy = false,
   ): Promise<string> {
     const ref = params['ref'] as string | undefined;
     if (ref) return buildRefSelector(ref);
@@ -70,8 +78,13 @@ export class InteractionTools {
       // `requirements.requiresCspBypass: true` gates engine selection at the
       // dispatcher; if Extension is unavailable, EngineUnavailableError fires
       // before this code is reached.
-      const sentinel = buildLocatorSentinel(locator);
-      const result = await this.engine.executeJsInTab(tabUrl, sentinel);
+      //
+      // T16 rollback flag: when `legacy === true`, emit the v0.1.33
+      // generateLocatorJs IIFE instead of the sentinel — restores the verbatim
+      // pre-T7b path. generateLocatorJs is still exported from src/locator.ts
+      // (kept as AppleScript fallback by T7b), so the swap is one line.
+      const locatorJs = legacy ? generateLocatorJs(locator) : buildLocatorSentinel(locator);
+      const result = await this.engine.executeJsInTab(tabUrl, locatorJs);
       if (result.ok && result.value) {
         const parsed = JSON.parse(result.value);
         if (parsed.found && parsed.selector) {
@@ -417,6 +430,7 @@ export class InteractionTools {
   // ── Handlers ────────────────────────────────────────────────────────────────
 
   private async handleClick(params: Record<string, unknown>): Promise<ToolResponse> {
+    if (this.legacyMainWorld) return this.handleClickLegacy(params);
     const tabUrl = params['tabUrl'] as string;
     const timeout = typeof params['timeout'] === 'number' ? params['timeout'] : 5000;
     const force = params['force'] === true;
@@ -440,6 +454,118 @@ export class InteractionTools {
       buttonNum,
       modifiers: { ctrl: mods.includes('ctrl'), shift: mods.includes('shift'), alt: mods.includes('alt'), meta: mods.includes('meta') },
     });
+
+    const response = await this.waitAndExecute(tabUrl, selector, 'click', actionJs, { timeout, force });
+
+    let resultText: string | undefined;
+    try {
+      resultText = response.content[0]?.text;
+      if (resultText) {
+        const parsed = JSON.parse(resultText);
+        if (parsed.downloadContext) {
+          this.server.setClickContext({
+            href: parsed.downloadContext.href ?? undefined,
+            downloadAttr: parsed.downloadContext.downloadAttr ?? undefined,
+            isDownloadLink: !!parsed.downloadContext.isDownloadLink,
+            tabUrl,
+            timestamp: Date.now(),
+          });
+        }
+      }
+    } catch (err) {
+      if (err instanceof SyntaxError) {
+        console.warn(`[safari_click] Could not parse click response for download context: ${resultText?.slice(0, 100)}`);
+      } else {
+        console.warn(`[safari_click] Download context extraction failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+
+    return response;
+  }
+
+  /** v0.1.34 T16 rollback path. Verbatim v0.1.33 body (commit b8bc4ab^),
+   *  preserved for fast rollback via `legacyMainWorld: true` in config.
+   *  Maintenance rule: any v0.1.35+ behavior change must update BOTH this
+   *  legacy companion and the sentinel handler above. */
+  private async handleClickLegacy(params: Record<string, unknown>): Promise<ToolResponse> {
+    const tabUrl = params['tabUrl'] as string;
+    const timeout = typeof params['timeout'] === 'number' ? params['timeout'] : 5000;
+    const force = params['force'] === true;
+
+    // 5A.3: button + modifiers honored. Schema declares both (lines ~142-143);
+    // pre-fix the handler ignored them and dispatched every click as primary
+    // (button=0) with no modifier flags — same "schema lies" class as T49/T50/T51.
+    const buttonName = (params['button'] as string) ?? 'left';
+    const buttonNum = buttonName === 'right' ? 2 : buttonName === 'middle' ? 1 : 0;
+    const mods = Array.isArray(params['modifiers']) ? (params['modifiers'] as string[]) : [];
+    const ctrlKey = mods.includes('ctrl');
+    const shiftKey = mods.includes('shift');
+    const altKey = mods.includes('alt');
+    const metaKey = mods.includes('meta');
+    // Per W3C UI Events:
+    //   primary (button=0): mousedown → mouseup → click
+    //   right   (button=2): mousedown → mouseup → contextmenu  (no 'click')
+    //   middle  (button=1): mousedown → mouseup → auxclick     (no 'click')
+    const terminalEvent = buttonNum === 0 ? 'click' : buttonNum === 2 ? 'contextmenu' : 'auxclick';
+    // Native link-following only fires for primary click. Right opens context;
+    // middle is "open in new tab" which our automation cannot replicate via JS.
+    const followLinks = buttonNum === 0 ? 'true' : 'false';
+
+    const selector = await this.resolveElement(tabUrl, params, true, true);
+    const escapedSelector = escapeForJsSingleQuote(selector);
+
+    const actionJs = `
+      var el = document.querySelector('${escapedSelector}');
+      if (!el) throw Object.assign(new Error('Element not found: ${escapedSelector}'), { name: 'ELEMENT_NOT_FOUND' });
+
+      var rect = el.getBoundingClientRect();
+      var opts = {
+        bubbles: true, cancelable: true, view: window,
+        clientX: rect.x + rect.width/2, clientY: rect.y + rect.height/2,
+        button: ${buttonNum},
+        buttons: ${1 << buttonNum},
+        ctrlKey: ${ctrlKey},
+        shiftKey: ${shiftKey},
+        altKey: ${altKey},
+        metaKey: ${metaKey},
+      };
+      el.dispatchEvent(new MouseEvent('mousedown', opts));
+      el.dispatchEvent(new MouseEvent('mouseup', opts));
+      el.dispatchEvent(new MouseEvent('${terminalEvent}', opts));
+
+      var linkEl = el.tagName === 'A' ? el : el.closest('a');
+      var navigatedTo = null;
+
+      // dispatchEvent fires JS handlers but does NOT trigger Safari's native
+      // link-following behavior. For anchor elements + primary click, explicitly navigate.
+      if (${followLinks} && linkEl && linkEl.href && !linkEl.hasAttribute('download')) {
+        var target = linkEl.getAttribute('target');
+        if (!target || target === '_self') {
+          navigatedTo = linkEl.href;
+        }
+      }
+
+      var result = {
+        clicked: true,
+        navigatedTo: navigatedTo,
+        element: {
+          tagName: el.tagName,
+          id: el.id || undefined,
+          textContent: (el.textContent || '').slice(0, 100),
+        },
+        downloadContext: linkEl ? {
+          href: linkEl.href || undefined,
+          downloadAttr: linkEl.getAttribute('download') ?? undefined,
+          isDownloadLink: linkEl.hasAttribute('download'),
+        } : undefined
+      };
+
+      if (navigatedTo) {
+        window.location.href = navigatedTo;
+      }
+
+      return result;
+    `;
 
     const response = await this.waitAndExecute(tabUrl, selector, 'click', actionJs, { timeout, force });
 
@@ -503,6 +629,7 @@ export class InteractionTools {
   }
 
   private async handleFill(params: Record<string, unknown>): Promise<ToolResponse> {
+    if (this.legacyMainWorld) return this.handleFillLegacy(params);
     const tabUrl = params['tabUrl'] as string;
     const value = params['value'] as string;
     const framework = (params['framework'] as string | undefined) ?? 'auto';
@@ -520,6 +647,78 @@ export class InteractionTools {
     const actionJs = '__SP_FILL__:' + JSON.stringify({
       selector, value, framework, clearFirst, pressEnterAfter,
     });
+
+    return this.waitAndExecute(tabUrl, selector, 'fill', actionJs, { timeout, force });
+  }
+
+  /** v0.1.34 T16 rollback path. Verbatim v0.1.33 body (commit 040c32d^). */
+  private async handleFillLegacy(params: Record<string, unknown>): Promise<ToolResponse> {
+    const tabUrl = params['tabUrl'] as string;
+    const value = params['value'] as string;
+    const framework = (params['framework'] as string | undefined) ?? 'auto';
+    const clearFirst = params['clearFirst'] !== false;
+    const pressEnterAfter = params['pressEnterAfter'] === true;
+    const timeout = typeof params['timeout'] === 'number' ? params['timeout'] : 10000;
+    const force = params['force'] === true;
+
+    const selector = await this.resolveElement(tabUrl, params, true, true);
+    const escapedSelector = escapeForJsSingleQuote(selector);
+    const escapedValue = escapeForJsSingleQuote(value);
+
+    const actionJs = `
+      var el = document.querySelector('${escapedSelector}');
+      if (!el) throw Object.assign(new Error('Element not found: ${escapedSelector}'), { name: 'ELEMENT_NOT_FOUND' });
+
+      var detectedFramework = 'vanilla';
+      if (Object.keys(el).some(function(k) { return k.startsWith('__reactFiber$'); })) {
+        detectedFramework = 'react';
+      } else if (el.__vue__ || el.__vueParentComponent) {
+        detectedFramework = 'vue';
+      }
+
+      var fw = '${framework}' === 'auto' ? detectedFramework : '${framework}';
+
+      if (${clearFirst}) {
+        el.focus();
+        el.value = '';
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+
+      if (fw === 'react') {
+        var nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')
+          ? Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set
+          : Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')
+          ? Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set
+          : null;
+        if (nativeSetter) {
+          nativeSetter.call(el, '${escapedValue}');
+        } else {
+          el.value = '${escapedValue}';
+        }
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+        el.dispatchEvent(new FocusEvent('blur', { bubbles: true }));
+      } else if (fw === 'vue') {
+        el.value = '${escapedValue}';
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+      } else {
+        el.focus();
+        el.value = '${escapedValue}';
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+        el.dispatchEvent(new FocusEvent('blur', { bubbles: true }));
+      }
+
+      ${pressEnterAfter ? 'el.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", bubbles: true }));' : ''}
+
+      return {
+        filled: true,
+        element: { tagName: el.tagName, id: el.id || undefined, name: el.name || undefined, type: el.type || undefined },
+        framework: fw,
+        verifiedValue: el.value,
+      };
+    `;
 
     return this.waitAndExecute(tabUrl, selector, 'fill', actionJs, { timeout, force });
   }
@@ -616,6 +815,7 @@ export class InteractionTools {
   }
 
   private async handleType(params: Record<string, unknown>): Promise<ToolResponse> {
+    if (this.legacyMainWorld) return this.handleTypeLegacy(params);
     const start = Date.now();
     const tabUrl = params['tabUrl'] as string;
     // 'content' avoids collision with locator 'text' param
@@ -627,6 +827,42 @@ export class InteractionTools {
     // extension/content-main.js replays the per-character keydown/keypress/
     // input/keyup loop natively in MAIN world.
     const js = '__SP_TYPE__:' + JSON.stringify({ selector, content });
+
+    // type has no actionability checks (ACTION_CHECKS.type = []), execute directly
+    const result = await this.engine.executeJsInTab(tabUrl, js);
+    if (!result.ok) throw new Error(result.error?.message ?? 'Type failed');
+
+    return this.makeResponse(result.value ? JSON.parse(result.value) : { typed: true }, Date.now() - start);
+  }
+
+  /** v0.1.34 T16 rollback path. Verbatim v0.1.33 body (commit 67497e7^). */
+  private async handleTypeLegacy(params: Record<string, unknown>): Promise<ToolResponse> {
+    const start = Date.now();
+    const tabUrl = params['tabUrl'] as string;
+    // 'content' avoids collision with locator 'text' param
+    const content = params['content'] as string;
+
+    const selector = await this.resolveElement(tabUrl, params, true, true);
+    const escapedSelector = escapeForJsSingleQuote(selector);
+    const escapedText = escapeForJsSingleQuote(content);
+
+    const js = `
+      var el = document.querySelector('${escapedSelector}');
+      if (!el) throw Object.assign(new Error('Element not found'), { name: 'ELEMENT_NOT_FOUND' });
+      el.focus();
+
+      var text = '${escapedText}';
+      for (var i = 0; i < text.length; i++) {
+        var char = text[i];
+        el.dispatchEvent(new KeyboardEvent('keydown', { key: char, code: 'Key' + char.toUpperCase(), bubbles: true }));
+        el.dispatchEvent(new KeyboardEvent('keypress', { key: char, code: 'Key' + char.toUpperCase(), bubbles: true }));
+        el.value += char;
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.dispatchEvent(new KeyboardEvent('keyup', { key: char, code: 'Key' + char.toUpperCase(), bubbles: true }));
+      }
+
+      return { typed: true, length: text.length };
+    `;
 
     // type has no actionability checks (ACTION_CHECKS.type = []), execute directly
     const result = await this.engine.executeJsInTab(tabUrl, js);
@@ -679,6 +915,7 @@ export class InteractionTools {
   }
 
   private async handleScroll(params: Record<string, unknown>): Promise<ToolResponse> {
+    if (this.legacyMainWorld) return this.handleScrollLegacy(params);
     const start = Date.now();
     const tabUrl = params['tabUrl'] as string;
     const direction = (params['direction'] as string | undefined) ?? 'down';
@@ -712,6 +949,68 @@ export class InteractionTools {
     const js = '__SP_SCROLL__:' + JSON.stringify({
       targetSelector, direction, amount, toTop, toBottom, toElement,
     });
+
+    // scroll has no actionability checks, execute directly
+    const result = await this.engine.executeJsInTab(tabUrl, js);
+    if (!result.ok) throw new Error(result.error?.message ?? 'Scroll failed');
+
+    return this.makeResponse(result.value ? JSON.parse(result.value) : { scrolled: true }, Date.now() - start);
+  }
+
+  /** v0.1.34 T16 rollback path. Verbatim v0.1.33 body (commit 8794342^). */
+  private async handleScrollLegacy(params: Record<string, unknown>): Promise<ToolResponse> {
+    const start = Date.now();
+    const tabUrl = params['tabUrl'] as string;
+    const direction = (params['direction'] as string | undefined) ?? 'down';
+    const amount = typeof params['amount'] === 'number' ? params['amount'] : 500;
+    const toTop = params['toTop'] === true;
+    const toBottom = params['toBottom'] === true;
+    const toElement = params['toElement'] as string | undefined;
+
+    // T50 — `toTop`, `toBottom`, and `toElement` are mutually exclusive scroll
+    // modes. Pre-T50 the handler emitted each branch as a separate JS
+    // statement, so a multi-mode call ran them serially with last-write-wins
+    // and no caller-visible warning.
+    const modeCount = (toTop ? 1 : 0) + (toBottom ? 1 : 0) + (toElement ? 1 : 0);
+    if (modeCount > 1) {
+      throw new Error(
+        '`toTop`, `toBottom`, and `toElement` are mutually exclusive — pass only one.',
+      );
+    }
+
+    // scroll optionally targets an element (if omitted, scrolls page)
+    const hasTarget = params['ref'] || params['selector'] || hasLocatorParams(params);
+    let escapedSelector = '';
+    if (hasTarget) {
+      const selector = await this.resolveElement(tabUrl, params, false, true);
+      escapedSelector = escapeForJsSingleQuote(selector);
+    }
+
+    const escapedToElement = toElement ? escapeForJsSingleQuote(toElement) : '';
+
+    const js = `
+      var target = ${escapedSelector ? `document.querySelector('${escapedSelector}')` : 'document.documentElement'};
+      if (!target) throw Object.assign(new Error('Scroll target not found'), { name: 'ELEMENT_NOT_FOUND' });
+
+      ${toTop ? 'target.scrollTo({ top: 0, behavior: "smooth" });' : ''}
+      ${toBottom ? 'target.scrollTo({ top: target.scrollHeight, behavior: "smooth" });' : ''}
+      ${toElement ? `var scrollTarget = document.querySelector('${escapedToElement}'); if (scrollTarget) scrollTarget.scrollIntoView({ behavior: 'smooth' });` : ''}
+      ${!toTop && !toBottom && !toElement ? `
+        var amt = ${amount};
+        var dir = '${direction}';
+        if (dir === 'down') target.scrollBy({ top: amt, behavior: 'smooth' });
+        else if (dir === 'up') target.scrollBy({ top: -amt, behavior: 'smooth' });
+        else if (dir === 'right') target.scrollBy({ left: amt, behavior: 'smooth' });
+        else if (dir === 'left') target.scrollBy({ left: -amt, behavior: 'smooth' });
+      ` : ''}
+
+      return {
+        scrolled: true,
+        scrollPosition: { x: target.scrollLeft || window.scrollX, y: target.scrollTop || window.scrollY },
+        atTop: (target.scrollTop || window.scrollY) === 0,
+        atBottom: (target.scrollTop || window.scrollY) + (target.clientHeight || window.innerHeight) >= (target.scrollHeight - 1),
+      };
+    `;
 
     // scroll has no actionability checks, execute directly
     const result = await this.engine.executeJsInTab(tabUrl, js);

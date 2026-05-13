@@ -69,6 +69,18 @@ export interface SafariPilotConfig {
   extension: ExtensionConfig;
   selectorPack: SelectorPackConfig;
   screenshotPolicy?: { blockedPatterns?: string[] };
+  /** v0.1.34 T16: rollback flag for the CSP-immune sentinel routing.
+   *  Default `false` → the 14 refactored tools dispatch via their
+   *  __SP_*__ sentinels (the v0.1.34 path). Set `true` to fall back to
+   *  the verbatim v0.1.33 JS-string code paths preserved in each handler's
+   *  `*Legacy` companion — only useful as a fast rollback if v0.1.34's
+   *  sentinel routing reveals an unexpected regression on a non-CSP page.
+   *  Note: the flag does NOT change engine selection. The 14 tools still
+   *  declare `requiresCspBypass: true`, so the dispatcher pins them to the
+   *  Extension engine regardless of this flag — only the in-handler dispatch
+   *  changes (sentinel vs JS-string). Loaded once at server startup;
+   *  flipping the flag requires a process restart. */
+  legacyMainWorld: boolean;
 }
 
 export const DEFAULT_CONFIG: SafariPilotConfig = {
@@ -109,6 +121,7 @@ export const DEFAULT_CONFIG: SafariPilotConfig = {
   selectorPack: {
     enabled: false,
   },
+  legacyMainWorld: false,
 };
 
 // ─── Deep merge ──────────────────────────────────────────────────────────────
@@ -217,6 +230,8 @@ function validate(config: SafariPilotConfig): void {
   if (config.screenshotPolicy !== undefined && config.screenshotPolicy.blockedPatterns !== undefined) {
     assertStringArray('screenshotPolicy.blockedPatterns', config.screenshotPolicy.blockedPatterns);
   }
+
+  assertBoolean('legacyMainWorld', config.legacyMainWorld);
 }
 
 // ─── Path resolution ─────────────────────────────────────────────────────────
@@ -277,6 +292,11 @@ export function loadConfig(configPath?: string): SafariPilotConfig {
   const mergedRecord = merged as unknown as Record<string, unknown>;
   const sp = mergedRecord['selectorPack'] as Record<string, unknown> | undefined;
   if (sp) sp['enabled'] = sp['enabled'] === true;
+
+  // v0.1.34 T16: legacyMainWorld is a rollback flag — enforce strict boolean.
+  // Anything other than literal `true` reverts to false (fail-safe; the
+  // v0.1.34 sentinel path is the supported default).
+  mergedRecord['legacyMainWorld'] = mergedRecord['legacyMainWorld'] === true;
 
   validate(merged);
 

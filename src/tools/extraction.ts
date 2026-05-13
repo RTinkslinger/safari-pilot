@@ -1,13 +1,14 @@
 import { writeFile, readFile, unlink } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { buildRefSelector } from '../aria.js';
+import { buildRefSelector, generateSnapshotJs } from '../aria.js';
 import { escapeForJsSingleQuote } from '../escape.js';
-import { hasLocatorParams, extractLocatorFromParams, buildLocatorSentinel, resolveMaybePackSelector } from '../locator.js';
+import { hasLocatorParams, extractLocatorFromParams, buildLocatorSentinel, generateLocatorJs, generateQueryAllJs, resolveMaybePackSelector } from '../locator.js';
 import type { IEngine } from '../engines/engine.js';
 import type { Engine, ToolResponse, ToolRequirements } from '../types.js';
 import { ScreenshotPolicy } from '../security/screenshot-policy.js';
 import { routeFrameAware } from './_frame-routing-helper.js';
+import { loadConfig } from '../config.js';
 
 const execFileP = promisify(execFile);
 
@@ -24,10 +25,15 @@ export class ExtractionTools {
   private engine: IEngine;
   private screenshotPolicy: ScreenshotPolicy | undefined;
   private handlers: Map<string, Handler> = new Map();
+  /** v0.1.34 T16: rollback flag — when true, the 5 refactored extraction tools
+   *  (snapshot, get_text, get_html, get_attribute, query_all) dispatch via the
+   *  verbatim v0.1.33 JS-string paths preserved as `*Legacy` companions. */
+  private readonly legacyMainWorld: boolean;
 
   constructor(engine: IEngine, screenshotPolicy?: ScreenshotPolicy) {
     this.engine = engine;
     this.screenshotPolicy = screenshotPolicy;
+    this.legacyMainWorld = loadConfig().legacyMainWorld === true;
     this.registerHandlers();
   }
 
@@ -279,6 +285,7 @@ export class ExtractionTools {
   // ── Handlers ────────────────────────────────────────────────────────────────
 
   private async handleSnapshot(params: Record<string, unknown>): Promise<ToolResponse> {
+    if (this.legacyMainWorld) return this.handleSnapshotLegacy(params);
     const start = Date.now();
     const tabUrl = params['tabUrl'] as string;
     const scope = (params['scope'] as string | undefined) ?? 'page';
@@ -304,7 +311,30 @@ export class ExtractionTools {
     return this.makeResponse(result.value ? JSON.parse(result.value) : {}, Date.now() - start);
   }
 
+  /** v0.1.34 T16 rollback path. Verbatim v0.1.33 body (commit b3d0eac^). */
+  private async handleSnapshotLegacy(params: Record<string, unknown>): Promise<ToolResponse> {
+    const start = Date.now();
+    const tabUrl = params['tabUrl'] as string;
+    const scope = (params['scope'] as string | undefined) ?? 'page';
+    const maxDepth = typeof params['maxDepth'] === 'number' ? params['maxDepth'] : 15;
+    const includeHidden = params['includeHidden'] === true;
+    const format = (params['format'] as string | undefined) ?? 'yaml';
+
+    const js = generateSnapshotJs({
+      scopeSelector: scope === 'page' ? undefined : scope,
+      maxDepth,
+      includeHidden,
+      format: format as 'yaml' | 'json',
+    });
+
+    const result = await this.engine.executeJsInTab(tabUrl, js);
+    if (!result.ok) throw new Error(result.error?.message ?? 'Snapshot failed');
+
+    return this.makeResponse(result.value ? JSON.parse(result.value) : {}, Date.now() - start);
+  }
+
   private async handleGetText(params: Record<string, unknown>): Promise<ToolResponse> {
+    if (this.legacyMainWorld) return this.handleGetTextLegacy(params);
     const start = Date.now();
     const tabUrl = params['tabUrl'] as string;
     const frameId = params['frameId'] as number | undefined;
@@ -352,7 +382,64 @@ export class ExtractionTools {
     return this.makeResponse(result.value ? JSON.parse(result.value) : {}, Date.now() - start);
   }
 
+  /** v0.1.34 T16 rollback path. Verbatim v0.1.33 body (commit d7f5c25^). */
+  private async handleGetTextLegacy(params: Record<string, unknown>): Promise<ToolResponse> {
+    const start = Date.now();
+    const tabUrl = params['tabUrl'] as string;
+    const frameId = params['frameId'] as number | undefined;
+    const maxLength = typeof params['maxLength'] === 'number' ? params['maxLength'] : 50000;
+
+    // Resolve targeting: ref → locator → selector
+    let selector = params['selector'] as string | undefined;
+    const ref = params['ref'] as string | undefined;
+    if (ref) {
+      selector = buildRefSelector(ref);
+    }
+    selector = await resolveMaybePackSelector(this.engine, { tabUrl, frameId }, selector);
+    if (!selector && hasLocatorParams(params)) {
+      const locator = extractLocatorFromParams(params)!;
+      const locatorJs = generateLocatorJs(locator);
+      const locatorResult = await routeFrameAware(this.engine, { tabUrl, frameId }, locatorJs);
+      if (locatorResult.ok && locatorResult.value) {
+        const parsed = JSON.parse(locatorResult.value);
+        if (parsed.found && parsed.selector) {
+          selector = parsed.selector;
+        } else {
+          throw new Error(parsed.hint || 'Locator did not match any element');
+        }
+      }
+    }
+
+    const escapedSelector = selector ? escapeForJsSingleQuote(selector) : '';
+    const multi = params['multi'] === true;
+    const js = multi
+      ? `
+      if (!${selector ? 'true' : 'false'}) throw Object.assign(new Error('multi:true requires a selector'), { name: 'INVALID_PARAMS' });
+      var els = document.querySelectorAll('${escapedSelector}');
+      var max = ${maxLength};
+      var matches = [];
+      for (var i = 0; i < els.length; i++) {
+        var t = els[i].innerText || els[i].textContent || '';
+        matches.push(t.slice(0, max));
+      }
+      return { matches: matches, count: els.length };
+    `
+      : `
+      var el = ${selector ? `document.querySelector('${escapedSelector}')` : 'document.body'};
+      if (!el) throw Object.assign(new Error('Element not found'), { name: 'ELEMENT_NOT_FOUND' });
+      var max = ${maxLength};
+      var text = el.innerText || el.textContent || '';
+      return { text: text.slice(0, max), length: text.length, truncated: text.length > max };
+    `;
+
+    const result = await routeFrameAware(this.engine, { tabUrl, frameId }, js);
+    if (!result.ok) throw new Error(result.error?.message ?? 'Get text failed');
+
+    return this.makeResponse(result.value ? JSON.parse(result.value) : {}, Date.now() - start);
+  }
+
   private async handleGetHtml(params: Record<string, unknown>): Promise<ToolResponse> {
+    if (this.legacyMainWorld) return this.handleGetHtmlLegacy(params);
     const start = Date.now();
     const tabUrl = params['tabUrl'] as string;
     const frameId = params['frameId'] as number | undefined;
@@ -409,7 +496,63 @@ export class ExtractionTools {
     return this.makeResponse(result.value ? JSON.parse(result.value) : {}, Date.now() - start);
   }
 
+  /** v0.1.34 T16 rollback path. Verbatim v0.1.33 body (commit d7f5c25^).
+   *  The sentinel path above and this legacy path differ ONLY in locator
+   *  resolution (buildLocatorSentinel vs generateLocatorJs) — the rest of
+   *  the get-html JS body was unchanged at T7b. */
+  private async handleGetHtmlLegacy(params: Record<string, unknown>): Promise<ToolResponse> {
+    const start = Date.now();
+    const tabUrl = params['tabUrl'] as string;
+    const frameId = params['frameId'] as number | undefined;
+    const outer = params['outer'] !== false;
+
+    let selector = params['selector'] as string | undefined;
+    const ref = params['ref'] as string | undefined;
+    if (ref) {
+      selector = buildRefSelector(ref);
+    }
+    selector = await resolveMaybePackSelector(this.engine, { tabUrl, frameId }, selector);
+    if (!selector && hasLocatorParams(params)) {
+      const locator = extractLocatorFromParams(params)!;
+      const locatorJs = generateLocatorJs(locator);
+      const locatorResult = await routeFrameAware(this.engine, { tabUrl, frameId }, locatorJs);
+      if (locatorResult.ok && locatorResult.value) {
+        const parsed = JSON.parse(locatorResult.value);
+        if (parsed.found && parsed.selector) {
+          selector = parsed.selector;
+        } else {
+          throw new Error(parsed.hint || 'Locator did not match any element');
+        }
+      }
+    }
+
+    const escapedSelector = selector ? escapeForJsSingleQuote(selector) : '';
+    const multi = params['multi'] === true;
+    const js = multi
+      ? `
+      if (!${selector ? 'true' : 'false'}) throw Object.assign(new Error('multi:true requires a selector'), { name: 'INVALID_PARAMS' });
+      var els = document.querySelectorAll('${escapedSelector}');
+      var matches = [];
+      for (var i = 0; i < els.length; i++) {
+        matches.push(${outer ? 'els[i].outerHTML' : 'els[i].innerHTML'});
+      }
+      return { matches: matches, count: els.length };
+    `
+      : `
+      var el = ${selector ? `document.querySelector('${escapedSelector}')` : 'document.documentElement'};
+      if (!el) throw Object.assign(new Error('Element not found'), { name: 'ELEMENT_NOT_FOUND' });
+      var html = ${outer ? 'el.outerHTML' : 'el.innerHTML'};
+      return { html: html, length: html.length };
+    `;
+
+    const result = await routeFrameAware(this.engine, { tabUrl, frameId }, js);
+    if (!result.ok) throw new Error(result.error?.message ?? 'Get HTML failed');
+
+    return this.makeResponse(result.value ? JSON.parse(result.value) : {}, Date.now() - start);
+  }
+
   private async handleGetAttribute(params: Record<string, unknown>): Promise<ToolResponse> {
+    if (this.legacyMainWorld) return this.handleGetAttributeLegacy(params);
     const start = Date.now();
     const tabUrl = params['tabUrl'] as string;
     const frameId = params['frameId'] as number | undefined;
@@ -448,6 +591,63 @@ export class ExtractionTools {
     // 5A.6: multi:true returns {matches: (string|null)[], count} via querySelectorAll;
     // null entries indicate the attribute is missing on that element. multi:false
     // (default) preserves the original {value, element}.
+    const js = multi
+      ? `
+      var els = document.querySelectorAll('${escapedSelector}');
+      var matches = [];
+      for (var i = 0; i < els.length; i++) {
+        matches.push(els[i].getAttribute('${escapedAttribute}'));
+      }
+      return { matches: matches, count: els.length };
+    `
+      : `
+      var el = document.querySelector('${escapedSelector}');
+      if (!el) throw Object.assign(new Error('Element not found'), { name: 'ELEMENT_NOT_FOUND' });
+      return {
+        value: el.getAttribute('${escapedAttribute}'),
+        element: { tagName: el.tagName, id: el.id || undefined },
+      };
+    `;
+
+    const result = await routeFrameAware(this.engine, { tabUrl, frameId }, js);
+    if (!result.ok) throw new Error(result.error?.message ?? 'Get attribute failed');
+
+    return this.makeResponse(result.value ? JSON.parse(result.value) : {}, Date.now() - start);
+  }
+
+  /** v0.1.34 T16 rollback path. Verbatim v0.1.33 body (commit d7f5c25^). */
+  private async handleGetAttributeLegacy(params: Record<string, unknown>): Promise<ToolResponse> {
+    const start = Date.now();
+    const tabUrl = params['tabUrl'] as string;
+    const frameId = params['frameId'] as number | undefined;
+    const attribute = params['attribute'] as string;
+
+    let selector = params['selector'] as string | undefined;
+    const ref = params['ref'] as string | undefined;
+    if (ref) {
+      selector = buildRefSelector(ref);
+    }
+    selector = await resolveMaybePackSelector(this.engine, { tabUrl, frameId }, selector);
+    if (!selector && hasLocatorParams(params)) {
+      const locator = extractLocatorFromParams(params)!;
+      const locatorJs = generateLocatorJs(locator);
+      const locatorResult = await routeFrameAware(this.engine, { tabUrl, frameId }, locatorJs);
+      if (locatorResult.ok && locatorResult.value) {
+        const parsed = JSON.parse(locatorResult.value);
+        if (parsed.found && parsed.selector) {
+          selector = parsed.selector;
+        } else {
+          throw new Error(parsed.hint || 'Locator did not match any element');
+        }
+      }
+    }
+    if (!selector) {
+      throw new Error('safari_get_attribute requires a target element: provide selector, ref, or a locator (role, text, label, testId, placeholder)');
+    }
+
+    const escapedSelector = escapeForJsSingleQuote(selector);
+    const escapedAttribute = escapeForJsSingleQuote(attribute);
+    const multi = params['multi'] === true;
     const js = multi
       ? `
       var els = document.querySelectorAll('${escapedSelector}');
@@ -734,6 +934,7 @@ export class ExtractionTools {
   }
 
   private async handleQueryAll(params: Record<string, unknown>): Promise<ToolResponse> {
+    if (this.legacyMainWorld) return this.handleQueryAllLegacy(params);
     const start = Date.now();
     const tabUrl = params['tabUrl'] as string;
     const frameId = params['frameId'] as number | undefined;
@@ -773,6 +974,75 @@ export class ExtractionTools {
     const sentinel = '__SP_QUERY_ALL__:' + JSON.stringify({ locator, limit });
 
     const result = await routeFrameAware(this.engine, { tabUrl, frameId }, sentinel);
+    if (!result.ok) throw new Error(result.error?.message ?? 'query_all failed');
+
+    const parsed = result.value ? JSON.parse(result.value) : { items: [], count: 0 };
+    const normalized = parsed.found === false
+      ? { items: [], count: 0, limit, truncated: false }
+      : parsed;
+    return this.makeResponse(normalized, Date.now() - start);
+  }
+
+  /** v0.1.34 T16 rollback path. Verbatim v0.1.33 body (commit 1d84568^). */
+  private async handleQueryAllLegacy(params: Record<string, unknown>): Promise<ToolResponse> {
+    const start = Date.now();
+    const tabUrl = params['tabUrl'] as string;
+    const frameId = params['frameId'] as number | undefined;
+    const limit = typeof params['limit'] === 'number' ? Math.max(1, Math.min(1000, params['limit'])) : 100;
+
+    // Selector path: bypass locator, use querySelectorAll directly with the same payload shape
+    let selector = params['selector'] as string | undefined;
+    selector = await resolveMaybePackSelector(this.engine, { tabUrl, frameId }, selector);
+    if (selector) {
+      const escaped = escapeForJsSingleQuote(selector);
+      const js = `
+        var __limit = ${limit};
+        var __all = Array.prototype.slice.call(document.querySelectorAll('${escaped}'));
+        var __truncated = __all.length > __limit;
+        var __slice = __all.slice(0, __limit);
+        var __items = [];
+        for (var __i = 0; __i < __slice.length; __i++) {
+          var __el = __slice[__i];
+          var __ref = 'sp-' + Math.random().toString(36).substring(2, 8);
+          __el.setAttribute('data-sp-ref', __ref);
+          var __rect = __el.getBoundingClientRect();
+          var __attrs = {};
+          if (__el.attributes) {
+            for (var __ai = 0; __ai < __el.attributes.length; __ai++) {
+              var __a = __el.attributes[__ai];
+              if (__a.name && __a.name !== 'data-sp-ref') __attrs[__a.name] = __a.value;
+            }
+          }
+          var __style = window.getComputedStyle(__el);
+          var __visible = __style.display !== 'none' && __style.visibility !== 'hidden' && __rect.width > 0 && __rect.height > 0;
+          __items.push({
+            ref: __ref,
+            tagName: __el.tagName || '',
+            text: ((__el.innerText !== undefined ? __el.innerText : __el.textContent) || '').replace(/\\s+/g, ' ').trim().substring(0, 500),
+            attrs: __attrs,
+            boundingBox: { x: __rect.x, y: __rect.y, width: __rect.width, height: __rect.height },
+            visible: __visible,
+          });
+        }
+        return JSON.stringify({ items: __items, count: __all.length, limit: __limit, truncated: __truncated });
+      `;
+      const result = await routeFrameAware(this.engine, { tabUrl, frameId }, js);
+      if (!result.ok) throw new Error(result.error?.message ?? 'query_all (selector) failed');
+      const parsed = result.value ? JSON.parse(result.value) : { items: [], count: 0 };
+      const normalized = parsed.found === false
+        ? { items: [], count: 0, limit, truncated: false }
+        : parsed;
+      return this.makeResponse(normalized, Date.now() - start);
+    }
+
+    // Locator path
+    if (!hasLocatorParams(params)) {
+      throw new Error('safari_query_all requires either selector or a locator (role, text, label, testId, placeholder, xpath)');
+    }
+    const locator = extractLocatorFromParams(params)!;
+    const js = generateQueryAllJs(locator, { limit });
+
+    const result = await routeFrameAware(this.engine, { tabUrl, frameId }, js);
     if (!result.ok) throw new Error(result.error?.message ?? 'query_all failed');
 
     const parsed = result.value ? JSON.parse(result.value) : { items: [], count: 0 };
