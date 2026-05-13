@@ -10,6 +10,33 @@
   // reference remains usable even on strict-CSP pages like Reddit/GitHub.
   const _Function = Function;
 
+  // ── Layer 3: Trusted Types policy registration (v0.1.34) ──
+  // On pages that enforce `require-trusted-types-for 'script'`, any remaining
+  // MAIN-world string→sink path (e.g. legacy code that does .innerHTML = str)
+  // needs a registered policy to route through. If the page's `trusted-types`
+  // directive doesn't allow the 'safari-pilot' policy name, the createPolicy
+  // call throws TypeError; we flag that and let task-3 error UX surface it.
+  // The probe sentinel __SP_TT_PROBE__:<json> below exposes this state.
+  (function registerTrustedTypesPolicy() {
+    try {
+      if (typeof window.trustedTypes === 'undefined' || typeof window.trustedTypes.createPolicy !== 'function') {
+        return;
+      }
+      try {
+        const policy = window.trustedTypes.createPolicy('safari-pilot', {
+          createScript: (s) => s,
+          createHTML: (s) => s,
+          createScriptURL: (s) => s,
+        });
+        window.__SP_TT_POLICY__ = policy;
+      } catch (e) {
+        window.__SP_TT_HARD_BLOCK = true;
+      }
+    } catch (e) {
+      // Defensive: anything unexpected shouldn't break the rest of the script.
+    }
+  })();
+
   // Namespace to minimize collision risk
   const SP = Object.create(null);
 
@@ -703,6 +730,18 @@
                   { name: 'NO_LOCATOR' },
                 );
               }
+            }
+            // ── EARLY INTERCEPT: __SP_TT_PROBE__:<json> (v0.1.34 Task 2) ──
+            // Reads Layer 3 init state. Used by csp-tt-policy-registration.test.ts AND by
+            // T3's safari_evaluate CSP_BLOCKED error UX to distinguish CSP_BLOCKED from
+            // CSP_HARD_BLOCK. Args ignored (probe takes no parameters; the trailing JSON
+            // is required only to satisfy the prefix-then-colon convention).
+            if (typeof params.script === 'string' && params.script.startsWith('__SP_TT_PROBE__:')) {
+              result = {
+                hardBlock: window.__SP_TT_HARD_BLOCK === true,
+                policyRegistered: typeof window.__SP_TT_POLICY__ !== 'undefined',
+              };
+              break;
             }
             // ── existing default execute_script path ──
             const commandId = params.commandId;

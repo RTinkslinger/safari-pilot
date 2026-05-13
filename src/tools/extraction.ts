@@ -498,7 +498,11 @@ export class ExtractionTools {
       // wrapping below would prefix the script with `return (async () => {...`
       // and break the `cmd.script.startsWith('__SP_PACK_')` check upstream.
       script.startsWith('__SP_PACK_REGISTER__:') ||
-      script.startsWith('__SP_PACK_UNREGISTER__:')
+      script.startsWith('__SP_PACK_UNREGISTER__:') ||
+      // v0.1.34 T2 probe sentinel; intercepted in content-main.js's
+      // execute_script case. IIFE wrapping below would break the
+      // params.script.startsWith('__SP_TT_PROBE__:') check.
+      script.startsWith('__SP_TT_PROBE__:')
     );
     const js = isSentinelBypass ? script : `
       return (async () => {
