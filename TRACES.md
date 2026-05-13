@@ -16,6 +16,35 @@
 
 ## Current Work
 
+### Iteration 80 - 2026-05-13 — v0.1.34 architectural-pivot attempt failed; falling back to spec Section 8
+
+**What:** Attempted spec Section 3's architectural pivot: duplicate `new Function(params.script)` dispatcher into ISOLATED-world content-isolated.js, route via `cspMode` per-tab so strict-CSP pages execute in CSP-exempt ISOLATED. Spent ~1h on Slice 1's empirical-verification gate (Task 2 in plan `904fd81`). Three rebuilds at 0.1.34, 0.1.34-dev.1, 0.1.34-dev.2 with progressively more diagnostic sentinels. **The gate failed for a reason different than the synthesis assumed.**
+
+**Empirical findings on TT-strict fixture (Content-Security-Policy: require-trusted-types-for 'script'):**
+- `safari_evaluate(script: '__SP_CSP_VERIFY__')` returns `MCP protocol error -32603: Refused to evaluate a string as JavaScript because this document requires a 'Trusted Type' assignment` — same error as bench v0.1.33 saw on Google Flights / Apple Shop / X.com.
+- Adding `__SP_CSP_VERIFY__` and `__SP_EXECUTE_ISOLATED__:<script>` sentinels to content-isolated.js's processStorageCommand (built and notarized) did NOT change the result — sentinels never fired.
+- The error matches `new _Function(params.script)` at extension/content-main.js:714 — meaning the command reached content-main.js (MAIN world) despite content-isolated.js's intercept being correctly placed BEFORE the postMessage fall-through.
+- Couldn't determine WHY content-isolated.js's intercept didn't fire (the diagnostic console.log at line 169 would have answered, but ISOLATED-world console.log doesn't surface in Safari's page-console view, and we don't have a tool to read extension-context console).
+
+**Conclusion:** The architectural pivot's premise — that we can route safari_evaluate's script string through content-isolated.js's CSP-exempt context by adding a sentinel — is empirically not landing as designed in the v0.1.33 dispatch architecture. The dispatch path for arbitrary scripts appears to bypass content-isolated.js's sentinel intercept in some way we haven't identified.
+
+**Decision:** Pivot to spec Section 8 fallback. Stop trying to make the architectural-pivot land; instead, do the multi-tool sentinel refactor — every DOM-affecting tool (click, fill, snapshot, type, get_text, query_all, scroll, dismiss_overlays, etc.) gets a dedicated sentinel handler in content-main.js's switch (same pattern as existing `__SP_TAKE_SCREENSHOT__`, `__SP_LIST_FRAMES__` which are confirmed working on TT-strict pages per v0.1.33 bench). Pre-bundled handlers, no `new Function`. Plus the 3 new capability tools (safari_get_page_info, safari_get_meta_tags, safari_extract_text_window) as new sentinels.
+
+**Estimate update:** Original v0.1.34 plan was 6-8 days (architectural pivot). Fallback Section 8 is 9-12 days. Re-planning needed.
+
+**Changes preserved from the failed attempt:**
+- `test/fixtures/csp-trusted-types.ts` — useful localhost fixture for regression testing
+- `test/e2e/csp-baseline-tt-strict.test.ts` (renamed from csp-isolated-verify.test.ts) — documents v0.1.33's TT failure mode as a regression baseline. The failure is now expected (non-goal of v0.1.34 to fix safari_evaluate on TT-strict pages); the new sentinel-based tools are what should succeed post-refactor.
+- Version bumped from 0.1.33 → 0.1.34 (target ship version unchanged).
+
+**Changes reverted:**
+- content-isolated.js's `__SP_CSP_VERIFY__` and `__SP_EXECUTE_ISOLATED__:` sentinels removed (dead code in the fallback design).
+- Extension build artifacts (bin/) reset to v0.1.33 — will be rebuilt cleanly during Section 8 implementation.
+
+**Next:** Write a new plan based on spec Section 8 fallback. Commit alongside this trace entry.
+
+---
+
 ### Iteration 79 - 2026-05-13 — Bench finalized 175/175 + judge run → v0.1.33 acceptance PASS
 
 **What:** Resumed inline-bench from the 40/175 pause (CHECKPOINT). Completed the remaining 135 tasks across 11 sites in one continuous run with two transient incidents (Anthropic API 529 storm — recovered after one cycle; cleanup-AppleScript hang on GitHub--21 and Google Flights--24 — recovered by reading the existing stream.jsonl + score.json regenerated). Ran `bench/webvoyager/judge-inline-runs.ts` (NEW one-shot orchestrator, sister to runner.ts's judge call) over all 174 PENDING_JUDGE+screenshot tasks. **Final WebVoyager v0.1.33 score: 128/175 = 73.1% SUCCESS, 0.0% capture failure rate across all 15 sites.**
