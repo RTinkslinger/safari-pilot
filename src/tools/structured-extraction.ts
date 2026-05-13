@@ -58,7 +58,8 @@ export class StructuredExtractionTools {
           },
           required: ['tabUrl'],
         },
-        requirements: { idempotent: true },
+        // v0.1.34 T15b: __SP_EXTRACT_TABLES__ sentinel for CSP-immunity.
+        requirements: { idempotent: true, requiresCspBypass: true },
       },
       {
         name: 'safari_extract_links',
@@ -164,59 +165,15 @@ export class StructuredExtractionTools {
     const tabUrl = params['tabUrl'] as string;
     const selector = params['selector'] as string | undefined;
 
-    const escapedSelector = selector ? escapeForJsSingleQuote(selector) : '';
+    // v0.1.34 T15b: __SP_EXTRACT_TABLES__ sentinel for CSP-immunity on
+    // Trusted-Types-strict pages. Extension engine intercepts in MAIN world
+    // (no `new Function()` compile). Result-envelope shape preserved verbatim:
+    //   { tables: [{headers: string[], rows: string[][]}], count: number }
+    const sentinel = '__SP_EXTRACT_TABLES__:' + JSON.stringify({
+      selector: selector ?? null,
+    });
 
-    const js = `
-      var tables = ${selector ? `document.querySelectorAll('${escapedSelector}')` : 'document.querySelectorAll("table")'};
-      var result = [];
-
-      for (var t = 0; t < tables.length; t++) {
-        var table = tables[t];
-        var headers = [];
-        var rows = [];
-
-        // Read headers from thead > tr > th, or first row of th elements
-        var thEls = table.querySelectorAll('thead th');
-        if (thEls.length === 0) thEls = table.querySelectorAll('tr:first-child th');
-        for (var h = 0; h < thEls.length; h++) {
-          headers.push((thEls[h].innerText || thEls[h].textContent || '').trim());
-        }
-
-        // Read data rows — skip header row if headers came from th in first row
-        var trEls = table.querySelectorAll(headers.length > 0 ? 'tbody tr' : 'tr');
-        if (trEls.length === 0 && headers.length > 0) {
-          // No tbody — get all rows after first
-          var allRows = table.querySelectorAll('tr');
-          for (var ri = 1; ri < allRows.length; ri++) {
-            var cells = allRows[ri].querySelectorAll('td');
-            if (cells.length > 0) {
-              var row = [];
-              for (var ci = 0; ci < cells.length; ci++) {
-                row.push((cells[ci].innerText || cells[ci].textContent || '').trim());
-              }
-              rows.push(row);
-            }
-          }
-        } else {
-          for (var ri2 = 0; ri2 < trEls.length; ri2++) {
-            var cells2 = trEls[ri2].querySelectorAll('td');
-            if (cells2.length > 0) {
-              var row2 = [];
-              for (var ci2 = 0; ci2 < cells2.length; ci2++) {
-                row2.push((cells2[ci2].innerText || cells2[ci2].textContent || '').trim());
-              }
-              rows.push(row2);
-            }
-          }
-        }
-
-        result.push({ headers: headers, rows: rows });
-      }
-
-      return { tables: result, count: result.length };
-    `;
-
-    const result = await this.engine.executeJsInTab(tabUrl, js);
+    const result = await this.engine.executeJsInTab(tabUrl, sentinel);
     if (!result.ok) throw new Error(result.error?.message ?? 'Extract tables failed');
 
     return this.makeResponse(result.value ? JSON.parse(result.value) : { tables: [], count: 0 }, Date.now() - start);

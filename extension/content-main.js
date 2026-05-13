@@ -951,6 +951,58 @@
               };
               break;
             }
+            // ── EARLY INTERCEPT: __SP_EXTRACT_TABLES__:<json> (v0.1.34 Task 15b) ──
+            // CSP-immune safari_extract_tables. Reproduces the previous
+            // JS-string body using native DOM APIs. Result-envelope shape
+            // preserved verbatim: { tables: [{headers, rows}], count }
+            if (typeof params.script === 'string' && params.script.startsWith('__SP_EXTRACT_TABLES__:')) {
+              const args = JSON.parse(params.script.slice('__SP_EXTRACT_TABLES__:'.length));
+              const tables = args.selector
+                ? document.querySelectorAll(args.selector)
+                : document.querySelectorAll('table');
+              const out = [];
+              for (let t = 0; t < tables.length; t++) {
+                const table = tables[t];
+                const headers = [];
+                const rows = [];
+
+                let thEls = table.querySelectorAll('thead th');
+                if (thEls.length === 0) thEls = table.querySelectorAll('tr:first-child th');
+                for (let h = 0; h < thEls.length; h++) {
+                  headers.push((thEls[h].innerText || thEls[h].textContent || '').trim());
+                }
+
+                const trEls = table.querySelectorAll(headers.length > 0 ? 'tbody tr' : 'tr');
+                if (trEls.length === 0 && headers.length > 0) {
+                  const allRows = table.querySelectorAll('tr');
+                  for (let ri = 1; ri < allRows.length; ri++) {
+                    const cells = allRows[ri].querySelectorAll('td');
+                    if (cells.length > 0) {
+                      const row = [];
+                      for (let ci = 0; ci < cells.length; ci++) {
+                        row.push((cells[ci].innerText || cells[ci].textContent || '').trim());
+                      }
+                      rows.push(row);
+                    }
+                  }
+                } else {
+                  for (let ri2 = 0; ri2 < trEls.length; ri2++) {
+                    const cells2 = trEls[ri2].querySelectorAll('td');
+                    if (cells2.length > 0) {
+                      const row2 = [];
+                      for (let ci2 = 0; ci2 < cells2.length; ci2++) {
+                        row2.push((cells2[ci2].innerText || cells2[ci2].textContent || '').trim());
+                      }
+                      rows.push(row2);
+                    }
+                  }
+                }
+
+                out.push({ headers, rows });
+              }
+              result = { tables: out, count: out.length };
+              break;
+            }
             // ── EARLY INTERCEPT: __SP_SMART_SCRAPE__:<json> (v0.1.34 Task 15a) ──
             // CSP-immune safari_smart_scrape. Delegates to
             // __SP_LOCATOR__.smartScrape (ported verbatim from
