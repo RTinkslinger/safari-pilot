@@ -635,10 +635,13 @@
   }
 
   /**
-   * Full locator resolution mirroring src/locator.ts generateLocatorJs.
-   * Returns: { found, selector?, element?, matchCount?, strictnessSatisfied?, locator?, candidateCount?, hint? }
+   * Shared resolver for resolveLocator + resolveLocatorAll (v0.1.34 T13).
+   * Runs the full chain — scope, strategy pick, filter.hasText, flat nth,
+   * T77 chain ops — and returns either { matched: HTMLElement[] } on success
+   * or { error: {found:false, ...} } on failure. Caller picks first
+   * (resolveLocator) or slices to limit (resolveLocatorAll).
    */
-  function resolveLocator(locatorDesc, options) {
+  function _resolveMatchedSet(locatorDesc, options) {
     options = options || {};
     const exact = locatorDesc.exact === true;
 
@@ -647,12 +650,12 @@
     if (options.scopeSelector) {
       root = document.querySelector(options.scopeSelector);
       if (!root) {
-        return {
+        return { error: {
           found: false,
           locator: locatorDesc,
           candidateCount: 0,
           hint: 'Scope selector ' + options.scopeSelector + ' not found on page',
-        };
+        } };
       }
     } else {
       root = document;
@@ -668,12 +671,12 @@
       locatorType = 'xpath';
       const r = resolveByXpath(root, locatorDesc.xpath);
       if (r.malformed !== null) {
-        return {
+        return { error: {
           found: false,
           locator: locatorDesc,
           candidateCount: 0,
           hint: 'Malformed XPath: ' + r.malformed,
-        };
+        } };
       }
       matched = r.matched;
     } else if (locatorDesc.testId !== undefined) {
@@ -686,7 +689,7 @@
       candidateCount = r.candidateCount;
       allNames = r.allNames;
       if (locatorDesc.name !== undefined && matched.length === 0) {
-        return {
+        return { error: {
           found: false,
           locator: locatorDesc,
           candidateCount,
@@ -694,7 +697,7 @@
             (candidateCount === 1 ? '' : 's') +
             ' but none matched name ' + JSON.stringify(locatorDesc.name) +
             '. Names found: ' + JSON.stringify((allNames || []).slice(0, 10)),
-        };
+        } };
       }
     } else if (locatorDesc.label !== undefined) {
       locatorType = 'label';
@@ -706,12 +709,12 @@
       locatorType = 'text';
       matched = resolveByText(root, locatorDesc.text, exact);
     } else {
-      return {
+      return { error: {
         found: false,
         locator: {},
         candidateCount: 0,
         hint: 'No locator key provided (need role, text, label, testId, placeholder, or xpath)',
-      };
+      } };
     }
 
     // filter.hasText narrowing (BEFORE flat nth, matching src/locator.ts order)
@@ -724,12 +727,12 @@
     }
 
     if (matched.length === 0) {
-      return {
+      return { error: {
         found: false,
         locator: locatorDesc,
         candidateCount: candidateCount || 0,
         hint: 'No elements matched ' + locatorType + ' locator',
-      };
+      } };
     }
 
     // Flat nth picker (backward-compat; applies BEFORE chain)
@@ -737,12 +740,12 @@
     if (flatNth !== 0 && matched.length > 0) {
       const idx = flatNth < 0 ? matched.length + flatNth : flatNth;
       if (idx < 0 || idx >= matched.length) {
-        return {
+        return { error: {
           found: false,
           locator: locatorDesc,
           candidateCount: matched.length,
           hint: 'nth=' + flatNth + ' is out of range (matched.length=' + matched.length + ')',
-        };
+        } };
       }
       matched = [matched[idx]];
     }
@@ -756,13 +759,25 @@
     }
 
     if (matched.length === 0) {
-      return {
+      return { error: {
         found: false,
         locator: locatorDesc,
         candidateCount: 0,
         hint: 'No elements matched after chain ops',
-      };
+      } };
     }
+
+    return { matched };
+  }
+
+  /**
+   * Full locator resolution mirroring src/locator.ts generateLocatorJs.
+   * Returns: { found, selector?, element?, matchCount?, strictnessSatisfied?, locator?, candidateCount?, hint? }
+   */
+  function resolveLocator(locatorDesc, options) {
+    const r = _resolveMatchedSet(locatorDesc, options);
+    if (r.error) return r.error;
+    const matched = r.matched;
 
     // T80 strictnessSatisfied
     let strictnessSatisfied = matched.length === 1;
@@ -794,6 +809,524 @@
     };
   }
 
+  /**
+   * v0.1.34 T13: multi-element locator resolution for safari_query_all.
+   * Reuses _resolveMatchedSet for base/filter/nth/chain logic, then maps the
+   * full matched array to the same {items, count, limit, truncated} envelope
+   * that generateQueryAllJs produced. On failure returns {items:[], count:0,
+   * limit, truncated:false} (handler normalizes `found===false` → empty).
+   */
+  function resolveLocatorAll(locatorDesc, options) {
+    options = options || {};
+    const limit = (typeof options.limit === 'number' && options.limit > 0) ? options.limit : 100;
+    const r = _resolveMatchedSet(locatorDesc, options);
+    if (r.error) {
+      // Preserve the error envelope so callers can extract `hint` for diagnostics.
+      // ExtractionTools.handleQueryAll normalizes `found===false` → empty.
+      return Object.assign({}, r.error, { items: [], count: 0, limit, truncated: false });
+    }
+    const matched = r.matched;
+    const truncated = matched.length > limit;
+    const slice = matched.slice(0, limit);
+    const items = [];
+    for (let i = 0; i < slice.length; i++) {
+      const el = slice[i];
+      const ref = 'sp-' + Math.random().toString(36).substring(2, 8);
+      el.setAttribute('data-sp-ref', ref);
+      const rect = el.getBoundingClientRect();
+      const attrs = {};
+      if (el.attributes) {
+        for (let ai = 0; ai < el.attributes.length; ai++) {
+          const a = el.attributes[ai];
+          if (a.name && a.name !== 'data-sp-ref') attrs[a.name] = a.value;
+        }
+      }
+      const style = window.getComputedStyle(el);
+      const visible = style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+      items.push({
+        ref,
+        tagName: el.tagName || '',
+        text: normalizeWhitespace((el.innerText !== undefined ? el.innerText : el.textContent) || '').substring(0, 500),
+        attrs,
+        boundingBox: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
+        visible,
+      });
+    }
+    return { items, count: matched.length, limit, truncated };
+  }
+
+  // ── v0.1.34 T14: buildSnapshot — CSP-immune safari_snapshot ─────────────────
+  //
+  // Mirrors src/aria.ts generateSnapshotJs verbatim — implicit-role map,
+  // accessible-name computation, states, interactability, ref stamping,
+  // YAML / JSON serialization, refMap. Lifted here so the __SP_SNAPSHOT__
+  // sentinel handler in content-main.js can invoke it natively on
+  // Trusted-Types-strict pages (no `new Function()` compile).
+  const __spImplicitRoleStaticMap = {
+    article: 'article',
+    aside: 'complementary',
+    button: 'button',
+    datalist: 'listbox',
+    details: 'group',
+    dialog: 'dialog',
+    fieldset: 'group',
+    figure: 'figure',
+    footer: 'contentinfo',
+    header: 'banner',
+    hr: 'separator',
+    li: 'listitem',
+    main: 'main',
+    math: 'math',
+    menu: 'list',
+    meter: 'meter',
+    nav: 'navigation',
+    ol: 'list',
+    optgroup: 'group',
+    option: 'option',
+    output: 'status',
+    p: 'paragraph',
+    pre: 'generic',
+    progress: 'progressbar',
+    search: 'search',
+    table: 'table',
+    tbody: 'rowgroup',
+    thead: 'rowgroup',
+    tfoot: 'rowgroup',
+    td: 'cell',
+    textarea: 'textbox',
+    th: 'columnheader',
+    tr: 'row',
+    ul: 'list',
+  };
+
+  function __spImplicitRole(el) {
+    const tag = el.tagName.toLowerCase();
+    const type = (el.getAttribute('type') || '').toLowerCase();
+    const role = el.getAttribute('role');
+    if (role) return role;
+    if (tag === 'input') {
+      if (el.hasAttribute('list')) return 'combobox';
+      if (type === 'button' || type === 'submit' || type === 'reset' || type === 'image') return 'button';
+      if (type === 'checkbox') return 'checkbox';
+      if (type === 'radio') return 'radio';
+      if (type === 'range') return 'slider';
+      if (type === 'number') return 'spinbutton';
+      if (type === 'search') return 'searchbox';
+      if (type === 'email' || type === 'tel' || type === 'text' || type === 'url' || type === '') return 'textbox';
+      if (type === 'hidden') return '';
+      return 'textbox';
+    }
+    if (tag === 'select') {
+      if (el.hasAttribute('multiple') || (el.hasAttribute('size') && parseInt(el.getAttribute('size'), 10) > 1)) return 'listbox';
+      return 'combobox';
+    }
+    if (tag === 'a') return el.hasAttribute('href') ? 'link' : 'generic';
+    if (tag === 'img') {
+      const alt = el.getAttribute('alt');
+      if (alt === '') return 'presentation';
+      return 'img';
+    }
+    if (tag === 'h1' || tag === 'h2' || tag === 'h3' || tag === 'h4' || tag === 'h5' || tag === 'h6') return 'heading';
+    if (tag === 'form') {
+      if (el.hasAttribute('aria-label') || el.hasAttribute('aria-labelledby')) return 'form';
+      return 'generic';
+    }
+    if (tag === 'section') {
+      if (el.hasAttribute('aria-label') || el.hasAttribute('aria-labelledby')) return 'region';
+      return 'generic';
+    }
+    if (__spImplicitRoleStaticMap[tag]) return __spImplicitRoleStaticMap[tag];
+    return 'generic';
+  }
+
+  function __spAccessibleName(el) {
+    if (typeof el.computedName === 'string' && el.computedName !== '') return el.computedName;
+    const ariaLabel = el.getAttribute('aria-label');
+    if (ariaLabel) return ariaLabel;
+    const alt = el.getAttribute('alt');
+    if (alt) return alt;
+    const title = el.getAttribute('title');
+    if (title) return title;
+    const placeholder = el.getAttribute('placeholder');
+    if (placeholder) return placeholder;
+    if (el.labels && el.labels.length > 0) {
+      const labelText = el.labels[0].textContent;
+      if (labelText) return labelText.trim();
+    }
+    const labelledBy = el.getAttribute('aria-labelledby');
+    if (labelledBy) {
+      const parts = labelledBy.split(/\s+/);
+      let assembled = '';
+      for (let li = 0; li < parts.length; li++) {
+        const refEl = document.getElementById(parts[li]);
+        if (refEl) assembled += (assembled ? ' ' : '') + (refEl.textContent || '').trim();
+      }
+      if (assembled) return assembled;
+    }
+    const role = __spImplicitRole(el);
+    if (role === 'heading' || role === 'button' || role === 'link' || role === 'tab') {
+      const tc = (el.textContent || '').trim();
+      if (tc) return tc.length > 80 ? tc.substring(0, 80) : tc;
+    }
+    return '';
+  }
+
+  function __spSkipTag(tag) {
+    return tag === 'script' || tag === 'style' || tag === 'noscript' || tag === 'template';
+  }
+
+  function __spIsInteractable(el) {
+    const tag = el.tagName.toLowerCase();
+    if (tag === 'a' && el.hasAttribute('href')) return true;
+    if (tag === 'button') return true;
+    if (tag === 'input' && (el.getAttribute('type') || '').toLowerCase() !== 'hidden') return true;
+    if (tag === 'select' || tag === 'textarea') return true;
+    if (tag === 'summary' || tag === 'details') return true;
+    if (el.hasAttribute('tabindex') && el.getAttribute('tabindex') !== '-1') return true;
+    const role = el.getAttribute('role') || __spImplicitRole(el);
+    const interactiveRoles = {
+      button: 1, link: 1, checkbox: 1, radio: 1, tab: 1, switch: 1, menuitem: 1,
+      menuitemcheckbox: 1, menuitemradio: 1, option: 1, combobox: 1, listbox: 1,
+      searchbox: 1, slider: 1, spinbutton: 1, textbox: 1, treeitem: 1,
+    };
+    if (interactiveRoles[role]) return true;
+    if (el.isContentEditable) return true;
+    const cs = window.getComputedStyle(el);
+    if (cs.pointerEvents === 'none') return false;
+    return false;
+  }
+
+  function __spStates(el) {
+    const states = {};
+    if (el.type === 'checkbox' || el.type === 'radio') {
+      states.checked = el.checked ? 'true' : 'false';
+    } else if (el.getAttribute('aria-checked') !== null) {
+      states.checked = el.getAttribute('aria-checked');
+    }
+    if (el.disabled || el.getAttribute('aria-disabled') === 'true') states.disabled = 'true';
+    if (el.getAttribute('aria-expanded') !== null) states.expanded = el.getAttribute('aria-expanded');
+    if (el.getAttribute('aria-pressed') !== null) states.pressed = el.getAttribute('aria-pressed');
+    if (el.selected || el.getAttribute('aria-selected') === 'true') states.selected = 'true';
+    const tag = el.tagName.toLowerCase();
+    const levelMatch = tag.match(/^h(\d)$/);
+    if (levelMatch) {
+      states.level = levelMatch[1];
+    } else if (el.getAttribute('aria-level') !== null) {
+      states.level = el.getAttribute('aria-level');
+    }
+    if (document.activeElement === el) states.active = 'true';
+    if (el.required || el.getAttribute('aria-required') === 'true') states.required = 'true';
+    if (el.readOnly || el.getAttribute('aria-readonly') === 'true') states.readonly = 'true';
+    return states;
+  }
+
+  function __spDirectText(el) {
+    let text = '';
+    for (let i = 0; i < el.childNodes.length; i++) {
+      if (el.childNodes[i].nodeType === 3) {
+        text += el.childNodes[i].nodeValue;
+      }
+    }
+    return text.trim();
+  }
+
+  function buildSnapshot(options) {
+    options = options || {};
+    const maxDepth = typeof options.maxDepth === 'number' ? options.maxDepth : 15;
+    const includeHidden = options.includeHidden === true;
+    const format = options.format === 'json' ? 'json' : 'yaml';
+    const scopeSelector = options.scopeSelector || '';
+
+    let refCounter = 0;
+    const refMap = {};
+
+    function assignRef(el) {
+      const existing = el.getAttribute('data-sp-ref');
+      if (existing) {
+        refMap[existing] = '[data-sp-ref="' + existing + '"]';
+        return existing;
+      }
+      refCounter++;
+      const ref = 'e' + refCounter;
+      el.setAttribute('data-sp-ref', ref);
+      refMap[ref] = '[data-sp-ref="' + ref + '"]';
+      return ref;
+    }
+
+    function walk(el, depth) {
+      if (depth > maxDepth) return null;
+      const tag = el.tagName.toLowerCase();
+      if (__spSkipTag(tag)) return null;
+
+      const cs = window.getComputedStyle(el);
+      const displayContents = cs.display === 'contents';
+
+      if (!includeHidden) {
+        if (el.getAttribute('aria-hidden') === 'true') return null;
+        if (cs.display === 'none') return null;
+      }
+
+      let role;
+      if (typeof el.computedRole === 'string' && el.computedRole !== '' && el.computedRole !== 'generic') {
+        role = el.computedRole;
+      } else {
+        role = __spImplicitRole(el);
+      }
+      const name = __spAccessibleName(el);
+      const states = __spStates(el);
+      const interactable = __spIsInteractable(el);
+      const ref = interactable ? assignRef(el) : null;
+
+      const children = [];
+      const childRoot = el.shadowRoot ? el.shadowRoot : el;
+      const childEls = childRoot.children;
+      if (childEls) {
+        for (let ci = 0; ci < childEls.length; ci++) {
+          const ch = childEls[ci];
+          if (ch.tagName === 'SLOT') {
+            const assigned = ch.assignedNodes({ flatten: true });
+            for (let ai = 0; ai < assigned.length; ai++) {
+              if (assigned[ai].nodeType === 1) {
+                const childNode = walk(assigned[ai], depth + 1);
+                if (childNode) children.push(childNode);
+              }
+            }
+          } else {
+            const childNode = walk(ch, depth + 1);
+            if (childNode) children.push(childNode);
+          }
+        }
+      }
+
+      const visHidden = !includeHidden && cs.visibility === 'hidden' && !displayContents;
+      if (visHidden) {
+        if (children.length === 1) return children[0];
+        if (children.length > 1) return { role: 'generic', name: '', states: {}, ref: null, children, interactable: false, tag, el };
+        return null;
+      }
+
+      if (displayContents && role === 'generic' && !name && !interactable) {
+        if (children.length === 1) return children[0];
+        if (children.length > 1) return { role: 'generic', name: '', states: {}, ref: null, children, interactable: false, tag, el };
+        if (children.length === 0) return null;
+      }
+
+      const directText = __spDirectText(el);
+
+      if (role === 'generic' && !name && !interactable && children.length === 1 && children[0].ref) {
+        return children[0];
+      }
+
+      const hasRole = role && role !== 'generic';
+      const hasContent = name || directText || interactable;
+      const hasChildren = children.length > 0;
+
+      if (!hasRole && !hasContent && !interactable) {
+        if (hasChildren) {
+          if (children.length === 1) return children[0];
+          return { role: 'generic', name: '', states: {}, ref: null, children, interactable: false, tag, el };
+        }
+        return null;
+      }
+
+      return {
+        role: role || 'generic',
+        name,
+        states,
+        ref,
+        children,
+        interactable,
+        tag,
+        el,
+        directText,
+      };
+    }
+
+    function serializeYaml(node, depth) {
+      if (!node) return '';
+      let indent = '';
+      for (let i = 0; i < depth; i++) indent += '  ';
+      let line = indent + '- ' + node.role;
+      if (node.name) {
+        const escapedName = node.name.replace(/"/g, '\\"').substring(0, 80);
+        line += ' "' + escapedName + '"';
+      }
+      const stateKeys = Object.keys(node.states || {});
+      for (let si = 0; si < stateKeys.length; si++) {
+        const sk = stateKeys[si];
+        const sv = node.states[sk];
+        if (sk === 'level') {
+          line += ' [level=' + sv + ']';
+        } else if (sv === 'true') {
+          line += ' [' + sk + ']';
+        } else if (sv !== 'false' && sv !== '') {
+          line += ' [' + sk + '=' + sv + ']';
+        }
+      }
+      if (node.ref) line += ' [ref=' + node.ref + ']';
+      if (node.tag === 'a' && node.el && node.el.href) {
+        try { line += ' /url: "' + new URL(node.el.href).pathname + '"'; } catch (_e) { /* ignore */ }
+      }
+      if (node.children.length === 0 && node.directText && node.directText !== node.name) {
+        line += ': ' + node.directText.substring(0, 80);
+      }
+      const lines = [line];
+      for (let chi = 0; chi < node.children.length; chi++) {
+        const childYaml = serializeYaml(node.children[chi], depth + 1);
+        if (childYaml) lines.push(childYaml);
+      }
+      return lines.join('\n');
+    }
+
+    function serializeJson(node) {
+      if (!node) return null;
+      const obj = { role: node.role };
+      if (node.name) obj.name = node.name;
+      const stateKeys = Object.keys(node.states || {});
+      if (stateKeys.length > 0) obj.states = node.states;
+      if (node.ref) obj.ref = node.ref;
+      if (node.children && node.children.length > 0) {
+        obj.children = [];
+        for (let ci = 0; ci < node.children.length; ci++) {
+          const c = serializeJson(node.children[ci]);
+          if (c) obj.children.push(c);
+        }
+      }
+      return obj;
+    }
+
+    // Continue ref numbering from the highest existing ref so multi-call
+    // snapshots don't collide.
+    const existing = document.querySelectorAll('[data-sp-ref]');
+    for (let ei = 0; ei < existing.length; ei++) {
+      const refVal = existing[ei].getAttribute('data-sp-ref');
+      if (refVal && refVal.charAt(0) === 'e') {
+        const refNum = parseInt(refVal.substring(1), 10);
+        if (!isNaN(refNum) && refNum > refCounter) refCounter = refNum;
+      }
+    }
+
+    const root = scopeSelector ? document.querySelector(scopeSelector) : document.body;
+    if (!root) {
+      throw Object.assign(
+        new Error('Scope element not found: ' + scopeSelector),
+        { name: 'ELEMENT_NOT_FOUND' },
+      );
+    }
+
+    const tree = walk(root, 0);
+
+    let elementCount = 0;
+    let interactiveCount = 0;
+    function countNodes(node) {
+      if (!node) return;
+      elementCount++;
+      if (node.interactable) interactiveCount++;
+      for (let i = 0; i < node.children.length; i++) countNodes(node.children[i]);
+    }
+    if (tree) countNodes(tree);
+
+    let snapshot;
+    if (format === 'json') {
+      snapshot = JSON.stringify(serializeJson(tree), null, 2);
+    } else {
+      snapshot = tree ? serializeYaml(tree, 0) : '';
+    }
+
+    return {
+      snapshot,
+      url: window.location.href,
+      title: document.title,
+      elementCount,
+      interactiveCount,
+      refMap,
+    };
+  }
+
+  // ── v0.1.34 T15a: smartScrape — CSP-immune safari_smart_scrape ──────────────
+  // Ported verbatim from src/tools/structured-extraction.ts handleSmartScrape
+  // JS-string body. Five-strategy heuristic per field: label→input, heading→
+  // sibling, dt→dd, th→adjacent td, meta tag. Surface preserved verbatim:
+  //   { data: { [field]: value | null }, fieldsExtracted: number }
+  function smartScrape(opts) {
+    const schema = opts && opts.schema ? opts.schema : {};
+    const scopeSel = opts && opts.scope ? opts.scope : '';
+    const root = scopeSel ? document.querySelector(scopeSel) : document.body;
+    if (!root) {
+      throw Object.assign(new Error('Scope element not found'), { name: 'ELEMENT_NOT_FOUND' });
+    }
+
+    function normalise(str) {
+      return String(str || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    }
+
+    function findValueForField(fieldName) {
+      const key = normalise(fieldName);
+
+      // 1. label→input pairs
+      const labels = root.querySelectorAll('label');
+      for (let i = 0; i < labels.length; i++) {
+        const lbl = labels[i];
+        if (normalise(lbl.textContent) === key || normalise(lbl.textContent).indexOf(key) !== -1) {
+          const forId = lbl.getAttribute('for');
+          if (forId) {
+            const inp = document.getElementById(forId);
+            if (inp) return inp.value || inp.textContent || inp.getAttribute('placeholder') || null;
+          }
+          const nested = lbl.querySelector('input, select, textarea');
+          if (nested) return nested.value || null;
+        }
+      }
+
+      // 2. heading→sibling content pairs
+      const headings = root.querySelectorAll('h1,h2,h3,h4,h5,h6');
+      for (let h = 0; h < headings.length; h++) {
+        const hEl = headings[h];
+        if (normalise(hEl.textContent).indexOf(key) !== -1) {
+          const next = hEl.nextElementSibling;
+          if (next) return (next.innerText || next.textContent || '').trim().slice(0, 500);
+        }
+      }
+
+      // 3. definition lists (dt→dd)
+      const dts = root.querySelectorAll('dt');
+      for (let d = 0; d < dts.length; d++) {
+        const dt = dts[d];
+        if (normalise(dt.textContent).indexOf(key) !== -1) {
+          const dd = dt.nextElementSibling;
+          if (dd && dd.tagName === 'DD') return (dd.innerText || dd.textContent || '').trim();
+        }
+      }
+
+      // 4. table headers (th cell) → adjacent td in same row
+      const rows = root.querySelectorAll('tr');
+      for (let r = 0; r < rows.length; r++) {
+        const row = rows[r];
+        const cells = row.querySelectorAll('th, td');
+        for (let c = 0; c < cells.length; c++) {
+          if (cells[c].tagName === 'TH' && normalise(cells[c].textContent).indexOf(key) !== -1) {
+            const td = cells[c + 1];
+            if (td) return (td.innerText || td.textContent || '').trim();
+          }
+        }
+      }
+
+      // 5. meta tags / data attributes
+      const metaEl = document.querySelector('meta[name="' + String(fieldName).toLowerCase() + '"]');
+      if (metaEl) return metaEl.getAttribute('content');
+
+      return null;
+    }
+
+    const result = {};
+    const props = schema.properties || schema;
+    Object.keys(props).forEach(function (field) {
+      result[field] = findValueForField(field);
+    });
+
+    return { data: result, fieldsExtracted: Object.keys(result).length };
+  }
+
   // Expose on window for content-main.js sentinel intercepts.
   window.__SP_LOCATOR__ = {
     querySelectorWithShadow,
@@ -804,5 +1337,8 @@
     findPatternRoot,
     dismissPattern,
     resolveLocator,
+    resolveLocatorAll,
+    buildSnapshot,
+    smartScrape,
   };
 })();

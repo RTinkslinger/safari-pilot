@@ -951,6 +951,308 @@
               };
               break;
             }
+            // ── EARLY INTERCEPT: __SP_EXTRACT_METADATA__:<json> (v0.1.34 Task 15e) ──
+            // CSP-immune safari_extract_metadata. Reproduces the previous
+            // JS-string body using native DOM APIs. Result-envelope shape
+            // preserved verbatim: { meta, canonical, openGraph, twitter, jsonLd, url }
+            if (typeof params.script === 'string' && params.script.startsWith('__SP_EXTRACT_METADATA__:')) {
+              const getMeta = (n) => {
+                const el = document.querySelector('meta[name="' + n + '"]') ||
+                           document.querySelector('meta[property="' + n + '"]');
+                return el ? el.getAttribute('content') : null;
+              };
+
+              const meta = {
+                title: document.title || null,
+                description: getMeta('description'),
+                keywords: getMeta('keywords'),
+                author: getMeta('author'),
+                robots: getMeta('robots'),
+                viewport: getMeta('viewport'),
+              };
+
+              const canonicalEl = document.querySelector('link[rel="canonical"]');
+              const canonical = canonicalEl ? canonicalEl.getAttribute('href') : null;
+
+              const og = {};
+              const ogMetas = document.querySelectorAll('meta[property^="og:"]');
+              for (let i = 0; i < ogMetas.length; i++) {
+                const prop = ogMetas[i].getAttribute('property').replace('og:', '');
+                og[prop] = ogMetas[i].getAttribute('content');
+              }
+
+              const twitter = {};
+              const twMetas = document.querySelectorAll('meta[name^="twitter:"]');
+              for (let j = 0; j < twMetas.length; j++) {
+                const nm = twMetas[j].getAttribute('name').replace('twitter:', '');
+                twitter[nm] = twMetas[j].getAttribute('content');
+              }
+
+              const jsonLd = [];
+              const ldScripts = document.querySelectorAll('script[type="application/ld+json"]');
+              for (let k = 0; k < ldScripts.length; k++) {
+                try {
+                  jsonLd.push(JSON.parse(ldScripts[k].textContent));
+                } catch (_e) { /* skip malformed */ }
+              }
+
+              result = {
+                meta,
+                canonical,
+                openGraph: og,
+                twitter,
+                jsonLd,
+                url: location.href,
+              };
+              break;
+            }
+            // ── EARLY INTERCEPT: __SP_EXTRACT_IMAGES__:<json> (v0.1.34 Task 15d) ──
+            // CSP-immune safari_extract_images. Reproduces the previous
+            // JS-string body using native DOM APIs. Result-envelope shape
+            // preserved verbatim:
+            //   { images: [{src, alt, width, height, naturalWidth, naturalHeight}], count }
+            if (typeof params.script === 'string' && params.script.startsWith('__SP_EXTRACT_IMAGES__:')) {
+              const args = JSON.parse(params.script.slice('__SP_EXTRACT_IMAGES__:'.length));
+              const minW = typeof args.minWidth === 'number' ? args.minWidth : 0;
+              const minH = typeof args.minHeight === 'number' ? args.minHeight : 0;
+              const imgs = document.querySelectorAll('img');
+              const images = [];
+              for (let i = 0; i < imgs.length; i++) {
+                const img = imgs[i];
+                const w = img.width || img.offsetWidth || 0;
+                const h = img.height || img.offsetHeight || 0;
+                if (w < minW || h < minH) continue;
+                images.push({
+                  src: img.src || img.getAttribute('src') || '',
+                  alt: img.alt || '',
+                  width: w,
+                  height: h,
+                  naturalWidth: img.naturalWidth || 0,
+                  naturalHeight: img.naturalHeight || 0,
+                });
+              }
+              result = { images, count: images.length };
+              break;
+            }
+            // ── EARLY INTERCEPT: __SP_EXTRACT_LINKS__:<json> (v0.1.34 Task 15c) ──
+            // CSP-immune safari_extract_links. Reproduces the previous
+            // JS-string body using native DOM APIs. Result-envelope shape
+            // preserved verbatim: { links: [{href, text, context, internal}], count }
+            if (typeof params.script === 'string' && params.script.startsWith('__SP_EXTRACT_LINKS__:')) {
+              const args = JSON.parse(params.script.slice('__SP_EXTRACT_LINKS__:'.length));
+              const filterMode = args.filter || 'all';
+              const pageOrigin = location.origin;
+              const anchors = document.querySelectorAll('a[href]');
+              const links = [];
+
+              for (let i = 0; i < anchors.length; i++) {
+                const a = anchors[i];
+                const href = a.href || '';
+                const t = (a.innerText || a.textContent || '').trim().slice(0, 200);
+
+                let isInternal = false;
+                try {
+                  isInternal = new URL(href).origin === pageOrigin;
+                } catch (e) {
+                  isInternal = !href.startsWith('http') || href.startsWith(pageOrigin);
+                }
+
+                if (filterMode === 'internal' && !isInternal) continue;
+                if (filterMode === 'external' && isInternal) continue;
+
+                let context = '';
+                let node = a.parentElement;
+                while (node && node !== document.body) {
+                  const tag = node.tagName ? node.tagName.toUpperCase() : '';
+                  if (/^H[1-6]$/.test(tag) || tag === 'P' || tag === 'LI') {
+                    context = (node.innerText || node.textContent || '').trim().slice(0, 200);
+                    break;
+                  }
+                  node = node.parentElement;
+                }
+
+                links.push({ href, text: t, context, internal: isInternal });
+              }
+              result = { links, count: links.length };
+              break;
+            }
+            // ── EARLY INTERCEPT: __SP_EXTRACT_TABLES__:<json> (v0.1.34 Task 15b) ──
+            // CSP-immune safari_extract_tables. Reproduces the previous
+            // JS-string body using native DOM APIs. Result-envelope shape
+            // preserved verbatim: { tables: [{headers, rows}], count }
+            if (typeof params.script === 'string' && params.script.startsWith('__SP_EXTRACT_TABLES__:')) {
+              const args = JSON.parse(params.script.slice('__SP_EXTRACT_TABLES__:'.length));
+              const tables = args.selector
+                ? document.querySelectorAll(args.selector)
+                : document.querySelectorAll('table');
+              const out = [];
+              for (let t = 0; t < tables.length; t++) {
+                const table = tables[t];
+                const headers = [];
+                const rows = [];
+
+                let thEls = table.querySelectorAll('thead th');
+                if (thEls.length === 0) thEls = table.querySelectorAll('tr:first-child th');
+                for (let h = 0; h < thEls.length; h++) {
+                  headers.push((thEls[h].innerText || thEls[h].textContent || '').trim());
+                }
+
+                const trEls = table.querySelectorAll(headers.length > 0 ? 'tbody tr' : 'tr');
+                if (trEls.length === 0 && headers.length > 0) {
+                  const allRows = table.querySelectorAll('tr');
+                  for (let ri = 1; ri < allRows.length; ri++) {
+                    const cells = allRows[ri].querySelectorAll('td');
+                    if (cells.length > 0) {
+                      const row = [];
+                      for (let ci = 0; ci < cells.length; ci++) {
+                        row.push((cells[ci].innerText || cells[ci].textContent || '').trim());
+                      }
+                      rows.push(row);
+                    }
+                  }
+                } else {
+                  for (let ri2 = 0; ri2 < trEls.length; ri2++) {
+                    const cells2 = trEls[ri2].querySelectorAll('td');
+                    if (cells2.length > 0) {
+                      const row2 = [];
+                      for (let ci2 = 0; ci2 < cells2.length; ci2++) {
+                        row2.push((cells2[ci2].innerText || cells2[ci2].textContent || '').trim());
+                      }
+                      rows.push(row2);
+                    }
+                  }
+                }
+
+                out.push({ headers, rows });
+              }
+              result = { tables: out, count: out.length };
+              break;
+            }
+            // ── EARLY INTERCEPT: __SP_SMART_SCRAPE__:<json> (v0.1.34 Task 15a) ──
+            // CSP-immune safari_smart_scrape. Delegates to
+            // __SP_LOCATOR__.smartScrape (ported verbatim from
+            // src/tools/structured-extraction.ts handleSmartScrape).
+            // Result-envelope shape preserved verbatim:
+            //   { data: { [field]: value | null }, fieldsExtracted: number }
+            if (typeof params.script === 'string' && params.script.startsWith('__SP_SMART_SCRAPE__:')) {
+              const args = JSON.parse(params.script.slice('__SP_SMART_SCRAPE__:'.length));
+              const L = window.__SP_LOCATOR__;
+              if (!L || typeof L.smartScrape !== 'function') {
+                throw Object.assign(
+                  new Error('__SP_LOCATOR__.smartScrape not available'),
+                  { name: 'NO_LOCATOR' },
+                );
+              }
+              result = L.smartScrape({ schema: args.schema, scope: args.scope });
+              break;
+            }
+            // ── EARLY INTERCEPT: __SP_SNAPSHOT__:<json> (v0.1.34 Task 14) ──
+            // CSP-immune safari_snapshot. Delegates to
+            // __SP_LOCATOR__.buildSnapshot (ported from src/aria.ts
+            // generateSnapshotJs). Result-envelope shape preserved verbatim:
+            //   {snapshot, url, title, elementCount, interactiveCount, refMap}
+            if (typeof params.script === 'string' && params.script.startsWith('__SP_SNAPSHOT__:')) {
+              const args = JSON.parse(params.script.slice('__SP_SNAPSHOT__:'.length));
+              const L = window.__SP_LOCATOR__;
+              if (!L || typeof L.buildSnapshot !== 'function') {
+                throw Object.assign(
+                  new Error('__SP_LOCATOR__.buildSnapshot not available'),
+                  { name: 'NO_LOCATOR' },
+                );
+              }
+              result = L.buildSnapshot({
+                scopeSelector: args.scopeSelector,
+                maxDepth: args.maxDepth,
+                includeHidden: args.includeHidden,
+                format: args.format,
+              });
+              break;
+            }
+            // ── EARLY INTERCEPT: __SP_QUERY_ALL__:<json> (v0.1.34 Task 13) ──
+            // CSP-immune safari_query_all. Two payload variants:
+            //   selector branch: { selector, limit } → document.querySelectorAll
+            //   locator branch:  { locator, limit }  → __SP_LOCATOR__.resolveLocatorAll
+            // Result-envelope shape preserved verbatim:
+            //   {items: [{ref, tagName, text, attrs, boundingBox, visible}], count, limit, truncated}
+            if (typeof params.script === 'string' && params.script.startsWith('__SP_QUERY_ALL__:')) {
+              const args = JSON.parse(params.script.slice('__SP_QUERY_ALL__:'.length));
+              const limit = (typeof args.limit === 'number' && args.limit > 0) ? args.limit : 100;
+              if (args.selector) {
+                const all = Array.prototype.slice.call(document.querySelectorAll(args.selector));
+                const truncated = all.length > limit;
+                const slice = all.slice(0, limit);
+                const items = [];
+                for (let i = 0; i < slice.length; i++) {
+                  const el = slice[i];
+                  const ref = 'sp-' + Math.random().toString(36).substring(2, 8);
+                  el.setAttribute('data-sp-ref', ref);
+                  const rect = el.getBoundingClientRect();
+                  const attrs = {};
+                  if (el.attributes) {
+                    for (let ai = 0; ai < el.attributes.length; ai++) {
+                      const a = el.attributes[ai];
+                      if (a.name && a.name !== 'data-sp-ref') attrs[a.name] = a.value;
+                    }
+                  }
+                  const style = window.getComputedStyle(el);
+                  const visible = style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+                  items.push({
+                    ref,
+                    tagName: el.tagName || '',
+                    text: ((el.innerText !== undefined ? el.innerText : el.textContent) || '').replace(/\s+/g, ' ').trim().substring(0, 500),
+                    attrs,
+                    boundingBox: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
+                    visible,
+                  });
+                }
+                result = { items, count: all.length, limit, truncated };
+                break;
+              }
+              const L = window.__SP_LOCATOR__;
+              if (!L || typeof L.resolveLocatorAll !== 'function') {
+                throw Object.assign(
+                  new Error('__SP_LOCATOR__.resolveLocatorAll not available'),
+                  { name: 'NO_LOCATOR' },
+                );
+              }
+              result = L.resolveLocatorAll(args.locator || {}, { limit });
+              break;
+            }
+            // ── EARLY INTERCEPT: __SP_GET_TEXT__:<json> (v0.1.34 Task 12) ──
+            // CSP-immune safari_get_text. Mirrors the previous JS-string body:
+            //   multi:false → {text, length, truncated}   (full-page when no selector)
+            //   multi:true  → {matches: string[], count}  (selector required)
+            if (typeof params.script === 'string' && params.script.startsWith('__SP_GET_TEXT__:')) {
+              const args = JSON.parse(params.script.slice('__SP_GET_TEXT__:'.length));
+              const sel = args.selector;
+              const max = typeof args.maxLength === 'number' ? args.maxLength : 50000;
+              if (args.multi) {
+                if (!sel) {
+                  throw Object.assign(
+                    new Error('multi:true requires a selector'),
+                    { name: 'INVALID_PARAMS' },
+                  );
+                }
+                const els = document.querySelectorAll(sel);
+                const matches = [];
+                for (let i = 0; i < els.length; i++) {
+                  const t = els[i].innerText || els[i].textContent || '';
+                  matches.push(t.slice(0, max));
+                }
+                result = { matches, count: els.length };
+              } else {
+                const el = sel ? document.querySelector(sel) : document.body;
+                if (!el) {
+                  throw Object.assign(
+                    new Error('Element not found'),
+                    { name: 'ELEMENT_NOT_FOUND' },
+                  );
+                }
+                const text = el.innerText || el.textContent || '';
+                result = { text: text.slice(0, max), length: text.length, truncated: text.length > max };
+              }
+              break;
+            }
             // ── existing default execute_script path ──
             const commandId = params.commandId;
             if (commandId && window.__safariPilotExecutedCommands.has(commandId)) {
