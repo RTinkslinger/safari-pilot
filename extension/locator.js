@@ -635,10 +635,13 @@
   }
 
   /**
-   * Full locator resolution mirroring src/locator.ts generateLocatorJs.
-   * Returns: { found, selector?, element?, matchCount?, strictnessSatisfied?, locator?, candidateCount?, hint? }
+   * Shared resolver for resolveLocator + resolveLocatorAll (v0.1.34 T13).
+   * Runs the full chain — scope, strategy pick, filter.hasText, flat nth,
+   * T77 chain ops — and returns either { matched: HTMLElement[] } on success
+   * or { error: {found:false, ...} } on failure. Caller picks first
+   * (resolveLocator) or slices to limit (resolveLocatorAll).
    */
-  function resolveLocator(locatorDesc, options) {
+  function _resolveMatchedSet(locatorDesc, options) {
     options = options || {};
     const exact = locatorDesc.exact === true;
 
@@ -647,12 +650,12 @@
     if (options.scopeSelector) {
       root = document.querySelector(options.scopeSelector);
       if (!root) {
-        return {
+        return { error: {
           found: false,
           locator: locatorDesc,
           candidateCount: 0,
           hint: 'Scope selector ' + options.scopeSelector + ' not found on page',
-        };
+        } };
       }
     } else {
       root = document;
@@ -668,12 +671,12 @@
       locatorType = 'xpath';
       const r = resolveByXpath(root, locatorDesc.xpath);
       if (r.malformed !== null) {
-        return {
+        return { error: {
           found: false,
           locator: locatorDesc,
           candidateCount: 0,
           hint: 'Malformed XPath: ' + r.malformed,
-        };
+        } };
       }
       matched = r.matched;
     } else if (locatorDesc.testId !== undefined) {
@@ -686,7 +689,7 @@
       candidateCount = r.candidateCount;
       allNames = r.allNames;
       if (locatorDesc.name !== undefined && matched.length === 0) {
-        return {
+        return { error: {
           found: false,
           locator: locatorDesc,
           candidateCount,
@@ -694,7 +697,7 @@
             (candidateCount === 1 ? '' : 's') +
             ' but none matched name ' + JSON.stringify(locatorDesc.name) +
             '. Names found: ' + JSON.stringify((allNames || []).slice(0, 10)),
-        };
+        } };
       }
     } else if (locatorDesc.label !== undefined) {
       locatorType = 'label';
@@ -706,12 +709,12 @@
       locatorType = 'text';
       matched = resolveByText(root, locatorDesc.text, exact);
     } else {
-      return {
+      return { error: {
         found: false,
         locator: {},
         candidateCount: 0,
         hint: 'No locator key provided (need role, text, label, testId, placeholder, or xpath)',
-      };
+      } };
     }
 
     // filter.hasText narrowing (BEFORE flat nth, matching src/locator.ts order)
@@ -724,12 +727,12 @@
     }
 
     if (matched.length === 0) {
-      return {
+      return { error: {
         found: false,
         locator: locatorDesc,
         candidateCount: candidateCount || 0,
         hint: 'No elements matched ' + locatorType + ' locator',
-      };
+      } };
     }
 
     // Flat nth picker (backward-compat; applies BEFORE chain)
@@ -737,12 +740,12 @@
     if (flatNth !== 0 && matched.length > 0) {
       const idx = flatNth < 0 ? matched.length + flatNth : flatNth;
       if (idx < 0 || idx >= matched.length) {
-        return {
+        return { error: {
           found: false,
           locator: locatorDesc,
           candidateCount: matched.length,
           hint: 'nth=' + flatNth + ' is out of range (matched.length=' + matched.length + ')',
-        };
+        } };
       }
       matched = [matched[idx]];
     }
@@ -756,13 +759,25 @@
     }
 
     if (matched.length === 0) {
-      return {
+      return { error: {
         found: false,
         locator: locatorDesc,
         candidateCount: 0,
         hint: 'No elements matched after chain ops',
-      };
+      } };
     }
+
+    return { matched };
+  }
+
+  /**
+   * Full locator resolution mirroring src/locator.ts generateLocatorJs.
+   * Returns: { found, selector?, element?, matchCount?, strictnessSatisfied?, locator?, candidateCount?, hint? }
+   */
+  function resolveLocator(locatorDesc, options) {
+    const r = _resolveMatchedSet(locatorDesc, options);
+    if (r.error) return r.error;
+    const matched = r.matched;
 
     // T80 strictnessSatisfied
     let strictnessSatisfied = matched.length === 1;
@@ -794,6 +809,52 @@
     };
   }
 
+  /**
+   * v0.1.34 T13: multi-element locator resolution for safari_query_all.
+   * Reuses _resolveMatchedSet for base/filter/nth/chain logic, then maps the
+   * full matched array to the same {items, count, limit, truncated} envelope
+   * that generateQueryAllJs produced. On failure returns {items:[], count:0,
+   * limit, truncated:false} (handler normalizes `found===false` → empty).
+   */
+  function resolveLocatorAll(locatorDesc, options) {
+    options = options || {};
+    const limit = (typeof options.limit === 'number' && options.limit > 0) ? options.limit : 100;
+    const r = _resolveMatchedSet(locatorDesc, options);
+    if (r.error) {
+      // Preserve the error envelope so callers can extract `hint` for diagnostics.
+      // ExtractionTools.handleQueryAll normalizes `found===false` → empty.
+      return Object.assign({}, r.error, { items: [], count: 0, limit, truncated: false });
+    }
+    const matched = r.matched;
+    const truncated = matched.length > limit;
+    const slice = matched.slice(0, limit);
+    const items = [];
+    for (let i = 0; i < slice.length; i++) {
+      const el = slice[i];
+      const ref = 'sp-' + Math.random().toString(36).substring(2, 8);
+      el.setAttribute('data-sp-ref', ref);
+      const rect = el.getBoundingClientRect();
+      const attrs = {};
+      if (el.attributes) {
+        for (let ai = 0; ai < el.attributes.length; ai++) {
+          const a = el.attributes[ai];
+          if (a.name && a.name !== 'data-sp-ref') attrs[a.name] = a.value;
+        }
+      }
+      const style = window.getComputedStyle(el);
+      const visible = style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+      items.push({
+        ref,
+        tagName: el.tagName || '',
+        text: normalizeWhitespace((el.innerText !== undefined ? el.innerText : el.textContent) || '').substring(0, 500),
+        attrs,
+        boundingBox: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
+        visible,
+      });
+    }
+    return { items, count: matched.length, limit, truncated };
+  }
+
   // Expose on window for content-main.js sentinel intercepts.
   window.__SP_LOCATOR__ = {
     querySelectorWithShadow,
@@ -804,5 +865,6 @@
     findPatternRoot,
     dismissPattern,
     resolveLocator,
+    resolveLocatorAll,
   };
 })();

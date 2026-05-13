@@ -951,6 +951,56 @@
               };
               break;
             }
+            // ── EARLY INTERCEPT: __SP_QUERY_ALL__:<json> (v0.1.34 Task 13) ──
+            // CSP-immune safari_query_all. Two payload variants:
+            //   selector branch: { selector, limit } → document.querySelectorAll
+            //   locator branch:  { locator, limit }  → __SP_LOCATOR__.resolveLocatorAll
+            // Result-envelope shape preserved verbatim:
+            //   {items: [{ref, tagName, text, attrs, boundingBox, visible}], count, limit, truncated}
+            if (typeof params.script === 'string' && params.script.startsWith('__SP_QUERY_ALL__:')) {
+              const args = JSON.parse(params.script.slice('__SP_QUERY_ALL__:'.length));
+              const limit = (typeof args.limit === 'number' && args.limit > 0) ? args.limit : 100;
+              if (args.selector) {
+                const all = Array.prototype.slice.call(document.querySelectorAll(args.selector));
+                const truncated = all.length > limit;
+                const slice = all.slice(0, limit);
+                const items = [];
+                for (let i = 0; i < slice.length; i++) {
+                  const el = slice[i];
+                  const ref = 'sp-' + Math.random().toString(36).substring(2, 8);
+                  el.setAttribute('data-sp-ref', ref);
+                  const rect = el.getBoundingClientRect();
+                  const attrs = {};
+                  if (el.attributes) {
+                    for (let ai = 0; ai < el.attributes.length; ai++) {
+                      const a = el.attributes[ai];
+                      if (a.name && a.name !== 'data-sp-ref') attrs[a.name] = a.value;
+                    }
+                  }
+                  const style = window.getComputedStyle(el);
+                  const visible = style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+                  items.push({
+                    ref,
+                    tagName: el.tagName || '',
+                    text: ((el.innerText !== undefined ? el.innerText : el.textContent) || '').replace(/\s+/g, ' ').trim().substring(0, 500),
+                    attrs,
+                    boundingBox: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
+                    visible,
+                  });
+                }
+                result = { items, count: all.length, limit, truncated };
+                break;
+              }
+              const L = window.__SP_LOCATOR__;
+              if (!L || typeof L.resolveLocatorAll !== 'function') {
+                throw Object.assign(
+                  new Error('__SP_LOCATOR__.resolveLocatorAll not available'),
+                  { name: 'NO_LOCATOR' },
+                );
+              }
+              result = L.resolveLocatorAll(args.locator || {}, { limit });
+              break;
+            }
             // ── EARLY INTERCEPT: __SP_GET_TEXT__:<json> (v0.1.34 Task 12) ──
             // CSP-immune safari_get_text. Mirrors the previous JS-string body:
             //   multi:false → {text, length, truncated}   (full-page when no selector)

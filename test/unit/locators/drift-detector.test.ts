@@ -142,5 +142,19 @@ describe('T7b drift detector — src/locator.ts ↔ extension/locator.js', () =>
       expect(payload.locator.name).toBe('Submit');
       expect(payload.options).toEqual({});
     });
+
+    // v0.1.34 T13: safari_query_all CSP-immune leaf-read path.
+    it('content-main.js routes __SP_QUERY_ALL__ to resolveLocatorAll for locator branch', () => {
+      const contentMain = readFileSync(
+        join(__dirname, '../../../extension/content-main.js'),
+        'utf8',
+      );
+      expect(contentMain).toContain('__SP_QUERY_ALL__:');
+      expect(contentMain).toContain('L.resolveLocatorAll');
+    });
+
+    it('extension/locator.js exposes resolveLocatorAll on window.__SP_LOCATOR__', () => {
+      expect(EXT_LOCATOR).toMatch(/window\.__SP_LOCATOR__\s*=\s*\{[\s\S]*resolveLocatorAll/);
+    });
   });
 });

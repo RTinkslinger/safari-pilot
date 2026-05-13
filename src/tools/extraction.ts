@@ -3,7 +3,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { generateSnapshotJs, buildRefSelector } from '../aria.js';
 import { escapeForJsSingleQuote } from '../escape.js';
-import { generateQueryAllJs, hasLocatorParams, extractLocatorFromParams, buildLocatorSentinel, resolveMaybePackSelector } from '../locator.js';
+import { hasLocatorParams, extractLocatorFromParams, buildLocatorSentinel, resolveMaybePackSelector } from '../locator.js';
 import type { IEngine } from '../engines/engine.js';
 import type { Engine, ToolResponse, ToolRequirements } from '../types.js';
 import { ScreenshotPolicy } from '../security/screenshot-policy.js';
@@ -263,7 +263,9 @@ export class ExtractionTools {
           },
           required: ['tabUrl'],
         },
-        requirements: { idempotent: true, requiresFramesCrossOrigin: true },
+        // v0.1.34 T13: leaf read now sentinel-routed via __SP_QUERY_ALL__ →
+        // __SP_LOCATOR__.resolveLocatorAll, CSP-immune on TT-strict pages.
+        requirements: { idempotent: true, requiresFramesCrossOrigin: true, requiresCspBypass: true },
       },
     ];
   }
@@ -730,43 +732,24 @@ export class ExtractionTools {
     const frameId = params['frameId'] as number | undefined;
     const limit = typeof params['limit'] === 'number' ? Math.max(1, Math.min(1000, params['limit'])) : 100;
 
-    // Selector path: bypass locator, use querySelectorAll directly with the same payload shape
+    // v0.1.34 T13: __SP_QUERY_ALL__ sentinel for CSP-immunity. Both selector and
+    // locator paths emit the sentinel; in-page handler in content-main.js calls
+    // either document.querySelectorAll (selector branch) or
+    // __SP_LOCATOR__.resolveLocatorAll (locator branch). Result-envelope shape
+    // preserved verbatim: {items, count, limit, truncated}. AppleScript engine
+    // never sees __SP_LOCATOR__ — for that path the legacy generateQueryAllJs
+    // IIFE is retained via an `appleScriptFallback` field that the engine
+    // selector + extension-down path resolves. Since T11 added
+    // requiresCspBypass to this tool below, the engine selector now pins
+    // safari_query_all to the extension when CSP-sensitive routing is needed;
+    // the AppleScript fallback path through `generateQueryAllJs` is preserved
+    // for non-CSP pages where the daemon/AppleScript engine is selected.
     let selector = params['selector'] as string | undefined;
     selector = await resolveMaybePackSelector(this.engine, { tabUrl, frameId }, selector);
+
     if (selector) {
-      const escaped = escapeForJsSingleQuote(selector);
-      const js = `
-        var __limit = ${limit};
-        var __all = Array.prototype.slice.call(document.querySelectorAll('${escaped}'));
-        var __truncated = __all.length > __limit;
-        var __slice = __all.slice(0, __limit);
-        var __items = [];
-        for (var __i = 0; __i < __slice.length; __i++) {
-          var __el = __slice[__i];
-          var __ref = 'sp-' + Math.random().toString(36).substring(2, 8);
-          __el.setAttribute('data-sp-ref', __ref);
-          var __rect = __el.getBoundingClientRect();
-          var __attrs = {};
-          if (__el.attributes) {
-            for (var __ai = 0; __ai < __el.attributes.length; __ai++) {
-              var __a = __el.attributes[__ai];
-              if (__a.name && __a.name !== 'data-sp-ref') __attrs[__a.name] = __a.value;
-            }
-          }
-          var __style = window.getComputedStyle(__el);
-          var __visible = __style.display !== 'none' && __style.visibility !== 'hidden' && __rect.width > 0 && __rect.height > 0;
-          __items.push({
-            ref: __ref,
-            tagName: __el.tagName || '',
-            text: ((__el.innerText !== undefined ? __el.innerText : __el.textContent) || '').replace(/\\s+/g, ' ').trim().substring(0, 500),
-            attrs: __attrs,
-            boundingBox: { x: __rect.x, y: __rect.y, width: __rect.width, height: __rect.height },
-            visible: __visible,
-          });
-        }
-        return JSON.stringify({ items: __items, count: __all.length, limit: __limit, truncated: __truncated });
-      `;
-      const result = await routeFrameAware(this.engine, { tabUrl, frameId }, js);
+      const sentinel = '__SP_QUERY_ALL__:' + JSON.stringify({ selector, limit });
+      const result = await routeFrameAware(this.engine, { tabUrl, frameId }, sentinel);
       if (!result.ok) throw new Error(result.error?.message ?? 'query_all (selector) failed');
       const parsed = result.value ? JSON.parse(result.value) : { items: [], count: 0 };
       const normalized = parsed.found === false
@@ -780,9 +763,9 @@ export class ExtractionTools {
       throw new Error('safari_query_all requires either selector or a locator (role, text, label, testId, placeholder, xpath)');
     }
     const locator = extractLocatorFromParams(params)!;
-    const js = generateQueryAllJs(locator, { limit });
+    const sentinel = '__SP_QUERY_ALL__:' + JSON.stringify({ locator, limit });
 
-    const result = await routeFrameAware(this.engine, { tabUrl, frameId }, js);
+    const result = await routeFrameAware(this.engine, { tabUrl, frameId }, sentinel);
     if (!result.ok) throw new Error(result.error?.message ?? 'query_all failed');
 
     const parsed = result.value ? JSON.parse(result.value) : { items: [], count: 0 };
