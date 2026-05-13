@@ -501,63 +501,14 @@ export class InteractionTools {
     const force = params['force'] === true;
 
     const selector = await this.resolveElement(tabUrl, params, true);
-    const escapedSelector = escapeForJsSingleQuote(selector);
-    const escapedValue = escapeForJsSingleQuote(value);
 
-    const actionJs = `
-      var el = document.querySelector('${escapedSelector}');
-      if (!el) throw Object.assign(new Error('Element not found: ${escapedSelector}'), { name: 'ELEMENT_NOT_FOUND' });
-
-      var detectedFramework = 'vanilla';
-      if (Object.keys(el).some(function(k) { return k.startsWith('__reactFiber$'); })) {
-        detectedFramework = 'react';
-      } else if (el.__vue__ || el.__vueParentComponent) {
-        detectedFramework = 'vue';
-      }
-
-      var fw = '${framework}' === 'auto' ? detectedFramework : '${framework}';
-
-      if (${clearFirst}) {
-        el.focus();
-        el.value = '';
-        el.dispatchEvent(new Event('input', { bubbles: true }));
-      }
-
-      if (fw === 'react') {
-        var nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')
-          ? Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set
-          : Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')
-          ? Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set
-          : null;
-        if (nativeSetter) {
-          nativeSetter.call(el, '${escapedValue}');
-        } else {
-          el.value = '${escapedValue}';
-        }
-        el.dispatchEvent(new Event('input', { bubbles: true }));
-        el.dispatchEvent(new Event('change', { bubbles: true }));
-        el.dispatchEvent(new FocusEvent('blur', { bubbles: true }));
-      } else if (fw === 'vue') {
-        el.value = '${escapedValue}';
-        el.dispatchEvent(new Event('input', { bubbles: true }));
-        el.dispatchEvent(new Event('change', { bubbles: true }));
-      } else {
-        el.focus();
-        el.value = '${escapedValue}';
-        el.dispatchEvent(new Event('input', { bubbles: true }));
-        el.dispatchEvent(new Event('change', { bubbles: true }));
-        el.dispatchEvent(new FocusEvent('blur', { bubbles: true }));
-      }
-
-      ${pressEnterAfter ? 'el.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", bubbles: true }));' : ''}
-
-      return {
-        filled: true,
-        element: { tagName: el.tagName, id: el.id || undefined, name: el.name || undefined, type: el.type || undefined },
-        framework: fw,
-        verifiedValue: el.value,
-      };
-    `;
+    // v0.1.34 Task 8 — CSP-immune sentinel transport. Sentinel handler in
+    // extension/content-main.js replays the full actionJs body natively:
+    // framework auto-detect (react/vue/vanilla), React native-setter trick
+    // for controlled inputs, Vue path, pressEnterAfter, clearFirst.
+    const actionJs = '__SP_FILL__:' + JSON.stringify({
+      selector, value, framework, clearFirst, pressEnterAfter,
+    });
 
     return this.waitAndExecute(tabUrl, selector, 'fill', actionJs, { timeout, force });
   }

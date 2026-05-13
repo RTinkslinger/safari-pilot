@@ -799,6 +799,70 @@
               }
               break;
             }
+            // ── EARLY INTERCEPT: __SP_FILL__:<json> (v0.1.34 Task 8) ──
+            // CSP-immune safari_fill. Mirrors the previous actionJs verbatim:
+            // framework auto-detect (react/vue/vanilla), React native-setter
+            // trick for controlled inputs, Vue path, clearFirst, pressEnterAfter.
+            if (typeof params.script === 'string' && params.script.startsWith('__SP_FILL__:')) {
+              const args = JSON.parse(params.script.slice('__SP_FILL__:'.length));
+              const el = document.querySelector(args.selector);
+              if (!el) {
+                throw Object.assign(
+                  new Error('Element not found: ' + args.selector),
+                  { name: 'ELEMENT_NOT_FOUND' },
+                );
+              }
+
+              let detectedFramework = 'vanilla';
+              if (Object.keys(el).some((k) => k.startsWith('__reactFiber$'))) {
+                detectedFramework = 'react';
+              } else if (el.__vue__ || el.__vueParentComponent) {
+                detectedFramework = 'vue';
+              }
+              const fw = args.framework === 'auto' ? detectedFramework : args.framework;
+
+              if (args.clearFirst) {
+                el.focus();
+                el.value = '';
+                el.dispatchEvent(new Event('input', { bubbles: true }));
+              }
+
+              if (fw === 'react') {
+                const inputDesc = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
+                const textareaDesc = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value');
+                const nativeSetter = inputDesc ? inputDesc.set : (textareaDesc ? textareaDesc.set : null);
+                if (nativeSetter) {
+                  nativeSetter.call(el, args.value);
+                } else {
+                  el.value = args.value;
+                }
+                el.dispatchEvent(new Event('input', { bubbles: true }));
+                el.dispatchEvent(new Event('change', { bubbles: true }));
+                el.dispatchEvent(new FocusEvent('blur', { bubbles: true }));
+              } else if (fw === 'vue') {
+                el.value = args.value;
+                el.dispatchEvent(new Event('input', { bubbles: true }));
+                el.dispatchEvent(new Event('change', { bubbles: true }));
+              } else {
+                el.focus();
+                el.value = args.value;
+                el.dispatchEvent(new Event('input', { bubbles: true }));
+                el.dispatchEvent(new Event('change', { bubbles: true }));
+                el.dispatchEvent(new FocusEvent('blur', { bubbles: true }));
+              }
+
+              if (args.pressEnterAfter) {
+                el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true }));
+              }
+
+              result = {
+                filled: true,
+                element: { tagName: el.tagName, id: el.id || undefined, name: el.name || undefined, type: el.type || undefined },
+                framework: fw,
+                verifiedValue: el.value,
+              };
+              break;
+            }
             // ── existing default execute_script path ──
             const commandId = params.commandId;
             if (commandId && window.__safariPilotExecutedCommands.has(commandId)) {
