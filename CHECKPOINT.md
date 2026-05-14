@@ -1,130 +1,89 @@
 # Checkpoint
-*Written: 2026-05-13 18:00*
+*Written: 2026-05-14 11:30*
 
 ## Current Task
 
-v0.1.34 sprint **pivoted** from architectural approach (spec Section 3) → Section 8 fallback (multi-tool sentinel refactor). Original plan `904fd81` is stale and should be discarded. New plan needed.
-
-**Sprint goal unchanged:** recover CSP-blocked bench failures (Google Flights, Apple Shop, X.com) by making DOM-affecting tools work on Trusted-Types-strict pages. Bench acceptance: ≥30 of 47 v0.1.33 failures recover, per-site mins (Google Flights ≥6/11, Apple ≥7/12, Google Search ≥9/11), 0 regressions on 50-task spot-check.
+**v0.1.34 sprint DEFERRED.** Bench gate failed all 3 acceptance criteria; user chose option (B') to fold into v0.1.35. Branch `feat/v0134-csp-bypass` (HEAD `d3fee62`) stays unmerged. v0.1.35 starter spec written.
 
 ## Progress
 
-### Done (this session)
-- [x] v0.1.33 shipped to npm + GitHub (live, version 0.1.33 published)
-- [x] 3-agent research on CSP/TT bypass → synthesis at `docs/upp/research/2026-05-13-safari-csp-bypass-synthesis.md` (validator PASS)
-- [x] Brainstorming → spec at `docs/upp/specs/2026-05-13-safari-pilot-v0134-csp-bypass.md` (committed `9edd3c4`)
-- [x] Writing-plans → plan at `docs/upp/plans/2026-05-13-safari-pilot-v0134-csp-bypass.md` (committed `904fd81`)
-- [x] Executing-plans started in subagent mode
-- [x] Task 1 (TT-strict fixture + v0.1.33 regression baseline) — committed
-- [x] Task 2 architectural-pivot ATTEMPTED, **EMPIRICALLY FAILED**
-- [x] Pivot decision committed (`6227230` on `feat/v0134-csp-bypass`)
-- [x] TRACES iter 80 written
+### v0.1.34 sprint final state
+- 17 of 20 plan tasks completed (T1-T17 + T7b inserted task)
+- T18 bench gate executed — FAIL on all 3 acceptance criteria (see deep-analysis.md)
+- T19 (docs) had placeholder edits drafted; REVERTED since v0.1.34 not shipping
+- T20 (ship) NOT executed
+- All sprint code preserved on branch as v0.1.35 foundation
 
-### Architectural-pivot failure summary
-Spec Section 3 hypothesized that adding `__SP_CSP_VERIFY__` and `__SP_EXECUTE_ISOLATED__:` sentinels to content-isolated.js would let arbitrary JS strings execute in the CSP-exempt ISOLATED world. Three rebuilds at 0.1.34, 0.1.34-dev.1, 0.1.34-dev.2 — sentinels never fired. The dispatch path for arbitrary scripts bypasses content-isolated.js's intercept in some way we couldn't pin down (~1h debugging burned). Full detail in TRACES iter 80.
+### Bench numbers (final)
+- Aggregate: 133/184 = **72.3%** vs baseline 128/184 = 69.6% (+5 net)
+- Failure recovery: 18/46 (need ≥30) — short by 12
+- Spot-check regressions: 10 (need 0)
+- Per-site: Apple 8/12 ✅ | Google Flights 2/11 ❌ | Google Search 8/11 ❌
+- Total spend: $116.10 ($83.23 first bench + $32.29 retry + $0.58 smokes)
+- Of 13 originally-flagged regressions: 3 flake, 10 persistent
 
-The fallback design (spec Section 8) avoids this problem: every DOM-affecting tool gets a dedicated sentinel handler in content-main.js's switch case — same pattern as existing `__SP_TAKE_SCREENSHOT__` and `__SP_LIST_FRAMES__` which both confirmedly work on TT-strict pages (0% capture failure in v0.1.33 bench across all 15 sites).
+### v0.1.35 starter sprint (NEXT)
+Spec at `docs/upp/specs/2026-05-14-safari-pilot-v0135-efficiency-and-recovery.md`. 10 hypotheses (H1-H10) ranked by ROI. Estimated 13 eng days, target +8-15 bench tasks + −30-40% cost.
 
-### Not done (for next session)
+Top 3 highest-ROI:
+- **H1 (1h)** — Soften CSP_BLOCKED error UX nudging (agent learned to fear safari_evaluate)
+- **H2 (1.5d)** — `safari_evaluate_then_act` compound MCP tool (collapses query_all + click → 1 call)
+- **H3a-c (5.5d)** — Site recipes for Google Flights, Booking, Google Map (50% of bench cost)
 
-- [ ] **Discard plan `904fd81`** — it's built around the architectural pivot
-- [ ] **Write new plan based on spec Section 8** via `upp:writing-plans` skill OR inline. Estimated ~20 tasks:
-  - Audit `src/tools/*.ts` for every `engine.executeJsInTab(tabUrl, jsString)` call site. Already partially done (TRACES iter 80 noted ~30+ tools through `new Function`)
-  - For each DOM-affecting tool (click, fill, snapshot, type, get_text, query_all, scroll, dismiss_overlays, smart_scrape, etc.), refactor to:
-    - Construct structured params (selector, value, etc.) instead of JS string
-    - Send via storage bus with a dedicated sentinel like `__SP_CLICK__:<json>`
-    - Add a `case '__SP_CLICK__':` handler in content-main.js's switch that uses `__SP_LOCATOR__` and structured params — no `new Function`
-  - Add 3 new capability tools (safari_get_page_info, safari_get_meta_tags, safari_extract_text_window) as new sentinels
-  - Layer 3 TT policy registration (unchanged from spec)
-  - CSP detection probe (unchanged from spec)
-  - `CSP_BLOCKED` error UX (unchanged from spec)
-  - Bench gate
-- [ ] Execute the new plan (subagent mode, two-gate review). ~9-12 days wall-clock.
+## Key Decisions (codified in TRACES iter 83)
 
-## Key Decisions (in iter 80, not yet codified elsewhere)
-
-1. **Architectural pivot is unsalvageable without deeper dispatch-path investigation.** The empirical fact is content-isolated.js's sentinel intercepts don't fire for the new sentinels we added, despite being correctly placed in the built bundle. Reasons unknown. Section 8 fallback is reachable in fewer days than continued investigation, so we go there.
-2. **safari_evaluate stays broken on TT-strict pages — that's an explicit non-goal.** v0.1.34 makes OTHER tools work (click, fill, get_page_info, etc.). The `test/e2e/csp-baseline-tt-strict.test.ts` documents this as a regression baseline.
-3. **No daemon changes needed** for Section 8 — all changes are extension + TS.
+1. v0.1.34 deferred per user choice (B'). Branch stays.
+2. v0.1.34 bench data is **rich diagnostic input**, not a failure to bury. Same-task pair analysis shows v0.1.34 median is BETTER (−1 turn / −$0.027 cost). The bench-acceptance failure is dominated by site-specific multi-step task fumbling (Google Flights date pickers).
+3. The "agent learned to fear safari_evaluate" finding is the **central root cause**. Tool usage shifted: evaluate −50%, query_all +440%. H1 reverses this.
+4. The 10 persistent regressions cluster on 3 patterns: date pickers (H2 + H3a/b), noisy data shortcuts (H5), and site complexity (H3a-c). All addressed in v0.1.35 plan.
+5. WebVoyager flake confirmed empirically: 3/13 originally-flagged regressions resolved on retry. v0.1.35 will use 3-run bench protocol (H10) for cleaner acceptance signal.
 
 ## Next Steps
 
-When you resume in a fresh session:
-
+### Resume command for fresh session
 ```bash
 cd "/Users/Aakash/Claude Projects/Skills Factory/safari-pilot"
-
-# Verify state
-git branch --show-current  # should be feat/v0134-csp-bypass
-git log --oneline -5       # 6227230 (HEAD) is the pivot commit
-git status --short         # should be empty + 2 daemon/ untracked carry-forwards
-
-# Read the design source-of-truth
-cat docs/upp/specs/2026-05-13-safari-pilot-v0134-csp-bypass.md  # Section 8 is the design
-cat TRACES.md | head -100  # iter 80 has the pivot rationale
-
-# Re-plan
-# Option A (recommended): re-invoke writing-plans skill with the Section 8 design as input
-# Option B: draft the new plan inline if you trust the audit findings from iter 80
-
-# The OLD plan at docs/upp/plans/2026-05-13-safari-pilot-v0134-csp-bypass.md
-# is the architectural-pivot version. Either:
-# - Delete it and write a new one (clean)
-# - Rename it to <filename>-architectural-pivot-abandoned.md and write a new <filename>.md (preserve history)
+git log --oneline -5    # verify HEAD includes d3fee62 (harness opt-in patch) or beyond
+git branch --show-current  # feat/v0134-csp-bypass
+cat docs/upp/specs/2026-05-14-safari-pilot-v0135-efficiency-and-recovery.md  # the v0.1.35 plan
+cat bench-runs/webvoyager-v0.1.34-bench-20260514/deep-analysis.md  # the diagnostic foundation
 ```
 
-### Sprint shape for the new plan
+### v0.1.35 sprint kickoff
+1. **Decide branching strategy:** keep working on `feat/v0134-csp-bypass` (and rename for clarity) OR cut a new `feat/v0135-efficiency-recovery` branch off it. Same code in both cases; cosmetic.
+2. **Invoke `upp:writing-plans`** with the v0.1.35 spec as input to produce a detailed task-by-task plan
+3. **Execute via `upp:executing-plans`** in subagent mode
+4. Estimated wall-clock: ~13 eng days
 
-20-task shape (concrete):
-
-1. **Codebase audit task** — confirm the exact list of tools routing through `new Function`. From TRACES iter 80: extraction.ts (smart_scrape, get_text, query_all), interaction.ts (click, fill, type, scroll), compound.ts (chained ops), clipboard.ts, auth.ts, frames.ts, network.ts. ~10-15 distinct tools.
-
-2-13. **One task per tool refactor** — each follows TDD: write failing e2e against CSP fixture → implement sentinel handler in content-main.js + structured-param marshalling in tool.ts → verify green. Pattern reference: existing `__SP_TAKE_SCREENSHOT__` handler in content-main.js.
-
-14-16. **Three new capability tools** (safari_get_page_info, safari_get_meta_tags, safari_extract_text_window) — as content-main.js sentinels with structured-result returns.
-
-17. **Layer 3 — TT policy registration** in content-main.js (unchanged from spec).
-
-18. **CSP detection probe** — useful for the error-UX hint message even though dispatch routing is no longer needed (since all DOM ops are sentinel-based now and bypass new Function entirely).
-
-19. **CSP_BLOCKED error UX** for the remaining `safari_evaluate` call site.
-
-20. **Bench gate** — rerun 47 failures + 50 spot-check, judge, ship.
-
-### Things explicitly NOT to do on resume
-
-- Do NOT retry the architectural pivot (sentinel-from-content-isolated.js). Empirical evidence says it doesn't dispatch as we thought.
-- Do NOT attempt to "fix" the dispatch path to reach content-isolated.js — that's a deeper rabbit hole. Section 8 sidesteps it.
-- Do NOT delete `test/e2e/csp-baseline-tt-strict.test.ts` — it's the v0.1.33-failure-mode baseline.
-- Do NOT bump package.json or extension/manifest.json — they're already at 0.1.34. Stay there until ship time.
-- Do NOT rebuild the extension yet. The first rebuild of the new sprint will be the first content-main.js sentinel addition (combined with all subsequent changes in batches).
+### Bench data preserved (do NOT delete)
+- `/tmp/wv-inline-runs-baseline-v0.1.33/` — v0.1.33 pristine baseline (184 score files)
+- `/tmp/wv-inline-runs-v0.1.34/` — v0.1.34 first bench (106 score files)
+- `/tmp/wv-inline-runs-v0.1.34-retry/` — retry round 2 (31 score files)
+- `/tmp/wv-inline-runs/` — overlaid + judged (184 score files = current source-of-truth)
+- `/tmp/wv-inline-runs-prejudge-snapshot/` — pre-retry-judge snapshot
+- `/tmp/wv-judge-staging-retry/` — staging artifact
+- `bench-runs/webvoyager-v0.1.34-bench-20260514/` — runner logs + analysis (gitignored but durable)
 
 ## Context
 
-### Repo state at this checkpoint
+### Repo state
+- Branch: `feat/v0134-csp-bypass` at HEAD (will be `d3fee62` + iter-83 TRACES + analysis commits below)
+- v0.1.34 work preserved across ~28 commits (sentinels, locator port, rollback flag, etc.)
+- Working tree: TRACES.md modified + CHECKPOINT.md modified + bench artifacts staged + v0.1.35 spec staged
+- Extension binary on disk: 0.1.34-dev.4 (will be replaced by v0.1.35 builds)
+- 16 sentinels in installed extension binary
 
-- **Branch:** `feat/v0134-csp-bypass` at HEAD `6227230`, 4 commits ahead of main
-- **Commits this branch (newest→oldest):**
-  - `6227230` pivot: v0.1.34 architectural-pivot abandoned, falling back to spec Section 8
-  - `2596a48` test(fixtures+e2e): TT-strict CSP fixture + v0.1.33 baseline assertion (Task 1)
-  - (... 2 more from earlier sprint setup ...)
-- **Working tree:** clean except 2 untracked carry-forwards (`daemon/CLAUDE.md`, `daemon/TRACES.md`) — out of scope
-- **package.json + extension/manifest.json:** 0.1.34
-- **Extension binary (bin/):** v0.1.33 (last committed state — reset from dev.2 to keep history clean)
-- **Daemon:** v0.1.33, PID 76143 alive ~22h
-- **Failed dev builds:** v0.1.34-dev.1, v0.1.34-dev.2 — NOT tagged, NOT pushed, only existed locally during the failed pivot attempt
+### Cumulative session accounting (v0.1.34 sprint)
+- Wall-clock this multi-session sprint: ~20+ hours
+- Subagent spend: ~$50-70
+- Bench spend: $116.10
+- Total: ~$170-190
+- v0.1.34 ship outcome: NONE (deferred)
+- Knowledge produced: deep-analysis.md (sentinel envelope analysis, tool-shift quantification, site-specific patterns) + v0.1.35 starter spec
 
-### Cumulative session accounting
-
-- Wall-clock: ~18 hours across multiple resumes (v0.1.33 ship + research + brainstorming + planning + pivot attempt)
-- API spend: ~$130 (rough): v0.1.33 bench ~$104, research subagents ~$10, brainstorming/planning ~$15, pivot debug ~$5
-- This session's user-visible artifacts: v0.1.33 shipped to npm, synthesis doc, spec, abandoned plan, new TRACES iter 80, regression baseline test
-
-### Available context for the fresh session
-
-- Spec at `docs/upp/specs/2026-05-13-safari-pilot-v0134-csp-bypass.md` (Section 8 is the design)
-- Research synthesis at `docs/upp/research/2026-05-13-safari-csp-bypass-synthesis.md`
-- Bench data still on disk at `/tmp/wv-inline-runs/` (175 task results from v0.1.33)
-- Inline-bench harness at `/tmp/run-one-task.sh` (with the macOS mktemp + perl-alarm cleanup fixes from v0.1.33 — promote to `bench/webvoyager/` during Section 8 work)
-- TT-strict fixture at `test/fixtures/csp-trusted-types.ts` (working)
-- Existing v0.1.33 regression baseline test at `test/e2e/csp-baseline-tt-strict.test.ts` (working, asserts v0.1.33 failure)
+### v0.1.35 carry-forwards (still pending after v0.1.34 deferral)
+ALL of v0.1.34's known limitations carry forward, plus:
+- 10 persistent regressions (3 Google Flights, 2 ESPN, 1 Booking, 4 misc)
+- The agent-fearing-evaluate behavioral shift (H1 priority fix)
+- Site-recipe gap on cost-heavy sites (H3 priority)
+- Bench protocol fragility (H10 priority)
