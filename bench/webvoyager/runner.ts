@@ -1,7 +1,7 @@
 // bench/webvoyager/runner.ts
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { parseWebVoyagerTask, type WebVoyagerScore, type WebVoyagerTask } from './types.js';
+import { parseWebVoyagerTask, type JudgeVerdict, type WebVoyagerScore, type WebVoyagerTask } from './types.js';
 import { runWebVoyagerTask } from './adapter.js';
 import { runJudge } from './judge.js';
 import { aggregateScoreboard } from './score.js';
@@ -102,7 +102,7 @@ async function main(): Promise<void> {
         timeoutMs: 240_000,
       });
 
-      let verdict: 'SUCCESS' | 'FAILURE' | 'UNKNOWN' = 'UNKNOWN';
+      let verdict: JudgeVerdict = 'UNKNOWN';
       let reasoning = '(judge skipped)';
       if (adapterResult.screenshot_path === null) {
         // Capture failed — skip judge entirely. Don't try to call OpenAI without a screenshot;

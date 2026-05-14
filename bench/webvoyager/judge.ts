@@ -69,8 +69,26 @@ export function parseJudgeResponse(text: string): JudgeResult {
 }
 
 /**
+ * Detect agent self-abstention.
+ *
+ * The prompt template instructs the agent to respond with `ABSTAIN: <reason>`
+ * (in place of FINAL_ANSWER) when the task is impossible. We accept a leading
+ * "FINAL_ANSWER:" prefix in case the agent emits both. Case-insensitive.
+ */
+export function detectAbstention(agentFinalText: string): { abstained: boolean; reason?: string } {
+  const stripped = agentFinalText.trim().replace(/^FINAL_ANSWER:\s*/i, '');
+  const m = stripped.match(/^ABSTAIN:\s*(.+)/i);
+  if (m) return { abstained: true, reason: m[1]!.trim() };
+  return { abstained: false };
+}
+
+/**
  * Run the judge against a single (question, agent_answer, screenshot) triple.
  * Sends as system + user messages mirroring upstream's chat structure.
+ *
+ * Pre-check: if agentFinalText starts with `ABSTAIN: <reason>`, skip the
+ * GPT-4o call and return verdict=ABSTAIN. Abstentions are tracked separately
+ * from successes/failures (see score.ts per-site abstention_rate).
  */
 export async function runJudge(
   question: string,
@@ -78,6 +96,13 @@ export async function runJudge(
   screenshotPath: string,
   client?: OpenAI,
 ): Promise<JudgeResult> {
+  const abst = detectAbstention(agentFinalText);
+  if (abst.abstained) {
+    return {
+      verdict: 'ABSTAIN',
+      reasoning: 'Agent abstained: ' + (abst.reason ?? ''),
+    };
+  }
   const c = client ?? new OpenAI();
   const imageB64 = readFileSync(screenshotPath).toString('base64');
   const userPrompt = buildJudgeUserPrompt(question, agentFinalText, 1);

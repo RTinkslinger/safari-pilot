@@ -64,10 +64,13 @@ if [ -z "$URL" ] || [ -z "$QUES" ]; then
   exit 1
 fi
 
-# Build prompt via printf
+# Build prompt by interpolating the template at bench/webvoyager/prompt-template.md
 PROMPT_FILE=$(mktemp /tmp/wv-prompt.XXXXXX)
-printf 'You are an autonomous browser agent driven by the safari-pilot MCP plugin.\n\nTask: %s\nStarting URL: %s\n\nSteps:\n1. Open a new tab to the starting URL using safari_new_tab. Remember the URL of the tab you opened (you'\''ll need it in step 5).\n2. Use safari_snapshot to orient on the page.\n3. Use safari_tool_search if you need a capability not in your default tool list.\n4. Solve the task. Use the simplest tool sequence that works.\n5. CRITICAL — REQUIRED EVIDENCE STEP. Before answering, call safari_take_screenshot with arguments:\n     { "tabUrl": "<the URL currently in your tab>", "path": "%s" }\n   The eval judge needs this screenshot to verify your answer. If you skip this step, the task will be marked UNKNOWN regardless of how good your textual answer is — wasting the entire run. Take the screenshot AFTER your final navigation and BEFORE giving the final answer.\n6. End your response with: "FINAL_ANSWER: <your concise answer>"\n\nDo not ask for clarification — make your best attempt and answer.\nDo not switch user-owned tabs. Operate only on tabs you opened.\nDo NOT call safari_close_tab or safari_close_window. Do NOT navigate away from your final answer page after taking the screenshot. The harness cleans up tabs.\n' \
-  "$QUES" "$URL" "$SCREENSHOT" > "$PROMPT_FILE"
+PROMPT_TEMPLATE=$(cat "$REPO_ROOT/bench/webvoyager/prompt-template.md")
+PROMPT="${PROMPT_TEMPLATE//\{url\}/$URL}"
+PROMPT="${PROMPT//\{question\}/$QUES}"
+PROMPT="${PROMPT//\{screenshot\}/$SCREENSHOT}"
+printf '%s' "$PROMPT" > "$PROMPT_FILE"
 
 START_TS=$(date +%s)
 echo "════════════════════════════════════════════════"

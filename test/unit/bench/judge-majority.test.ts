@@ -23,4 +23,8 @@ describe('aggregateMajorityVerdict', () => {
   it('handles 5-run input with 3 SUCCESS', () => {
     expect(aggregateMajorityVerdict<JudgeVerdict>(['SUCCESS', 'SUCCESS', 'SUCCESS', 'FAILURE', 'FAILURE'])).toBe('SUCCESS');
   });
+
+  it('returns ABSTAIN when 2 of 3 runs are ABSTAIN', () => {
+    expect(aggregateMajorityVerdict<JudgeVerdict>(['ABSTAIN', 'ABSTAIN', 'FAILURE'])).toBe('ABSTAIN');
+  });
 });

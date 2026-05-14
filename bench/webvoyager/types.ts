@@ -6,7 +6,7 @@
  * (e.g. 'NOT SUCCESS' → 'FAILURE'). Do NOT change this enum to upstream
  * tokens — that mapping is intentionally a Task 4 concern.
  */
-export type JudgeVerdict = 'SUCCESS' | 'FAILURE' | 'UNKNOWN';
+export type JudgeVerdict = 'SUCCESS' | 'FAILURE' | 'UNKNOWN' | 'ABSTAIN';
 
 export interface WebVoyagerTask {
   id: string;
