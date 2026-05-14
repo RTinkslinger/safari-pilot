@@ -53,6 +53,11 @@ export const ERROR_CODES = {
   INVALID_PARAMS: 'INVALID_PARAMS',
   TARGET_NOT_FOUND: 'TARGET_NOT_FOUND',
   TARGET_HIDDEN: 'TARGET_HIDDEN',
+  // v0.1.35 Task 5 — anti-thrash controls.
+  LOOP_DETECTED: 'LOOP_DETECTED',
+  THRASH_DETECTED: 'THRASH_DETECTED',
+  STEP_CAP_EXCEEDED: 'STEP_CAP_EXCEEDED',
+  WALL_CAP_EXCEEDED: 'WALL_CAP_EXCEEDED',
 } as const;
 // SD-22 (2026-04-25): removed 4 dead codes (ELEMENT_NOT_INTERACTABLE,
 // CROSS_ORIGIN_FRAME, DIALOG_UNEXPECTED, FRAME_NOT_FOUND) — declared but
@@ -86,6 +91,26 @@ export const ERROR_METADATA: Partial<Record<ErrorCode, { retryable: boolean; hin
       'Element exists but is display:none, visibility:hidden, or inside a closed <details>.',
       'Tool does NOT auto-expand parents (idempotency). Agent may need to expand a parent element first.',
     ],
+  },
+  LOOP_DETECTED: {
+    retryable: false,
+    hints: [
+      'Same (tool, key-args) called 5+ times in a row. The page state is not changing — try a different approach.',
+    ],
+  },
+  THRASH_DETECTED: {
+    retryable: false,
+    hints: [
+      'safari_snapshot returned identical content 4+ times. The page is not loading new state — check for stale-data or rate-limit indicators.',
+    ],
+  },
+  STEP_CAP_EXCEEDED: {
+    retryable: false,
+    hints: ['Session step cap reached. Abort and report inability to complete.'],
+  },
+  WALL_CAP_EXCEEDED: {
+    retryable: false,
+    hints: ['Session wall-clock cap reached. Abort and report inability to complete.'],
   },
 };
 
@@ -338,6 +363,34 @@ export class CircuitBreakerOpenError extends SafariPilotError {
       `Domain "${domain}" circuit breaker is open due to repeated failures`,
       `Retry after ${cooldownSeconds} seconds cooldown`,
       'Investigate the root cause before the circuit auto-closes',
+    ];
+  }
+}
+
+export class LoopDetectedError extends SafariPilotError {
+  readonly code = ERROR_CODES.LOOP_DETECTED;
+  readonly retryable = false;
+  readonly hints: string[];
+
+  constructor(tool: string, threshold: number) {
+    super(`Loop detected: ${tool} called ${threshold} times with the same arguments`);
+    this.hints = [
+      `Same (tool, key-args) called ${threshold}+ times in a row. The page state is not changing — try a different approach.`,
+      'Inspect with safari_snapshot, or use safari_get_text to read current state before retrying.',
+    ];
+  }
+}
+
+export class ThrashDetectedError extends SafariPilotError {
+  readonly code = ERROR_CODES.THRASH_DETECTED;
+  readonly retryable = false;
+  readonly hints: string[];
+
+  constructor(threshold: number) {
+    super(`Thrash detected: safari_snapshot returned identical content ${threshold} times`);
+    this.hints = [
+      `safari_snapshot returned identical content ${threshold}+ times. The page is not loading new state — check for stale-data or rate-limit indicators.`,
+      'Try a different navigation, wait for content to load, or abort the task.',
     ];
   }
 }

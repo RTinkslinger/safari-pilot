@@ -104,6 +104,12 @@ set +e
 if [ "${WV_AUTH:-apikey}" = "max" ]; then
   unset ANTHROPIC_API_KEY
 fi
+# v0.1.35 Task 5 — hard caps surfaced to the agent harness as env vars.
+# Default: 25 turns, 20 min wall-clock. Overridable upstream by the bench
+# wrapper. These are advisory env vars; the in-process LoopDetector +
+# ThrashDetector in src/security/loop-detector.ts is the enforcement.
+export MAX_TURNS="${MAX_TURNS:-25}"
+export MAX_WALL_MS="${MAX_WALL_MS:-1200000}"
 SAFARI_PILOT_NO_SESSION_WINDOW=1 \
   claude --bare --dangerously-skip-permissions --mcp-config .mcp.json \
     -p "$(cat "$PROMPT_FILE")" --verbose --output-format stream-json \

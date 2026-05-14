@@ -46,6 +46,7 @@ import { CircuitBreaker } from './security/circuit-breaker.js';
 import { IdpiAnnotator } from './security/idpi-annotator.js';
 import { HumanApproval, HUMAN_APPROVAL_SUGGESTED_NEXT_TOOLS } from './security/human-approval.js';
 import { ScreenshotPolicy } from './security/screenshot-policy.js';
+import { LoopDetector } from './security/loop-detector.js';
 import {
   RateLimitedError,
   HumanApprovalRequiredError,
@@ -57,6 +58,8 @@ import {
   CircuitBreakerOpenError,
   SessionRecoveryError,
   SessionWindowInitError,
+  LoopDetectedError,
+  ThrashDetectedError,
 } from './errors.js';
 import { loadConfig, DEFAULT_CONFIG, type SafariPilotConfig } from './config.js';
 import { trace } from './trace.js';
@@ -173,6 +176,8 @@ function isSecurityPipelineError(err: unknown): boolean {
     || err instanceof DomainNotAllowedError
     || err instanceof HumanApprovalRequiredError
     || err instanceof EngineUnavailableError
+    || err instanceof LoopDetectedError
+    || err instanceof ThrashDetectedError
   ) {
     return true;
   }
@@ -220,6 +225,7 @@ export class SafariPilotServer {
   readonly circuitBreaker: CircuitBreaker;
   readonly idpiAnnotator: IdpiAnnotator;
   readonly humanApproval: HumanApproval;
+  readonly loopDetector: LoopDetector = new LoopDetector();
 
   private engineProxy: EngineProxy | null = null;
   private clickContexts: Map<string, ClickContext> = new Map();
@@ -743,6 +749,17 @@ export class SafariPilotServer {
     this.rateLimiter.recordAction(domain);
     trace(traceId, 'server', 'rate_limit_check', { domain });
 
+    // 5b. Anti-thrash loop detection (v0.1.35 Task 5).
+    // Reset on safari_health_check (deliberate session-restart signal), then
+    // run preCheck for every other tool. Throws LoopDetectedError after
+    // LOOP_THRESHOLD identical (tool, key-args) calls in a row.
+    // Classified as a security-pipeline error → does NOT feed kill-switch.
+    if (name === 'safari_health_check') {
+      this.loopDetector.reset();
+    } else {
+      this.loopDetector.preCheck(name, params);
+    }
+
     // 6. Circuit breaker check — assertClosed handles half-open probe logic and
     // reports actual remaining cooldown time (not hardcoded 120s)
     this.circuitBreaker.assertClosed(domain);
@@ -1140,6 +1157,30 @@ export class SafariPilotServer {
         } catch { /* tab detection is best-effort */ }
       }
 
+      // 8c. Anti-thrash post-check (v0.1.35 Task 5).
+      // For safari_snapshot, compare result content across calls. Strip
+      // volatile fields before hashing so the comparison is byte-stable
+      // across identical page states. Throws ThrashDetectedError after
+      // THRASH_THRESHOLD identical results — bubbles to the outer catch
+      // for error-audit; isSecurityPipelineError prevents kill-switch
+      // auto-activation feedback.
+      if (name === 'safari_snapshot' && result.content?.[0]?.type === 'text') {
+        const text = result.content[0].text ?? '';
+        let stableKey = text;
+        try {
+          const parsed = JSON.parse(text) as Record<string, unknown>;
+          delete parsed['__latencyMs'];
+          delete parsed['__engine'];
+          delete parsed['latencyMs'];
+          delete parsed['elapsed_ms'];
+          delete parsed['timestamp'];
+          stableKey = JSON.stringify(parsed);
+        } catch {
+          // Non-JSON snapshot content (rare) — fall back to raw text.
+        }
+        this.loopDetector.recordSnapshotResult(stableKey);
+      }
+
       // 9. Audit log — success path
       this.auditLog.record({
         tool: name,
@@ -1182,7 +1223,16 @@ export class SafariPilotServer {
         error: error instanceof Error ? error.message : String(error),
         code: (error as Record<string, unknown>)?.code ?? 'UNKNOWN',
       }, 'error', Date.now() - start);
-      this.recordToolFailure(domain, selectedEngineName, error);
+      // v0.1.35 Task 5: loop/thrash detections are session-level guardrails,
+      // not domain-level tool failures, and must not feed the per-domain
+      // circuit-breaker. Other security-pipeline errors (rate-limit,
+      // ownership, etc.) preserve their pre-existing wiring through
+      // recordToolFailure for backward compatibility with prior tests.
+      const isAntiThrashError =
+        error instanceof LoopDetectedError || error instanceof ThrashDetectedError;
+      if (!isAntiThrashError) {
+        this.recordToolFailure(domain, selectedEngineName, error);
+      }
 
       // T29 / SD-31 — feed the kill-switch's auto-activation rolling window
       // so a configured `autoActivation` threshold actually trips after N
