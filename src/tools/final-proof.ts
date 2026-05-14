@@ -75,7 +75,13 @@ export class FinalProofTools {
       const sentinel =
         '__SP_COMPOSE_FINAL_EVIDENCE__:' + JSON.stringify({ claim, locator: evidence_locator });
 
-      const evalResult = await this.engine.executeJsInTab(tabUrl, sentinel, 10_000);
+      // Retry on transient TAB_NOT_FOUND — Safari's MV3 lifecycle can leave
+      // browser.tabs.query() returning empty for ~ms after a freshly opened tab.
+      let evalResult = await this.engine.executeJsInTab(tabUrl, sentinel, 10_000);
+      for (let attempt = 1; attempt < 3 && !evalResult.ok && evalResult.error?.code === 'TAB_NOT_FOUND'; attempt++) {
+        await new Promise((r) => setTimeout(r, 300));
+        evalResult = await this.engine.executeJsInTab(tabUrl, sentinel, 10_000);
+      }
       if (!evalResult.ok) {
         const err = new Error(
           `safari_compose_final_evidence failed: ${evalResult.error?.message ?? 'unknown'}`,

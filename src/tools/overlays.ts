@@ -109,7 +109,13 @@ export class OverlayTools {
       paywallEnabled: this.config.enablePaywallDismiss,
     });
 
-    const result = await this.config.engine.executeJsInTab(tabUrl, sentinel, 30_000);
+    // Retry on transient TAB_NOT_FOUND — Safari's MV3 lifecycle can leave
+    // browser.tabs.query() returning empty for ~ms after a freshly opened tab.
+    let result = await this.config.engine.executeJsInTab(tabUrl, sentinel, 30_000);
+    for (let attempt = 1; attempt < 3 && !result.ok && result.error?.code === 'TAB_NOT_FOUND'; attempt++) {
+      await new Promise((r) => setTimeout(r, 300));
+      result = await this.config.engine.executeJsInTab(tabUrl, sentinel, 30_000);
+    }
     if (!result.ok) {
       const err = new Error(result.error?.message ?? 'safari_dismiss_overlays failed');
       if (result.error?.code) (err as Error & { code?: string }).code = result.error.code;
