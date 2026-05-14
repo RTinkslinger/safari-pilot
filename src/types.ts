@@ -36,7 +36,19 @@ export interface ToolRequirements {
    */
   idempotent: boolean;
   requiresShadowDom?: boolean;
-  requiresCspBypass?: boolean;
+  /**
+   * v0.1.35 Task 6 — `true` keeps the strict semantic: tool MUST run on the
+   * Extension engine; if Extension is unavailable, EngineUnavailableError
+   * fires before the tool runs (used by sentinel-only paths like
+   * safari_get_text/get_html/get_attribute via buildLocatorSentinel).
+   * `'preferred'` means: prefer the Extension engine when available, but
+   * fall back to AppleScript/Daemon rather than throwing. Used for tools
+   * with a config-gated legacy IIFE fallback path (safari_click, safari_fill,
+   * safari_type, safari_scroll). The pre-call extension health gate also
+   * checks for `=== true`, so 'preferred' tools don't force extension recovery
+   * when the extension is genuinely unreachable.
+   */
+  requiresCspBypass?: boolean | 'preferred';
   requiresDialogIntercept?: boolean;
   requiresNetworkIntercept?: boolean;
   requiresCookieHttpOnly?: boolean;

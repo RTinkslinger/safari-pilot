@@ -40,8 +40,7 @@ export class PageInfoTools {
       {
         name: 'safari_get_page_info',
         description:
-          'Returns structured page info (title, url, body snippet, meta description, og:image, lang). ' +
-          'CSP-immune (ISOLATED-world sentinel). Use in place of safari_evaluate when reading basic page metadata.',
+          'Returns structured page info (title, url, body snippet, meta description, og:image, lang).',
         inputSchema: {
           type: 'object',
           properties: {
@@ -56,8 +55,7 @@ export class PageInfoTools {
       {
         name: 'safari_get_meta_tags',
         description:
-          'Returns an array of meta tags from the page. CSP-immune (ISOLATED-world sentinel). ' +
-          'Use in place of safari_evaluate when reading <meta name=...> / <meta property=...> / <meta http-equiv=...> tags.',
+          'Returns an array of meta tags from the page (<meta name=...> / <meta property=...> / <meta http-equiv=...>).',
         inputSchema: {
           type: 'object',
           properties: {
@@ -77,7 +75,7 @@ export class PageInfoTools {
         name: 'safari_extract_text_window',
         description:
           'Returns textContent of the subtree(s) matching `selector`, capped at `max_chars` (default 5000). ' +
-          'CSP-immune (ISOLATED-world sentinel). Use when reading text near a specific element.',
+          'Use when reading text near a specific element.',
         inputSchema: {
           type: 'object',
           properties: {

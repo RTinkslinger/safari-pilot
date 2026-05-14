@@ -4,7 +4,13 @@
  * Verifies the failure-path wrapper in src/tools/extraction.ts.handleEvaluate
  * translates Safari's raw Trusted-Types / CSP-eval errors into structured
  * `CSP_BLOCKED` (recoverable) or `CSP_HARD_BLOCK` (hard-block) errors with
- * an `alternative_tools` hint pointing at the v0.1.34 sentinel-based tools.
+ * an informational hint (`fallback_available`, `note`, `cspMode`).
+ *
+ * v0.1.35 Task 6 update — the prescriptive `alternative_tools` array was
+ * removed (one of the four nudges that halved safari_evaluate usage). The
+ * assertion now verifies the softened hint shape: error code preserved,
+ * cspMode preserved, no named tool list. The cross-shape verifier lives in
+ * test/e2e/csp-error-softened.test.ts.
  *
  * Three modes:
  *   (a) tt-strict + Layer 3 policy registered → CSP_BLOCKED (probe.hardBlock = false)
@@ -63,9 +69,11 @@ describe('safari_evaluate CSP_BLOCKED error UX', () => {
     expect(msg).toMatch(/CSP_BLOCKED/);
     // Hard-block must NOT appear for the soft-block case.
     expect(msg).not.toMatch(/CSP_HARD_BLOCK/);
-    // Hint must surface the named alternative tools.
-    expect(msg).toMatch(/safari_get_page_info/);
-    expect(msg).toMatch(/safari_click/);
+    // v0.1.35 Task 6 — hint is informational; the named alternative_tools list
+    // was removed. The cspMode field is preserved (callers can route on it).
+    expect(msg).not.toMatch(/alternative_tools/);
+    expect(msg).toMatch(/cspMode/);
+    expect(msg).toMatch(/fallback_available/);
   }, 60_000);
 
   it('returns CSP_HARD_BLOCK on tt-strict pages with allowlist excluding safari-pilot', async () => {

@@ -187,7 +187,7 @@ export class ExtractionTools {
       {
         name: 'safari_evaluate',
         description:
-          'Run arbitrary JavaScript in the page and return its value. Use when no structured tool fits the need — prefer safari_get_text, safari_extract_tables, or safari_query_all; subject to security pipeline.',
+          'Run an arbitrary JavaScript expression in the page context. Returns the expression\'s value via JSON serialization.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -749,24 +749,14 @@ export class ExtractionTools {
         //   tt-strict only:  "...requires a 'Trusted Type' assignment"           → isTT && !isEvalBlock → 'tt-strict'
         //   no-eval:         "'unsafe-eval' or 'trusted-types-eval' is not..."  → isTT && isEvalBlock  → 'eval-blocked'
         const cspMode: string = isHardBlock ? 'hard-block' : (isEvalBlock ? 'eval-blocked' : 'tt-strict');
+        // v0.1.35 Task 6 — softened from prescriptive `alternative_tools` array
+        // to an informational hint. The explicit list of named tools was one of
+        // the four nudges that pivoted the agent away from safari_evaluate and
+        // halved its usage; `cspMode` is preserved for callers that route on it.
         const hint = {
+          fallback_available: true,
+          note: 'This script could not run because the page enforces a CSP that disallows eval() or string-to-script.',
           cspMode,
-          alternative_tools: [
-            'safari_get_page_info',
-            'safari_get_meta_tags',
-            'safari_extract_text_window',
-            'safari_click',
-            'safari_fill',
-            'safari_type',
-            'safari_scroll',
-            'safari_get_text',
-            'safari_query_all',
-            'safari_snapshot',
-          ],
-          rationale:
-            'safari_evaluate failed because this page enforces strict CSP / Trusted Types. ' +
-            'Use the named alternative tools — they route through extension sentinels that bypass page CSP. ' +
-            'For DOM reads use the get_* / extract_* tools; for interaction use click/fill/type/scroll.',
         };
         const wrapped = new Error(
           code + ': ' + rawMsg + ' | hint: ' + JSON.stringify(hint),

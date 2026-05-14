@@ -188,7 +188,9 @@ export class InteractionTools {
           },
           required: ['tabUrl'],
         },
-        requirements: { idempotent: false, requiresCspBypass: true },
+        // v0.1.35 Task 6 — 'preferred': extension when available, fall back
+        // to applescript/daemon (uses the config-gated legacy IIFE path).
+        requirements: { idempotent: false, requiresCspBypass: 'preferred' },
       },
       {
         name: 'safari_double_click',
@@ -229,7 +231,8 @@ export class InteractionTools {
           },
           required: ['tabUrl', 'value'],
         },
-        requirements: { idempotent: false, requiresCspBypass: true },
+        // v0.1.35 Task 6 — 'preferred' (see safari_click).
+        requirements: { idempotent: false, requiresCspBypass: 'preferred' },
       },
       {
         name: 'safari_select_option',
@@ -295,7 +298,8 @@ export class InteractionTools {
           },
           required: ['tabUrl', 'content'],
         },
-        requirements: { idempotent: false, requiresCspBypass: true },
+        // v0.1.35 Task 6 — 'preferred' (see safari_click).
+        requirements: { idempotent: false, requiresCspBypass: 'preferred' },
       },
       {
         name: 'safari_press_key',
@@ -346,7 +350,8 @@ export class InteractionTools {
           },
           required: ['tabUrl'],
         },
-        requirements: { idempotent: false, requiresCspBypass: true },
+        // v0.1.35 Task 6 — 'preferred' (see safari_click).
+        requirements: { idempotent: false, requiresCspBypass: 'preferred' },
       },
       {
         name: 'safari_drag',
