@@ -1196,6 +1196,13 @@
                   }
                   const style = window.getComputedStyle(el);
                   const visible = style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+                  // v0.1.35 T10: per-element interactability hint. Mirrored
+                  // as null in the AppleScript fallback path. Falls through to
+                  // null when the locator helper module isn't loaded.
+                  const __spL = window.__SP_LOCATOR__;
+                  const interactability = (__spL && typeof __spL.buildInteractability === 'function')
+                    ? __spL.buildInteractability(el)
+                    : null;
                   items.push({
                     ref,
                     tagName: el.tagName || '',
@@ -1203,6 +1210,7 @@
                     attrs,
                     boundingBox: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
                     visible,
+                    interactability,
                   });
                 }
                 result = { items, count: all.length, limit, truncated };
@@ -1251,6 +1259,59 @@
                 const text = el.innerText || el.textContent || '';
                 result = { text: text.slice(0, max), length: text.length, truncated: text.length > max };
               }
+              break;
+            }
+            // ── EARLY INTERCEPT: __SP_WAIT_RATE_LIMIT_CLEAR__:<json> (v0.1.35 Task 9) ──
+            // Sentinel-routed handler for safari_wait_for_rate_limit_clear. Pure read:
+            // scans document.body.innerText for HTTP-429 / rate-limit indicators and
+            // returns { rate_limited } so the TS-side handler can poll until clear.
+            if (typeof params.script === 'string' && params.script.startsWith('__SP_WAIT_RATE_LIMIT_CLEAR__:')) {
+              const text = ((document.body && document.body.innerText) || '').toLowerCase();
+              const indicators = ['rate limit', '429', 'too many requests', 'try again later'];
+              const rate_limited = indicators.some((i) => text.includes(i));
+              result = { rate_limited };
+              break;
+            }
+            // ── EARLY INTERCEPT: __SP_COMPOSE_FINAL_EVIDENCE__:<json> (v0.1.35 Task 7) ──
+            // Sentinel-routed handler for safari_compose_final_evidence. Resolves the
+            // optional locator, scrolls the matched element into view (center), grabs
+            // the matching DOM snippet (or the body text fallback), and computes a
+            // simple textual claim_grounded check. The TS-side handler captures a
+            // screenshot afterward and returns all three fields in metadata.
+            if (typeof params.script === 'string' && params.script.startsWith('__SP_COMPOSE_FINAL_EVIDENCE__:')) {
+              const payload = JSON.parse(params.script.slice('__SP_COMPOSE_FINAL_EVIDENCE__:'.length));
+              const claim = typeof payload.claim === 'string' ? payload.claim : '';
+              const locator = payload.locator;
+              let element = null;
+              if (locator) {
+                const L = window.__SP_LOCATOR__;
+                if (L && typeof L.resolveLocator === 'function') {
+                  const resolved = L.resolveLocator(locator, {});
+                  if (resolved && resolved.found && resolved.selector) {
+                    try { element = document.querySelector(resolved.selector); } catch { element = null; }
+                  }
+                }
+                // Fallback: direct selector if locator has a literal `selector` key
+                if (!element && locator.selector) {
+                  try { element = document.querySelector(locator.selector); } catch { element = null; }
+                }
+                if (element && typeof element.scrollIntoView === 'function') {
+                  try { element.scrollIntoView({ behavior: 'instant', block: 'center' }); } catch { /* best-effort */ }
+                }
+              }
+              const dom_snippet = element
+                ? element.outerHTML.slice(0, 2000)
+                : (document.body ? document.body.innerText.slice(0, 2000) : '');
+              let claim_grounded = false;
+              if (claim) {
+                if (dom_snippet.includes(claim)) {
+                  claim_grounded = true;
+                } else {
+                  const words = claim.split(/\s+/).filter((w) => w.length > 3);
+                  claim_grounded = words.length > 0 && words.every((w) => dom_snippet.includes(w));
+                }
+              }
+              result = { dom_snippet, claim_grounded };
               break;
             }
             // ── existing default execute_script path ──
