@@ -13,7 +13,10 @@ RUN_SEQ="${WV_RUN_SEQ:-1}"
 mkdir -p "$OUT_DIR"
 
 REPO_ROOT="/Users/Aakash/Claude Projects/Skills Factory/safari-pilot"
-DATASET="$REPO_ROOT/bench/webvoyager/data/data/WebVoyager_data.jsonl"
+# Dataset source: honor $WV_DATASET if set (used by run-bench.sh --patched/--comparable
+# to point children at patched-2026.jsonl / comparable-original.jsonl). Falls back to
+# the canonical original WebVoyager dataset when unset.
+DATASET="${WV_DATASET:-$REPO_ROOT/bench/webvoyager/data/data/WebVoyager_data.jsonl}"
 
 SAFE_ID="${TASK_ID//[^A-Za-z0-9_-]/_}"
 SCREENSHOT="/tmp/wv-AGENT-${SAFE_ID}-r${RUN_SEQ}.png"
@@ -24,20 +27,7 @@ PRETTY_LOG="$OUT_DIR/${TASK_ID}-r${RUN_SEQ}.pretty.log"
 
 rm -f "$SCREENSHOT" 2>/dev/null || true
 
-# Extract task fields using a dedicated python helper
-read -r URL QUES < <(python3 - "$DATASET" "$TASK_ID" <<'PYEOF'
-import json, sys
-ds, tid = sys.argv[1], sys.argv[2]
-for line in open(ds):
-    try: t = json.loads(line)
-    except: continue
-    if t.get('id') == tid:
-        print(t['web'])
-        print(t['ques'])
-        break
-PYEOF
-)
-# python emits two lines: URL on line 1, QUES on line 2 — split:
+# Extract task fields from $DATASET.
 URL=$(python3 - "$DATASET" "$TASK_ID" <<'PYEOF'
 import json,sys
 ds,tid=sys.argv[1],sys.argv[2]
@@ -71,6 +61,15 @@ PROMPT="${PROMPT_TEMPLATE//\{url\}/$URL}"
 PROMPT="${PROMPT//\{question\}/$QUES}"
 PROMPT="${PROMPT//\{screenshot\}/$SCREENSHOT}"
 printf '%s' "$PROMPT" > "$PROMPT_FILE"
+
+# Dry-run hook for harness tests: emit a structured marker with the resolved
+# URL and QUES then exit 0 — does NOT invoke claude. Contract is exercised by
+# test/unit/bench/test_wv_dataset_override.py.
+if [ "${WV_DRY_RUN:-0}" = "1" ]; then
+  echo "WV_DRY_RUN_RESOLVED id=$TASK_ID url=$URL ques=$QUES"
+  rm -f "$PROMPT_FILE"
+  exit 0
+fi
 
 START_TS=$(date +%s)
 echo "════════════════════════════════════════════════"

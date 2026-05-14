@@ -22,6 +22,10 @@ case "$MODE" in
   patched)    DATASET="$REPO_ROOT/bench/webvoyager/patched-2026.jsonl"; VARIANT_TAG="v0.1.35-patched-2026" ;;
   comparable) DATASET="$REPO_ROOT/bench/webvoyager/comparable-original.jsonl"; VARIANT_TAG="v0.1.35-comparable-original" ;;
 esac
+# Test/dev override: if WV_DATASET is set in the parent env, honor it for BOTH
+# iteration and child resolution. This lets harness tests run --patched without
+# mutating the canonical patched-2026.jsonl on disk.
+DATASET="${WV_DATASET:-$DATASET}"
 [[ -f "$DATASET" ]] || { echo "dataset not found: $DATASET — run apply-patches.py first" >&2; exit 2; }
 
 OUT_DIR="${OUT_DIR:-/tmp/wv-runs-${MODE}-$(date +%Y%m%d-%H%M%S)}"
@@ -44,7 +48,7 @@ for line in open('$DATASET'):
 for tid in $TASK_IDS; do
   for ((r=1; r<=RUNS; r++)); do
     while [[ $(jobs -r | wc -l) -ge $CONCURRENCY ]]; do sleep 0.5; done
-    WV_OUT_DIR="$OUT_DIR" WV_VARIANT="$VARIANT_TAG" WV_RUN_SEQ="$r" \
+    WV_OUT_DIR="$OUT_DIR" WV_VARIANT="$VARIANT_TAG" WV_RUN_SEQ="$r" WV_DATASET="$DATASET" \
       bash "$REPO_ROOT/bench/webvoyager/run-one-task.sh" "$tid" &
   done
 done
