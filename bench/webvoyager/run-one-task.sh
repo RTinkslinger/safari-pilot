@@ -146,9 +146,9 @@ CLEANED=$(perl -e 'alarm 8; exec @ARGV' osascript "$CLEANUP_SCRIPT" 2>&1; echo $
 rm -f "$CLEANUP_SCRIPT" "$SNAPSHOT_FILE"
 
 # Build score.json + transcript
-python3 - "$STREAM_JSONL" "$SCORE_FILE" "$TRANSCRIPT" "$TASK_ID" "$WALL_MS" "$EXIT" "$SCREENSHOT" "$VARIANT_TAG" <<'PYEOF'
+python3 - "$STREAM_JSONL" "$SCORE_FILE" "$TRANSCRIPT" "$TASK_ID" "$WALL_MS" "$EXIT" "$SCREENSHOT" "$VARIANT_TAG" "$RUN_SEQ" <<'PYEOF'
 import json, os, sys
-stream, score_path, trans_path, tid, wall, exit_code, shot, variant = sys.argv[1:9]
+stream, score_path, trans_path, tid, wall, exit_code, shot, variant, run_seq = sys.argv[1:10]
 final = ''
 turns = 0
 cost = 0.0
@@ -173,7 +173,7 @@ d = {
   'verdict': verdict,
   'judge_reasoning': '' if shot_present else 'screenshot capture failed',
   'agent_final_text': final,
-  'run_seq': 1,
+  'run_seq': int(run_seq),
   'wall_ms': int(wall),
   'agent_duration_ms': duration,
   'turns': turns,

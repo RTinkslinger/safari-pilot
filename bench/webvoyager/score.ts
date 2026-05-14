@@ -1,4 +1,48 @@
 import type { WebVoyagerScore, JudgeVerdict } from './types.js';
+import { aggregateMajorityVerdict } from './judge.js';
+
+export interface RunScore {
+  task_id: string;
+  run_seq: number;
+  verdict: JudgeVerdict;
+  wall_ms: number;
+  cost_usd?: number;
+  step_count?: number;
+}
+
+export interface CollapsedRun {
+  task_id: string;
+  verdict: JudgeVerdict | 'UNKNOWN';
+  median_wall_ms: number;
+  median_steps: number;
+  total_cost_usd: number;
+}
+
+/**
+ * Collapse multi-run scores per task using the generic majority aggregator,
+ * computing median wall_ms / step_count and total cost across runs.
+ * Used for dual-metric reporting alongside the legacy aggregateScoreboard path.
+ */
+export function collapseMajority(runs: RunScore[]): CollapsedRun[] {
+  const byTask = new Map<string, RunScore[]>();
+  for (const r of runs) {
+    const arr = byTask.get(r.task_id) ?? [];
+    arr.push(r);
+    byTask.set(r.task_id, arr);
+  }
+  const med = (xs: number[]): number => {
+    if (xs.length === 0) return 0;
+    const sorted = [...xs].sort((a, b) => a - b);
+    return sorted[Math.floor(sorted.length / 2)]!;
+  };
+  return Array.from(byTask.entries()).map(([task_id, rs]) => ({
+    task_id,
+    verdict: aggregateMajorityVerdict<JudgeVerdict>(rs.map((r) => r.verdict)),
+    median_wall_ms: med(rs.map((r) => r.wall_ms)),
+    median_steps: med(rs.map((r) => r.step_count ?? 0)),
+    total_cost_usd: rs.reduce((s, r) => s + (r.cost_usd ?? 0), 0),
+  }));
+}
 
 export interface SiteAggregate {
   tasks_total: number;

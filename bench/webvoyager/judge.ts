@@ -101,3 +101,18 @@ export async function runJudge(
   const text = response.choices[0]?.message?.content ?? '';
   return parseJudgeResponse(text);
 }
+
+/**
+ * Majority-of-N verdict aggregator.
+ * Returns the verdict with the strict majority of votes, or UNKNOWN if no majority exists.
+ */
+export function aggregateMajorityVerdict<T extends string>(verdicts: readonly T[]): T | 'UNKNOWN' {
+  if (verdicts.length === 0) return 'UNKNOWN' as T | 'UNKNOWN';
+  const counts = new Map<T, number>();
+  for (const v of verdicts) counts.set(v, (counts.get(v) ?? 0) + 1);
+  const half = verdicts.length / 2;
+  for (const [v, n] of counts) {
+    if (n > half) return v;
+  }
+  return 'UNKNOWN' as T | 'UNKNOWN';
+}
