@@ -1253,6 +1253,17 @@
               }
               break;
             }
+            // ── EARLY INTERCEPT: __SP_WAIT_RATE_LIMIT_CLEAR__:<json> (v0.1.35 Task 9) ──
+            // Sentinel-routed handler for safari_wait_for_rate_limit_clear. Pure read:
+            // scans document.body.innerText for HTTP-429 / rate-limit indicators and
+            // returns { rate_limited } so the TS-side handler can poll until clear.
+            if (typeof params.script === 'string' && params.script.startsWith('__SP_WAIT_RATE_LIMIT_CLEAR__:')) {
+              const text = ((document.body && document.body.innerText) || '').toLowerCase();
+              const indicators = ['rate limit', '429', 'too many requests', 'try again later'];
+              const rate_limited = indicators.some((i) => text.includes(i));
+              result = { rate_limited };
+              break;
+            }
             // ── EARLY INTERCEPT: __SP_COMPOSE_FINAL_EVIDENCE__:<json> (v0.1.35 Task 7) ──
             // Sentinel-routed handler for safari_compose_final_evidence. Resolves the
             // optional locator, scrolls the matched element into view (center), grabs

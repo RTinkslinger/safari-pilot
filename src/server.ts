@@ -32,6 +32,7 @@ import { FileUploadTools } from './tools/file-upload.js';
 import { OverlayTools } from './tools/overlays.js';
 import { PageInfoTools } from './tools/page-info.js';
 import { FinalProofTools } from './tools/final-proof.js';
+import { PlaybooksTools } from './tools/playbooks.js';
 import { loadAllAllowlists } from './overlays/index.js';
 import type { PatternRegistryEntry } from './overlays/types.js';
 import { ToolIndex } from './discovery/tool-index.js';
@@ -299,6 +300,12 @@ export class SafariPilotServer {
       new OverlayTools({ engine: proxy, patterns: [], disableOverlayDismiss: false, enablePaywallDismiss: false }),
       new PageInfoTools(proxy),
       new FinalProofTools(proxy),
+      // PlaybooksTools (v0.1.35 Task 9): for the static lister we hand it a
+      // throwaway empty-pattern OverlayTools — only getDefinitions() runs here.
+      new PlaybooksTools({
+        engine: proxy,
+        overlayTools: new OverlayTools({ engine: proxy, patterns: [], disableOverlayDismiss: false, enablePaywallDismiss: false }),
+      }),
     ];
 
     // Build the tool index from all existing modules and add the search meta-tool.
@@ -466,6 +473,11 @@ export class SafariPilotServer {
     // + claim_grounded) routed through __SP_COMPOSE_FINAL_EVIDENCE__ sentinel.
     const finalProofTools = new FinalProofTools(proxy);
 
+    // v0.1.35 Task 9: light cross-cutting playbook tools — date normaliser,
+    // cookie-consent dismiss specialization (delegates to overlayTools), and
+    // rate-limit-clear poller (uses __SP_WAIT_RATE_LIMIT_CLEAR__ sentinel).
+    const playbooksTools = new PlaybooksTools({ engine: proxy, overlayTools });
+
     // Register all tools from all modules.
     // Each module may have getHandler returning Handler (NavigationTools) or Handler | undefined.
     type ToolModule = {
@@ -502,6 +514,7 @@ export class SafariPilotServer {
       overlayTools as unknown as ToolModule,
       pageInfoTools,
       finalProofTools,
+      playbooksTools,
     ];
 
     // Build the tool index from all registered modules, then add the search meta-tool.

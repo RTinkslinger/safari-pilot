@@ -511,6 +511,23 @@ function makeHandler() {
       return;
     }
 
+    // v0.1.35 Task 9: fixture for safari_dismiss_cookie_consent. Mirrors the
+    // OneTrust pattern in src/overlays/cookie-consent.json — both signals must
+    // match (selector #onetrust-banner-sdk AND aria-label containing "cookie")
+    // for findPatternRoot to identify the banner. The dismiss button selector
+    // (#onetrust-accept-btn-handler) is what L.dismissPattern clicks.
+    if (url === '/cookie-banner') {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(`<!DOCTYPE html><html><body>
+<div id="onetrust-banner-sdk" role="dialog" aria-label="Cookie Notice" style="position:fixed;bottom:0;left:0;right:0;padding:1em;background:#000;color:#fff">
+  <p>This site uses cookies.</p>
+  <button id="onetrust-accept-btn-handler" onclick="document.getElementById('onetrust-banner-sdk').remove()">Accept</button>
+</div>
+<p>Page content here.</p>
+</body></html>`);
+      return;
+    }
+
     // v0.1.35 Task 7: fixture for safari_compose_final_evidence — a small
     // recipe-style page with a discrete rating block we can locator-target.
     if (url === '/with-claim') {
