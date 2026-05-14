@@ -9,17 +9,18 @@ set -euo pipefail
 TASK_ID="${1:?usage: $0 <task-id> [output-dir]}"
 OUT_DIR="${2:-${WV_OUT_DIR:-/tmp/wv-inline-runs}}"
 VARIANT_TAG="${WV_VARIANT:-v0.1.33-inline-bare}"
+RUN_SEQ="${WV_RUN_SEQ:-1}"
 mkdir -p "$OUT_DIR"
 
 REPO_ROOT="/Users/Aakash/Claude Projects/Skills Factory/safari-pilot"
 DATASET="$REPO_ROOT/bench/webvoyager/data/data/WebVoyager_data.jsonl"
 
 SAFE_ID="${TASK_ID//[^A-Za-z0-9_-]/_}"
-SCREENSHOT="/tmp/wv-AGENT-${SAFE_ID}-r1.png"
-SCORE_FILE="$OUT_DIR/${TASK_ID}-r1.score.json"
-TRANSCRIPT="$OUT_DIR/${TASK_ID}-r1.transcript.txt"
-STREAM_JSONL="$OUT_DIR/${TASK_ID}-r1.stream.jsonl"
-PRETTY_LOG="$OUT_DIR/${TASK_ID}-r1.pretty.log"
+SCREENSHOT="/tmp/wv-AGENT-${SAFE_ID}-r${RUN_SEQ}.png"
+SCORE_FILE="$OUT_DIR/${TASK_ID}-r${RUN_SEQ}.score.json"
+TRANSCRIPT="$OUT_DIR/${TASK_ID}-r${RUN_SEQ}.transcript.txt"
+STREAM_JSONL="$OUT_DIR/${TASK_ID}-r${RUN_SEQ}.stream.jsonl"
+PRETTY_LOG="$OUT_DIR/${TASK_ID}-r${RUN_SEQ}.pretty.log"
 
 rm -f "$SCREENSHOT" 2>/dev/null || true
 
