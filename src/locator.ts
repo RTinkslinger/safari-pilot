@@ -77,6 +77,38 @@ export interface LocatorResult {
   hint?: string;
 }
 
+/**
+ * v0.1.35 T10: per-element interactability hint for safari_query_all results.
+ * Computed in extension/locator.js `buildInteractability(el)`. AppleScript
+ * fallback path emits `null` (engine can't compute layered coverage).
+ */
+export interface QueryAllInteractability {
+  clickable: boolean;
+  fillable: boolean;
+  focusable: boolean;
+  role: string | null;
+  accessibleName: string | null;
+  isVisible: boolean;
+  boundingBox: { x: number; y: number; w: number; h: number };
+  isCovered: boolean;
+  isAriaDisabled: boolean;
+}
+
+/**
+ * Per-element record returned by safari_query_all. `interactability` is the
+ * structured hint object on the extension path, `null` on the AppleScript
+ * fallback path.
+ */
+export interface QueryAllItem {
+  ref: string;
+  tagName: string;
+  text: string;
+  attrs: Record<string, string>;
+  boundingBox: { x: number; y: number; width: number; height: number };
+  visible: boolean;
+  interactability: QueryAllInteractability | null;
+}
+
 // ─── Role → CSS Pre-Filter Map ───────────────────────────────────────────────
 //
 // Maps ARIA roles to CSS selectors that catch both explicit [role] attributes
@@ -834,6 +866,12 @@ export function generateQueryAllJs(
       attrs: __attrs,
       boundingBox: { x: __rect.x, y: __rect.y, width: __rect.width, height: __rect.height },
       visible: __visible,
+      // v0.1.35 T10: AppleScript fallback emits null per-element since the
+      // do-JavaScript engine cannot compute layered visibility plus
+      // elementFromPoint coverage. The extension path returns the structured
+      // object via __SP_LOCATOR__.buildInteractability. Drift-detector
+      // enforces parity (null here vs object there).
+      interactability: null,
     });
   }
   return JSON.stringify({

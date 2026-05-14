@@ -338,6 +338,42 @@
     return (s || '').replace(/^\s+|\s+$/g, '').replace(/\s+/g, ' ');
   }
 
+  // ── v0.1.35 T10: per-element interactability hints for safari_query_all ───
+  //
+  // Mirrored as `null` in the AppleScript fallback path (src/locator.ts
+  // generateQueryAllJs) — that engine can't compute layered visibility +
+  // elementFromPoint coverage without a full DOM. Drift between the two paths
+  // (extension returns structured object, AppleScript returns null) is
+  // guarded by test/unit/locators/drift-detector.test.ts.
+  function buildInteractability(el) {
+    if (!(el instanceof Element)) return null;
+    const tag = el.tagName.toLowerCase();
+    const aria = (n) => el.getAttribute(n);
+    const isAriaDisabled = aria('aria-disabled') === 'true';
+    const isDisabled = el.hasAttribute('disabled') || isAriaDisabled;
+    const role = aria('role') || (tag === 'button' ? 'button' : tag === 'input' ? 'textbox' : tag === 'a' ? 'link' : null);
+    const accessibleName = aria('aria-label') || el.getAttribute('alt') || el.getAttribute('title')
+      || ((el.textContent || '').trim().slice(0, 100) || null);
+    const rect = el.getBoundingClientRect();
+    const cs = window.getComputedStyle(el);
+    const isVisible = rect.width > 0 && rect.height > 0 && cs.visibility !== 'hidden' && cs.display !== 'none';
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+    const top = document.elementFromPoint(cx, cy);
+    const isCovered = top != null && top !== el && !el.contains(top);
+    return {
+      clickable: !isDisabled && (role === 'button' || role === 'link' || tag === 'button' || tag === 'a'),
+      fillable: !isDisabled && (role === 'textbox' || tag === 'input' || tag === 'textarea'),
+      focusable: !isDisabled && el.tabIndex >= 0,
+      role,
+      accessibleName,
+      isVisible,
+      boundingBox: { x: rect.x, y: rect.y, w: rect.width, h: rect.height },
+      isCovered,
+      isAriaDisabled,
+    };
+  }
+
   function matchText(haystack, needle, isExact) {
     if (isExact) return haystack === needle;
     return haystack.toLowerCase().indexOf(needle.toLowerCase()) !== -1;
@@ -850,6 +886,7 @@
         attrs,
         boundingBox: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
         visible,
+        interactability: buildInteractability(el),
       });
     }
     return { items, count: matched.length, limit, truncated };
@@ -1340,5 +1377,6 @@
     resolveLocatorAll,
     buildSnapshot,
     smartScrape,
+    buildInteractability,
   };
 })();

@@ -1196,6 +1196,13 @@
                   }
                   const style = window.getComputedStyle(el);
                   const visible = style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+                  // v0.1.35 T10: per-element interactability hint. Mirrored
+                  // as null in the AppleScript fallback path. Falls through to
+                  // null when the locator helper module isn't loaded.
+                  const __spL = window.__SP_LOCATOR__;
+                  const interactability = (__spL && typeof __spL.buildInteractability === 'function')
+                    ? __spL.buildInteractability(el)
+                    : null;
                   items.push({
                     ref,
                     tagName: el.tagName || '',
@@ -1203,6 +1210,7 @@
                     attrs,
                     boundingBox: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
                     visible,
+                    interactability,
                   });
                 }
                 result = { items, count: all.length, limit, truncated };

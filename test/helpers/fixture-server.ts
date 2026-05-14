@@ -511,6 +511,23 @@ function makeHandler() {
       return;
     }
 
+    // v0.1.35 Task 10: fixture for safari_query_all interactability hints.
+    // Four targets, one per axis the buildInteractability builder reports:
+    //   - <button>Click me</button>             → clickable, focusable, role=button
+    //   - <button disabled aria-disabled=...>   → !clickable, isAriaDisabled
+    //   - <input type="text" />                  → fillable, focusable, role=textbox
+    //   - <a href="#">A link</a>                 → clickable, focusable, role=link
+    if (url === '/interactivity') {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(`<!DOCTYPE html><html><body>
+<button>Click me</button>
+<button disabled aria-disabled="true">No</button>
+<input type="text" />
+<a href="#">A link</a>
+</body></html>`);
+      return;
+    }
+
     // v0.1.35 Task 9: fixture for safari_dismiss_cookie_consent. Mirrors the
     // OneTrust pattern in src/overlays/cookie-consent.json — both signals must
     // match (selector #onetrust-banner-sdk AND aria-label containing "cookie")
