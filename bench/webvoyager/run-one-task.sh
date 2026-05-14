@@ -94,6 +94,15 @@ end tell' 2>/dev/null > "$SNAPSHOT_FILE"
 cd "$REPO_ROOT"
 
 set +e
+# Auth path selection. By default uses ANTHROPIC_API_KEY (pay-per-use). To use
+# the Claude.ai Max subscription instead, the user must first run
+# `claude /login` interactively to persist auth credentials accessible to
+# subshell invocations. Set WV_AUTH=max to drop ANTHROPIC_API_KEY from the
+# subshell so the persisted Max credentials are used. Default WV_AUTH=apikey
+# preserves prior behavior.
+if [ "${WV_AUTH:-apikey}" = "max" ]; then
+  unset ANTHROPIC_API_KEY
+fi
 SAFARI_PILOT_NO_SESSION_WINDOW=1 \
   claude --bare --dangerously-skip-permissions --mcp-config .mcp.json \
     -p "$(cat "$PROMPT_FILE")" --verbose --output-format stream-json \
