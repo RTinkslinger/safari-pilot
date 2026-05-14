@@ -59,20 +59,23 @@ describe('v0.1.35 T9 — playbook tools', () => {
 
   describe('safari_dismiss_cookie_consent', () => {
     it('dismisses a cookie banner on a fixture page', async () => {
-      const url = `http://127.0.0.1:${fixture.hostPort}/cookie-banner?sp_tT9a=${Date.now()}`;
+      const target = `http://127.0.0.1:${fixture.hostPort}/cookie-banner?sp_tT9a=${Date.now()}`;
       const tab = (await callTool(
         client,
         'safari_new_tab',
-        { url },
+        { url: target },
         nextId(),
         15_000,
-      )) as { tab_id?: number };
+      )) as { tabUrl?: string; tab_id?: number };
+      const tabUrl = tab.tabUrl ?? target;
       const tabId = tab.tab_id;
+      // Settle for extension tab cache + content script injection.
+      await new Promise((resolve) => setTimeout(resolve, 1500));
       try {
         const r = (await callTool(
           client,
           'safari_dismiss_cookie_consent',
-          { tabUrl: url },
+          { tabUrl },
           nextId(),
           30_000,
         )) as { dismissed?: boolean; banner_type?: string };

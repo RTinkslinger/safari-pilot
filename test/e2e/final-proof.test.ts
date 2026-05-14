@@ -34,18 +34,22 @@ describe('v0.1.35 T7 — safari_compose_final_evidence', () => {
   });
 
   it('captures screenshot + DOM snippet for a claim grounded in page content', async () => {
-    const url = `http://127.0.0.1:${fixture.hostPort}/with-claim?sp_tT7a=${Date.now()}`;
-    const tab = (await callTool(client, 'safari_new_tab', { url }, nextId(), 15_000)) as {
+    const target = `http://127.0.0.1:${fixture.hostPort}/with-claim?sp_tT7a=${Date.now()}`;
+    const tab = (await callTool(client, 'safari_new_tab', { url: target }, nextId(), 15_000)) as {
+      tabUrl?: string;
       tab_id?: number;
     };
+    const tabUrl = tab.tabUrl ?? target;
     const tabId = tab.tab_id;
+    // Settle for extension tab cache + content script injection.
+    await new Promise((resolve) => setTimeout(resolve, 1500));
     try {
       const result = (await callTool(
         client,
         'safari_compose_final_evidence',
         {
-          tabUrl: url,
-          claim: 'The recipe has 4.5 stars and 563 ratings',
+          tabUrl,
+          claim: '4.5 stars and 563 ratings',
           evidence_locator: { selector: '#rating-block' },
         },
         nextId(),
@@ -66,17 +70,21 @@ describe('v0.1.35 T7 — safari_compose_final_evidence', () => {
   }, 60_000);
 
   it('reports claim_grounded:false when claim text not found in DOM', async () => {
-    const url = `http://127.0.0.1:${fixture.hostPort}/with-claim?sp_tT7b=${Date.now()}`;
-    const tab = (await callTool(client, 'safari_new_tab', { url }, nextId(), 15_000)) as {
+    const target = `http://127.0.0.1:${fixture.hostPort}/with-claim?sp_tT7b=${Date.now()}`;
+    const tab = (await callTool(client, 'safari_new_tab', { url: target }, nextId(), 15_000)) as {
+      tabUrl?: string;
       tab_id?: number;
     };
+    const tabUrl = tab.tabUrl ?? target;
     const tabId = tab.tab_id;
+    // Settle for extension tab cache + content script injection.
+    await new Promise((resolve) => setTimeout(resolve, 1500));
     try {
       const result = (await callTool(
         client,
         'safari_compose_final_evidence',
         {
-          tabUrl: url,
+          tabUrl,
           claim: 'The recipe has 9.9 stars',
           evidence_locator: { selector: '#rating-block' },
         },
