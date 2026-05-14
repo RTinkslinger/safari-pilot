@@ -31,6 +31,7 @@ import { ExtensionDiagnosticsTools } from './tools/extension-diagnostics.js';
 import { FileUploadTools } from './tools/file-upload.js';
 import { OverlayTools } from './tools/overlays.js';
 import { PageInfoTools } from './tools/page-info.js';
+import { FinalProofTools } from './tools/final-proof.js';
 import { loadAllAllowlists } from './overlays/index.js';
 import type { PatternRegistryEntry } from './overlays/types.js';
 import { ToolIndex } from './discovery/tool-index.js';
@@ -297,6 +298,7 @@ export class SafariPilotServer {
       // OverlayTools: I/O-free static lister — empty patterns + flags off.
       new OverlayTools({ engine: proxy, patterns: [], disableOverlayDismiss: false, enablePaywallDismiss: false }),
       new PageInfoTools(proxy),
+      new FinalProofTools(proxy),
     ];
 
     // Build the tool index from all existing modules and add the search meta-tool.
@@ -460,6 +462,10 @@ export class SafariPilotServer {
     // v0.1.34 Tasks 4-6: ISOLATED-world page-info capability tools.
     const pageInfoTools = new PageInfoTools(proxy);
 
+    // v0.1.35 Task 7: pre-answer evidence composer (screenshot + DOM snippet
+    // + claim_grounded) routed through __SP_COMPOSE_FINAL_EVIDENCE__ sentinel.
+    const finalProofTools = new FinalProofTools(proxy);
+
     // Register all tools from all modules.
     // Each module may have getHandler returning Handler (NavigationTools) or Handler | undefined.
     type ToolModule = {
@@ -495,6 +501,7 @@ export class SafariPilotServer {
       selectorPackTools,
       overlayTools as unknown as ToolModule,
       pageInfoTools,
+      finalProofTools,
     ];
 
     // Build the tool index from all registered modules, then add the search meta-tool.

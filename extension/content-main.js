@@ -1253,6 +1253,48 @@
               }
               break;
             }
+            // ── EARLY INTERCEPT: __SP_COMPOSE_FINAL_EVIDENCE__:<json> (v0.1.35 Task 7) ──
+            // Sentinel-routed handler for safari_compose_final_evidence. Resolves the
+            // optional locator, scrolls the matched element into view (center), grabs
+            // the matching DOM snippet (or the body text fallback), and computes a
+            // simple textual claim_grounded check. The TS-side handler captures a
+            // screenshot afterward and returns all three fields in metadata.
+            if (typeof params.script === 'string' && params.script.startsWith('__SP_COMPOSE_FINAL_EVIDENCE__:')) {
+              const payload = JSON.parse(params.script.slice('__SP_COMPOSE_FINAL_EVIDENCE__:'.length));
+              const claim = typeof payload.claim === 'string' ? payload.claim : '';
+              const locator = payload.locator;
+              let element = null;
+              if (locator) {
+                const L = window.__SP_LOCATOR__;
+                if (L && typeof L.resolveLocator === 'function') {
+                  const resolved = L.resolveLocator(locator, {});
+                  if (resolved && resolved.found && resolved.selector) {
+                    try { element = document.querySelector(resolved.selector); } catch { element = null; }
+                  }
+                }
+                // Fallback: direct selector if locator has a literal `selector` key
+                if (!element && locator.selector) {
+                  try { element = document.querySelector(locator.selector); } catch { element = null; }
+                }
+                if (element && typeof element.scrollIntoView === 'function') {
+                  try { element.scrollIntoView({ behavior: 'instant', block: 'center' }); } catch { /* best-effort */ }
+                }
+              }
+              const dom_snippet = element
+                ? element.outerHTML.slice(0, 2000)
+                : (document.body ? document.body.innerText.slice(0, 2000) : '');
+              let claim_grounded = false;
+              if (claim) {
+                if (dom_snippet.includes(claim)) {
+                  claim_grounded = true;
+                } else {
+                  const words = claim.split(/\s+/).filter((w) => w.length > 3);
+                  claim_grounded = words.length > 0 && words.every((w) => dom_snippet.includes(w));
+                }
+              }
+              result = { dom_snippet, claim_grounded };
+              break;
+            }
             // ── existing default execute_script path ──
             const commandId = params.commandId;
             if (commandId && window.__safariPilotExecutedCommands.has(commandId)) {

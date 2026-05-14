@@ -511,6 +511,21 @@ function makeHandler() {
       return;
     }
 
+    // v0.1.35 Task 7: fixture for safari_compose_final_evidence — a small
+    // recipe-style page with a discrete rating block we can locator-target.
+    if (url === '/with-claim') {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(`<!DOCTYPE html><html>
+<head><title>Recipe</title></head>
+<body>
+<h1>Spinach Lasagna</h1>
+<div id="rating-block">4.5 stars &middot; 563 ratings</div>
+<p>This is a delicious vegetarian recipe.</p>
+</body>
+</html>`);
+      return;
+    }
+
     const file = url === '/' ? 'host.html' : url.replace(/^\/+/, '');
     try {
       const body = readFileSync(resolve(FIXTURE_DIR, file));
