@@ -93,6 +93,10 @@ export interface EngineError {
   code: string;
   message: string;
   retryable: boolean;
+  /** Operator-readable recovery suggestions. Surfaced when the engine
+   * translates an opaque underlying failure into a structured error
+   * the caller can act on (e.g. DAEMON_TIMEOUT). */
+  hints?: readonly string[];
 }
 
 export interface StructuredUncertainty {

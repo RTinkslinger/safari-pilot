@@ -1,11 +1,48 @@
 import { BaseEngine } from './engine.js';
 import type { DaemonEngine } from './daemon.js';
 import type { Engine, EngineResult } from '../types.js';
+import { ERROR_CODES, ERROR_METADATA } from '../errors.js';
 
 // Internal sentinel prefix used to distinguish extension bridge commands from
 // normal AppleScript execution commands routed through the same DaemonEngine.
 const INTERNAL_PREFIX = '__SAFARI_PILOT_INTERNAL__';
-const EXTENSION_TIMEOUT_MS = 90_000;
+
+/**
+ * v0.1.36 Track A Fix 2 — default per-call timeout for extension execution.
+ * Replaced the previous EXTENSION_TIMEOUT_MS=90_000 floor that clamped every
+ * caller's timeout upward (Math.max), which produced ~963 errors of "Daemon
+ * command 'execute' timed out after 90000ms" in the v0.1.35 single-run bench
+ * (~30% of all tool errors). Tools that need longer waits — safari_wait_for,
+ * safari_navigate, safari_dismiss_overlays — pass an explicit `timeout`
+ * parameter; the default applies to short ops (get_text, click, evaluate,
+ * snapshot, query_all, etc.). Override via SP_EXTENSION_DEFAULT_TIMEOUT_MS
+ * env var if a deployment proves 15s is too tight.
+ */
+const DEFAULT_EXTENSION_TIMEOUT_MS = Number.parseInt(
+  process.env['SP_EXTENSION_DEFAULT_TIMEOUT_MS'] ?? '15000',
+  10,
+) || 15_000;
+
+/** Detects daemon's textual "execute timed out" error from the underlying
+ *  ExtensionBridge so the engine can translate it to a structured envelope. */
+const DAEMON_EXECUTE_TIMEOUT_RE = /Daemon command\s+"execute"\s+timed out\s+after\s+\d+\s*ms/i;
+
+function translateDaemonError(result: EngineResult): EngineResult {
+  if (result.ok || !result.error) return result;
+  if (DAEMON_EXECUTE_TIMEOUT_RE.test(result.error.message)) {
+    const meta = ERROR_METADATA[ERROR_CODES.DAEMON_TIMEOUT];
+    return {
+      ...result,
+      error: {
+        code: ERROR_CODES.DAEMON_TIMEOUT,
+        message: result.error.message,
+        retryable: meta?.retryable ?? true,
+        hints: meta?.hints,
+      },
+    };
+  }
+  return result;
+}
 
 /**
  * ExtensionEngine routes JavaScript execution through the Safari extension via the daemon.
@@ -81,12 +118,12 @@ export class ExtensionEngine extends BaseEngine {
       const payload = JSON.stringify({ script: jsCode, tabUrl });
       const daemonResult = await this.daemon.execute(
         `${INTERNAL_PREFIX} extension_execute ${payload}`,
-        Math.max(timeout ?? EXTENSION_TIMEOUT_MS, EXTENSION_TIMEOUT_MS),
+        timeout ?? DEFAULT_EXTENSION_TIMEOUT_MS,
       );
       const elapsed_ms = Date.now() - start;
 
       if (!daemonResult.ok) {
-        return { ...daemonResult, elapsed_ms };
+        return translateDaemonError({ ...daemonResult, elapsed_ms });
       }
 
       // Check if the daemon result contains a _meta wrapper from ExtensionBridge.
@@ -140,12 +177,12 @@ export class ExtensionEngine extends BaseEngine {
       const payload = JSON.stringify({ script: jsCode, tabUrl, frameId });
       const daemonResult = await this.daemon.execute(
         `${INTERNAL_PREFIX} extension_execute ${payload}`,
-        Math.max(timeout ?? EXTENSION_TIMEOUT_MS, EXTENSION_TIMEOUT_MS),
+        timeout ?? DEFAULT_EXTENSION_TIMEOUT_MS,
       );
       const elapsed_ms = Date.now() - start;
 
       if (!daemonResult.ok) {
-        return { ...daemonResult, elapsed_ms };
+        return translateDaemonError({ ...daemonResult, elapsed_ms });
       }
 
       // Same _meta unwrapping pattern as executeJsInTab — ExtensionBridge wraps
@@ -185,9 +222,9 @@ export class ExtensionEngine extends BaseEngine {
       const payload = JSON.stringify({ script });
       const result = await this.daemon.execute(
         `${INTERNAL_PREFIX} extension_execute ${payload}`,
-        Math.max(timeout ?? EXTENSION_TIMEOUT_MS, EXTENSION_TIMEOUT_MS),
+        timeout ?? DEFAULT_EXTENSION_TIMEOUT_MS,
       );
-      return { ...result, elapsed_ms: Date.now() - start };
+      return translateDaemonError({ ...result, elapsed_ms: Date.now() - start });
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
       return {

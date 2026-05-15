@@ -58,6 +58,11 @@ export const ERROR_CODES = {
   THRASH_DETECTED: 'THRASH_DETECTED',
   STEP_CAP_EXCEEDED: 'STEP_CAP_EXCEEDED',
   WALL_CAP_EXCEEDED: 'WALL_CAP_EXCEEDED',
+  // v0.1.36 Track A Fix 2 — surfaced when the daemon's extension_execute
+  // wait exceeds the per-tool-class timeout (default 15s). Replaces opaque
+  // "Daemon command 'execute' timed out after Xms" text errors with a
+  // structured envelope so the agent can recover instead of retrying blind.
+  DAEMON_TIMEOUT: 'DAEMON_TIMEOUT',
 } as const;
 // SD-22 (2026-04-25): removed 4 dead codes (ELEMENT_NOT_INTERACTABLE,
 // CROSS_ORIGIN_FRAME, DIALOG_UNEXPECTED, FRAME_NOT_FOUND) — declared but
@@ -111,6 +116,14 @@ export const ERROR_METADATA: Partial<Record<ErrorCode, { retryable: boolean; hin
   WALL_CAP_EXCEEDED: {
     retryable: false,
     hints: ['Session wall-clock cap reached. Abort and report inability to complete.'],
+  },
+  DAEMON_TIMEOUT: {
+    retryable: true,
+    hints: [
+      'Daemon execution exceeded the per-tool-class timeout (default 15s).',
+      'Page may still be loading — call safari_wait_for with a selector before retrying.',
+      'If using safari_evaluate, prefer a structured tool (safari_query_all, safari_get_text) — the page may be heavy and the structured path is faster.',
+    ],
   },
 };
 
