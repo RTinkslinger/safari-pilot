@@ -63,6 +63,10 @@ export const ERROR_CODES = {
   // "Daemon command 'execute' timed out after Xms" text errors with a
   // structured envelope so the agent can recover instead of retrying blind.
   DAEMON_TIMEOUT: 'DAEMON_TIMEOUT',
+  // v0.1.36 Track A Fix 3 — emitted by extension/background.js storage-bus
+  // dispatch when the target tab has not posted an `sp_cs_ready_<tabId>`
+  // heartbeat. Fast-fails at 5s instead of the previous 30s STORAGE_BUS_TIMEOUT.
+  CONTENT_SCRIPT_NOT_READY: 'CONTENT_SCRIPT_NOT_READY',
 } as const;
 // SD-22 (2026-04-25): removed 4 dead codes (ELEMENT_NOT_INTERACTABLE,
 // CROSS_ORIGIN_FRAME, DIALOG_UNEXPECTED, FRAME_NOT_FOUND) — declared but
@@ -123,6 +127,14 @@ export const ERROR_METADATA: Partial<Record<ErrorCode, { retryable: boolean; hin
       'Daemon execution exceeded the per-tool-class timeout (default 15s).',
       'Page may still be loading — call safari_wait_for with a selector before retrying.',
       'If using safari_evaluate, prefer a structured tool (safari_query_all, safari_get_text) — the page may be heavy and the structured path is faster.',
+    ],
+  },
+  CONTENT_SCRIPT_NOT_READY: {
+    retryable: true,
+    hints: [
+      'Content script has not yet loaded on the target tab — happens on the first call after safari_new_tab or safari_navigate.',
+      'Call safari_wait_for with selector="body" (or another guaranteed-present selector) before retrying.',
+      'If the tab has just navigated to a different origin, the previous content script may have unloaded — wait for the new one to register.',
     ],
   },
 };

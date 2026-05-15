@@ -248,6 +248,54 @@ async function removePendingEntry(commandId) {
 
 // ─── Command execution ───────────────────────────────────────────────────────
 
+// v0.1.36 Track A Fix 3 — content-script readiness map (inlined from
+// extension/lib/cs-readiness.js; tested in test/unit/extension/
+// cs-readiness.test.ts). Content scripts write a heartbeat to
+// `sp_cs_ready_<tabId>` on load; we mirror it into spCsReadyMap and use
+// it to choose between a fast-fail (5s) vs. normal (30s) storage-bus
+// timeout. Without this, dispatching to a freshly opened/navigated tab
+// blocks the full 30s before the agent can recover.
+const SP_CS_READY_MAX_AGE_MS = 60_000;
+const SP_CS_NOT_READY_FAST_FAIL_MS = 5_000;
+const spCsReadyMap = new Map();
+function spRecordCsReady(tabId, now) { spCsReadyMap.set(tabId, { timestamp: now }); }
+function spIsCsReady(tabId, now, maxAgeMs) {
+  const entry = spCsReadyMap.get(tabId);
+  if (!entry) return false;
+  return (now - entry.timestamp) <= (maxAgeMs ?? SP_CS_READY_MAX_AGE_MS);
+}
+function spDecideStorageBusTimeout(tabId, now, callerDefaultMs) {
+  if (spIsCsReady(tabId, now)) {
+    return { timeoutMs: callerDefaultMs, reason: 'cs_ready' };
+  }
+  return {
+    timeoutMs: Math.min(callerDefaultMs, SP_CS_NOT_READY_FAST_FAIL_MS),
+    reason: 'cs_not_ready',
+  };
+}
+// Storage listener: mirror `sp_cs_ready_<tabId>` keys into the in-memory map.
+// Content-isolated.js writes one on load; on navigation, the new content
+// script writes a fresh timestamp, refreshing the readiness window.
+browser.storage.onChanged.addListener((changes, area) => {
+  if (area !== 'local') return;
+  for (const k of Object.keys(changes)) {
+    if (!k.startsWith('sp_cs_ready_')) continue;
+    const tabId = parseInt(k.slice('sp_cs_ready_'.length), 10);
+    const nv = changes[k].newValue;
+    if (!Number.isFinite(tabId)) continue;
+    if (nv && typeof nv.ts === 'number') spRecordCsReady(tabId, nv.ts);
+    if (nv === undefined || nv === null) spCsReadyMap.delete(tabId);
+  }
+});
+// Cleanup readiness state when a tab closes.
+browser.tabs.onRemoved.addListener((tabId) => {
+  spCsReadyMap.delete(tabId);
+  try { browser.storage.local.remove('sp_cs_ready_' + tabId).catch(() => {}); } catch { /* shrug */ }
+});
+// On navigation completion, prior heartbeat is stale: a new content script
+// will load and post a fresh one. We DON'T evict eagerly here — we let the
+// fresh write overwrite, and the max-age window covers the rare gap.
+
 // v0.1.36 Track A Fix 1 — tolerant URL matcher (inlined from
 // extension/lib/tab-url-matcher.js; tested in test/unit/extension/
 // tab-url-matcher.test.ts). MV3 background can't import ES modules, so the
@@ -855,7 +903,13 @@ async function executeCommand(cmd) {
   const cmdKey = 'sp_cmd_' + commandId;
   const resultKey = 'sp_result_' + commandId;
   const isFrameTargeted = cmd.frameId != null && cmd.frameId !== 0;
-  const TIMEOUT_MS = isFrameTargeted ? 10000 : 30000;
+  // v0.1.36 Fix 3 — gate timeout on content-script readiness. If the script
+  // has emitted a heartbeat for this tabId within the freshness window, use
+  // the caller's normal default; otherwise fast-fail at 5s so the agent
+  // sees CONTENT_SCRIPT_NOT_READY in seconds rather than 30s.
+  const baseTimeout = isFrameTargeted ? 10000 : 30000;
+  const { timeoutMs: TIMEOUT_MS, reason: timeoutReason } =
+    spDecideStorageBusTimeout(tab.id, Date.now(), baseTimeout);
   const storageCmd = {
     commandId,
     tabId: tab.id,
@@ -882,10 +936,21 @@ async function executeCommand(cmd) {
   const resultTimeout = setTimeout(() => {
     clearInterval(keepAlive);
     browser.storage.onChanged.removeListener(resultListener);
-    const errorCode = isFrameTargeted ? 'FRAME_UNREACHABLE' : 'STORAGE_BUS_TIMEOUT';
-    const errorMessage = isFrameTargeted
-      ? `Frame ${cmd.frameId} unreachable — content script did not respond within ${TIMEOUT_MS}ms (sandbox/CSP/injection failure?)`
-      : `Storage bus timeout (${TIMEOUT_MS}ms) — content script may not be loaded on target tab`;
+    // v0.1.36 Fix 3 — emit CONTENT_SCRIPT_NOT_READY when the timeout was
+    // gated short because no recent heartbeat existed. This is a recoverable
+    // error: agent should call safari_wait_for or safari_navigate, then retry.
+    let errorCode;
+    let errorMessage;
+    if (isFrameTargeted) {
+      errorCode = 'FRAME_UNREACHABLE';
+      errorMessage = `Frame ${cmd.frameId} unreachable — content script did not respond within ${TIMEOUT_MS}ms (sandbox/CSP/injection failure?)`;
+    } else if (timeoutReason === 'cs_not_ready') {
+      errorCode = 'CONTENT_SCRIPT_NOT_READY';
+      errorMessage = `Content script not loaded on target tab within ${TIMEOUT_MS}ms (fast-fail). Page may still be loading; call safari_wait_for with selector="body" before retrying.`;
+    } else {
+      errorCode = 'STORAGE_BUS_TIMEOUT';
+      errorMessage = `Storage bus timeout (${TIMEOUT_MS}ms) — content script registered but did not respond in time`;
+    }
     resultResolver({ ok: false, error: { name: errorCode, message: errorMessage } });
   }, TIMEOUT_MS);
 

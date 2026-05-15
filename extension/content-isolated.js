@@ -612,6 +612,18 @@
     try {
       const response = await browser.runtime.sendMessage({ action: 'sp_getTabId' });
       myTabId = response?.tabId ?? null;
+      // v0.1.36 Fix 3 — write content-script readiness heartbeat as soon as
+      // we know our tabId. background.js's storage listener picks this up
+      // and gates storage-bus dispatch timeouts (decideStorageBusTimeout in
+      // extension/lib/cs-readiness.js). Without this, the first storage-bus
+      // call to a freshly opened/navigated tab would block the full 30s.
+      if (myTabId !== null) {
+        try {
+          await browser.storage.local.set({
+            ['sp_cs_ready_' + myTabId]: { ts: Date.now(), frameId: 0 },
+          });
+        } catch { /* storage may be transiently unavailable; non-fatal */ }
+      }
       // Check for commands written to storage BEFORE this content script loaded.
       // storage.onChanged only fires for future changes — commands written while
       // the page was loading (document_idle) are invisible to the listener.
