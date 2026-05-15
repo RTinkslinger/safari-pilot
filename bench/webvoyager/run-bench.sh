@@ -44,13 +44,18 @@ for line in open('$DATASET'):
     if '$LIMIT' and n>=int('$LIMIT'): break
 ")
 
-# Loop over tasks × runs with bounded concurrency
-for tid in $TASK_IDS; do
+# Loop over tasks × runs with bounded concurrency.
+# IMPORTANT: iterate via `while IFS= read -r` not `for tid in $TASK_IDS` so task
+# IDs containing spaces (e.g. "Wolfram Alpha--45", "Google Flights--13") survive
+# intact. Bash word-splitting on unquoted $TASK_IDS silently dropped 257/641
+# tasks during the v0.1.35 patched bench run (2026-05-15).
+while IFS= read -r tid; do
+  [[ -z "$tid" ]] && continue
   for ((r=1; r<=RUNS; r++)); do
     while [[ $(jobs -r | wc -l) -ge $CONCURRENCY ]]; do sleep 0.5; done
     WV_OUT_DIR="$OUT_DIR" WV_VARIANT="$VARIANT_TAG" WV_RUN_SEQ="$r" WV_DATASET="$DATASET" \
       bash "$REPO_ROOT/bench/webvoyager/run-one-task.sh" "$tid" &
   done
-done
+done <<< "$TASK_IDS"
 wait
 echo "Bench complete. Out: $OUT_DIR"
