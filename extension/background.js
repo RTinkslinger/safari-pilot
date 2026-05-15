@@ -247,10 +247,90 @@ async function removePendingEntry(commandId) {
 }
 
 // ─── Command execution ───────────────────────────────────────────────────────
+
+// v0.1.36 Track A Fix 1 — tolerant URL matcher (inlined from
+// extension/lib/tab-url-matcher.js; tested in test/unit/extension/
+// tab-url-matcher.test.ts). MV3 background can't import ES modules, so the
+// implementation is duplicated here. Keep behaviour in sync with the lib.
+const SP_TRACKING_PARAM_PREFIXES = ['utm_'];
+const SP_TRACKING_PARAM_EXACT = new Set([
+  'gclid', 'fbclid', 'msclkid', 'mc_eid', 'mc_cid',
+  'ref', 'referrer', 'source', 'campaign',
+  '_ga', '_gl', 'igshid', 'yclid', 'twclid', 'dclid',
+]);
+function spStripTrailingSlash(s) { return s.length > 1 && s.endsWith('/') ? s.slice(0, -1) : s; }
+function spNormalizeForMatch(url) {
+  if (typeof url !== 'string' || url.length === 0) return url || '';
+  let u;
+  try { u = new URL(url); } catch { return spStripTrailingSlash(url); }
+  const scheme = u.protocol.toLowerCase();
+  let host = u.hostname.toLowerCase();
+  if (host.startsWith('www.')) host = host.slice(4);
+  const params = new URLSearchParams();
+  for (const [k, v] of u.searchParams) {
+    const lk = k.toLowerCase();
+    if (SP_TRACKING_PARAM_EXACT.has(lk)) continue;
+    if (SP_TRACKING_PARAM_PREFIXES.some((p) => lk.startsWith(p))) continue;
+    params.append(k, v);
+  }
+  const queryStr = params.toString();
+  const port = u.port ? ':' + u.port : '';
+  const path = spStripTrailingSlash(u.pathname || '/');
+  return `${scheme}//${host}${port}${path}${queryStr ? '?' + queryStr : ''}`;
+}
+function spOriginAndPath(url) {
+  try {
+    const u = new URL(url);
+    let host = u.hostname.toLowerCase();
+    if (host.startsWith('www.')) host = host.slice(4);
+    return {
+      origin: `${u.protocol.toLowerCase()}//${host}${u.port ? ':' + u.port : ''}`,
+      path: spStripTrailingSlash(u.pathname || '/'),
+    };
+  } catch { return null; }
+}
+function spPathIsPrefix(requestedPath, candidatePath) {
+  if (candidatePath === requestedPath) return true;
+  if (!candidatePath.startsWith(requestedPath)) return false;
+  return candidatePath.charAt(requestedPath.length) === '/';
+}
+/** Returns the matched candidate's id (whatever the caller passes in `id`),
+ *  or null if no tier matches. Candidates: Array<{id, url}>. */
+function spMatchTabUrl(requestedUrl, candidates) {
+  if (typeof requestedUrl !== 'string' || requestedUrl.length === 0) return null;
+  if (!Array.isArray(candidates) || candidates.length === 0) return null;
+  // Tier 0 — exact (trailing-slash tolerant).
+  const targetExact = spStripTrailingSlash(requestedUrl);
+  for (const c of candidates) {
+    if (spStripTrailingSlash(c.url || '') === targetExact) return c.id;
+  }
+  // Tier 1 — normalized.
+  const targetNorm = spNormalizeForMatch(requestedUrl);
+  for (const c of candidates) {
+    if (spNormalizeForMatch(c.url || '') === targetNorm) return c.id;
+  }
+  // Tier 2 — origin + path-prefix (longest unambiguous).
+  const reqOriginPath = spOriginAndPath(requestedUrl);
+  if (!reqOriginPath) return null;
+  let bestId = null;
+  let bestLen = -1;
+  let bestCount = 0;
+  for (const c of candidates) {
+    const cop = spOriginAndPath(c.url || '');
+    if (!cop) continue;
+    if (cop.origin !== reqOriginPath.origin) continue;
+    if (!spPathIsPrefix(reqOriginPath.path, cop.path)) continue;
+    if (cop.path.length > bestLen) {
+      bestLen = cop.path.length; bestId = c.id; bestCount = 1;
+    } else if (cop.path.length === bestLen) {
+      bestCount += 1;
+    }
+  }
+  return bestId !== null && bestCount === 1 ? bestId : null;
+}
+
 async function findTargetTab(tabUrl) {
   if (tabUrl) {
-    const target = tabUrl.replace(/\/$/, '');
-
     // Test-only escape hatch: if `__sp_test_skip_tabs_query__` is set in
     // storage, the tabs.query primary path is skipped. Used by e2e tests to
     // simulate Safari's alarm-wake context where tabs.query({}) returns [].
@@ -265,22 +345,29 @@ async function findTargetTab(tabUrl) {
     /*@DEBUG_HARNESS_END@*/
 
     if (!skipTabsQuery) {
-      // Primary: browser.tabs.query (works when event page is fully active)
+      // Primary: browser.tabs.query, run through the 3-tier matcher so SPA
+      // URL drift / www-prefix / tracking-params don't trigger TAB_NOT_FOUND.
       const all = await browser.tabs.query({});
       if (all.length > 0) {
-        const match = all.find((t) => (t.url || '').replace(/\/$/, '') === target);
-        if (match) return match;
+        const matchedId = spMatchTabUrl(tabUrl, all.map((t) => ({ id: t.id, url: t.url || '' })));
+        if (matchedId != null) {
+          const t = all.find((x) => x.id === matchedId);
+          if (t) return t;
+        }
       }
     }
 
     // Fallback: persistent tab cache (works when tabs.query returns [] in
     // alarm-triggered wake context — Safari event page lifecycle limitation).
     if (tabCacheMap.size > 0) {
+      const cacheList = [];
       for (const [tabId, info] of tabCacheMap) {
-        if ((info.url || '').replace(/\/$/, '') === target) {
-          // Return a minimal tab-like object with the id for scripting API
-          return { id: tabId, url: info.url, title: info.title };
-        }
+        cacheList.push({ id: tabId, url: info.url || '' });
+      }
+      const matchedId = spMatchTabUrl(tabUrl, cacheList);
+      if (matchedId != null) {
+        const info = tabCacheMap.get(matchedId);
+        return { id: matchedId, url: info.url, title: info.title };
       }
     }
 
@@ -315,8 +402,37 @@ async function executeCommand(cmd) {
     // T27: structured error so the daemon's ExtensionBridge.handleResult
     // lifts `name` into StructuredError.code. The TS-side ExtensionEngine
     // round-trips that as the error code, surfacing TAB_NOT_FOUND to MCP.
+    //
+    // v0.1.36 Fix 1: enrich the error with the closest same-origin
+    // candidate URL so the agent can update its stored tabUrl on retry.
+    // (Tier 2 matching already covers most drift cases; this branch only
+    //  fires when even the path-prefix tier missed — e.g. agent's URL is
+    //  on origin X but the only X-origin tab is at an unrelated path.)
+    let hint = '';
+    if (cmd.tabUrl) {
+      try {
+        const u = new URL(cmd.tabUrl);
+        const reqOrigin = u.protocol + '//' + u.hostname.replace(/^www\./, '');
+        const seen = new Set();
+        const sameOriginUrls = [];
+        for (const [, info] of tabCacheMap) {
+          if (!info.url) continue;
+          try {
+            const cu = new URL(info.url);
+            const co = cu.protocol + '//' + cu.hostname.replace(/^www\./, '');
+            if (co === reqOrigin && !seen.has(info.url)) {
+              seen.add(info.url);
+              sameOriginUrls.push(info.url);
+            }
+          } catch { /* skip unparsable */ }
+        }
+        if (sameOriginUrls.length > 0) {
+          hint = ` Same-origin tabs in cache: ${sameOriginUrls.slice(0, 3).join(', ')}. Update tabUrl in subsequent calls.`;
+        }
+      } catch { /* unparsable requested URL — no hint */ }
+    }
     const error = cmd.tabUrl
-      ? { name: 'TAB_NOT_FOUND', message: `No agent-owned tab matches url="${cmd.tabUrl}" (extension cache miss)` }
+      ? { name: 'TAB_NOT_FOUND', message: `No agent-owned tab matches url="${cmd.tabUrl}" (extension cache miss).${hint}` }
       : { message: `No target tab for url="${cmd.tabUrl}"` };
     const result = { ok: false, error };
     await updatePendingEntry(commandId, { status: 'completed', result });
