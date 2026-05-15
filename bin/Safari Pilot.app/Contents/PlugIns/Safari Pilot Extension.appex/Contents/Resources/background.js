@@ -236,10 +236,153 @@ async function removePendingEntry(commandId) {
 }
 
 // ─── Command execution ───────────────────────────────────────────────────────
+
+// v0.1.36 Track A Fix 3 — content-script readiness map (inlined from
+// extension/lib/cs-readiness.js; tested in test/unit/extension/
+// cs-readiness.test.ts). Content scripts write a heartbeat to
+// `sp_cs_ready_<tabId>` on load; we mirror it into spCsReadyMap and use
+// it to choose between a fast-fail (5s) vs. normal (30s) storage-bus
+// timeout. Without this, dispatching to a freshly opened/navigated tab
+// blocks the full 30s before the agent can recover.
+const SP_CS_READY_MAX_AGE_MS = 60_000;
+const SP_CS_NOT_READY_FAST_FAIL_MS = 10_000;
+const spCsReadyMap = new Map();
+function spRecordCsReady(tabId, now) { spCsReadyMap.set(tabId, { timestamp: now }); }
+function spIsCsReady(tabId, now, maxAgeMs) {
+  const entry = spCsReadyMap.get(tabId);
+  if (!entry) return false;
+  return (now - entry.timestamp) <= (maxAgeMs ?? SP_CS_READY_MAX_AGE_MS);
+}
+function spDecideStorageBusTimeout(tabId, now, callerDefaultMs) {
+  if (spIsCsReady(tabId, now)) {
+    return { timeoutMs: callerDefaultMs, reason: 'cs_ready' };
+  }
+  return {
+    timeoutMs: Math.min(callerDefaultMs, SP_CS_NOT_READY_FAST_FAIL_MS),
+    reason: 'cs_not_ready',
+  };
+}
+// Storage listener: mirror `sp_cs_ready_<tabId>` keys into the in-memory map.
+// Content-isolated.js writes one on load; on navigation, the new content
+// script writes a fresh timestamp, refreshing the readiness window.
+browser.storage.onChanged.addListener((changes, area) => {
+  if (area !== 'local') return;
+  for (const k of Object.keys(changes)) {
+    if (!k.startsWith('sp_cs_ready_')) continue;
+    const tabId = parseInt(k.slice('sp_cs_ready_'.length), 10);
+    const nv = changes[k].newValue;
+    if (!Number.isFinite(tabId)) continue;
+    if (nv && typeof nv.ts === 'number') spRecordCsReady(tabId, nv.ts);
+    if (nv === undefined || nv === null) spCsReadyMap.delete(tabId);
+  }
+});
+// Cleanup readiness state when a tab closes.
+browser.tabs.onRemoved.addListener((tabId) => {
+  spCsReadyMap.delete(tabId);
+  try { browser.storage.local.remove('sp_cs_ready_' + tabId).catch(() => {}); } catch { /* shrug */ }
+});
+// Rehydrate readiness map from storage on event-page startup. MV3 wakes the
+// event page repeatedly — any heartbeats written while it was asleep would be
+// invisible to the in-memory map without this scan.
+(async () => {
+  try {
+    const stored = await browser.storage.local.get(null);
+    for (const k of Object.keys(stored)) {
+      if (!k.startsWith('sp_cs_ready_')) continue;
+      const tabId = parseInt(k.slice('sp_cs_ready_'.length), 10);
+      const v = stored[k];
+      if (!Number.isFinite(tabId)) continue;
+      if (v && typeof v.ts === 'number') spRecordCsReady(tabId, v.ts);
+    }
+  } catch { /* storage transiently unavailable — gate falls back to fast-fail */ }
+})();
+// On navigation completion, prior heartbeat is stale: a new content script
+// will load and post a fresh one. We DON'T evict eagerly here — we let the
+// fresh write overwrite, and the max-age window covers the rare gap.
+
+// v0.1.36 Track A Fix 1 — tolerant URL matcher (inlined from
+// extension/lib/tab-url-matcher.js; tested in test/unit/extension/
+// tab-url-matcher.test.ts). MV3 background can't import ES modules, so the
+// implementation is duplicated here. Keep behaviour in sync with the lib.
+const SP_TRACKING_PARAM_PREFIXES = ['utm_'];
+const SP_TRACKING_PARAM_EXACT = new Set([
+  'gclid', 'fbclid', 'msclkid', 'mc_eid', 'mc_cid',
+  'ref', 'referrer', 'source', 'campaign',
+  '_ga', '_gl', 'igshid', 'yclid', 'twclid', 'dclid',
+]);
+function spStripTrailingSlash(s) { return s.length > 1 && s.endsWith('/') ? s.slice(0, -1) : s; }
+function spNormalizeForMatch(url) {
+  if (typeof url !== 'string' || url.length === 0) return url || '';
+  let u;
+  try { u = new URL(url); } catch { return spStripTrailingSlash(url); }
+  const scheme = u.protocol.toLowerCase();
+  let host = u.hostname.toLowerCase();
+  if (host.startsWith('www.')) host = host.slice(4);
+  const params = new URLSearchParams();
+  for (const [k, v] of u.searchParams) {
+    const lk = k.toLowerCase();
+    if (SP_TRACKING_PARAM_EXACT.has(lk)) continue;
+    if (SP_TRACKING_PARAM_PREFIXES.some((p) => lk.startsWith(p))) continue;
+    params.append(k, v);
+  }
+  const queryStr = params.toString();
+  const port = u.port ? ':' + u.port : '';
+  const path = spStripTrailingSlash(u.pathname || '/');
+  return `${scheme}//${host}${port}${path}${queryStr ? '?' + queryStr : ''}`;
+}
+function spOriginAndPath(url) {
+  try {
+    const u = new URL(url);
+    let host = u.hostname.toLowerCase();
+    if (host.startsWith('www.')) host = host.slice(4);
+    return {
+      origin: `${u.protocol.toLowerCase()}//${host}${u.port ? ':' + u.port : ''}`,
+      path: spStripTrailingSlash(u.pathname || '/'),
+    };
+  } catch { return null; }
+}
+function spPathIsPrefix(requestedPath, candidatePath) {
+  if (candidatePath === requestedPath) return true;
+  if (!candidatePath.startsWith(requestedPath)) return false;
+  return candidatePath.charAt(requestedPath.length) === '/';
+}
+/** Returns the matched candidate's id (whatever the caller passes in `id`),
+ *  or null if no tier matches. Candidates: Array<{id, url}>. */
+function spMatchTabUrl(requestedUrl, candidates) {
+  if (typeof requestedUrl !== 'string' || requestedUrl.length === 0) return null;
+  if (!Array.isArray(candidates) || candidates.length === 0) return null;
+  // Tier 0 — exact (trailing-slash tolerant).
+  const targetExact = spStripTrailingSlash(requestedUrl);
+  for (const c of candidates) {
+    if (spStripTrailingSlash(c.url || '') === targetExact) return c.id;
+  }
+  // Tier 1 — normalized.
+  const targetNorm = spNormalizeForMatch(requestedUrl);
+  for (const c of candidates) {
+    if (spNormalizeForMatch(c.url || '') === targetNorm) return c.id;
+  }
+  // Tier 2 — origin + path-prefix (longest unambiguous).
+  const reqOriginPath = spOriginAndPath(requestedUrl);
+  if (!reqOriginPath) return null;
+  let bestId = null;
+  let bestLen = -1;
+  let bestCount = 0;
+  for (const c of candidates) {
+    const cop = spOriginAndPath(c.url || '');
+    if (!cop) continue;
+    if (cop.origin !== reqOriginPath.origin) continue;
+    if (!spPathIsPrefix(reqOriginPath.path, cop.path)) continue;
+    if (cop.path.length > bestLen) {
+      bestLen = cop.path.length; bestId = c.id; bestCount = 1;
+    } else if (cop.path.length === bestLen) {
+      bestCount += 1;
+    }
+  }
+  return bestId !== null && bestCount === 1 ? bestId : null;
+}
+
 async function findTargetTab(tabUrl) {
   if (tabUrl) {
-    const target = tabUrl.replace(/\/$/, '');
-
     // Test-only escape hatch: if `__sp_test_skip_tabs_query__` is set in
     // storage, the tabs.query primary path is skipped. Used by e2e tests to
     // simulate Safari's alarm-wake context where tabs.query({}) returns [].
@@ -249,22 +392,29 @@ async function findTargetTab(tabUrl) {
     
 
     if (!skipTabsQuery) {
-      // Primary: browser.tabs.query (works when event page is fully active)
+      // Primary: browser.tabs.query, run through the 3-tier matcher so SPA
+      // URL drift / www-prefix / tracking-params don't trigger TAB_NOT_FOUND.
       const all = await browser.tabs.query({});
       if (all.length > 0) {
-        const match = all.find((t) => (t.url || '').replace(/\/$/, '') === target);
-        if (match) return match;
+        const matchedId = spMatchTabUrl(tabUrl, all.map((t) => ({ id: t.id, url: t.url || '' })));
+        if (matchedId != null) {
+          const t = all.find((x) => x.id === matchedId);
+          if (t) return t;
+        }
       }
     }
 
     // Fallback: persistent tab cache (works when tabs.query returns [] in
     // alarm-triggered wake context — Safari event page lifecycle limitation).
     if (tabCacheMap.size > 0) {
+      const cacheList = [];
       for (const [tabId, info] of tabCacheMap) {
-        if ((info.url || '').replace(/\/$/, '') === target) {
-          // Return a minimal tab-like object with the id for scripting API
-          return { id: tabId, url: info.url, title: info.title };
-        }
+        cacheList.push({ id: tabId, url: info.url || '' });
+      }
+      const matchedId = spMatchTabUrl(tabUrl, cacheList);
+      if (matchedId != null) {
+        const info = tabCacheMap.get(matchedId);
+        return { id: matchedId, url: info.url, title: info.title };
       }
     }
 
@@ -299,8 +449,37 @@ async function executeCommand(cmd) {
     // T27: structured error so the daemon's ExtensionBridge.handleResult
     // lifts `name` into StructuredError.code. The TS-side ExtensionEngine
     // round-trips that as the error code, surfacing TAB_NOT_FOUND to MCP.
+    //
+    // v0.1.36 Fix 1: enrich the error with the closest same-origin
+    // candidate URL so the agent can update its stored tabUrl on retry.
+    // (Tier 2 matching already covers most drift cases; this branch only
+    //  fires when even the path-prefix tier missed — e.g. agent's URL is
+    //  on origin X but the only X-origin tab is at an unrelated path.)
+    let hint = '';
+    if (cmd.tabUrl) {
+      try {
+        const u = new URL(cmd.tabUrl);
+        const reqOrigin = u.protocol + '//' + u.hostname.replace(/^www\./, '');
+        const seen = new Set();
+        const sameOriginUrls = [];
+        for (const [, info] of tabCacheMap) {
+          if (!info.url) continue;
+          try {
+            const cu = new URL(info.url);
+            const co = cu.protocol + '//' + cu.hostname.replace(/^www\./, '');
+            if (co === reqOrigin && !seen.has(info.url)) {
+              seen.add(info.url);
+              sameOriginUrls.push(info.url);
+            }
+          } catch { /* skip unparsable */ }
+        }
+        if (sameOriginUrls.length > 0) {
+          hint = ` Same-origin tabs in cache: ${sameOriginUrls.slice(0, 3).join(', ')}. Update tabUrl in subsequent calls.`;
+        }
+      } catch { /* unparsable requested URL — no hint */ }
+    }
     const error = cmd.tabUrl
-      ? { name: 'TAB_NOT_FOUND', message: `No agent-owned tab matches url="${cmd.tabUrl}" (extension cache miss)` }
+      ? { name: 'TAB_NOT_FOUND', message: `No agent-owned tab matches url="${cmd.tabUrl}" (extension cache miss).${hint}` }
       : { message: `No target tab for url="${cmd.tabUrl}"` };
     const result = { ok: false, error };
     await updatePendingEntry(commandId, { status: 'completed', result });
@@ -723,7 +902,16 @@ async function executeCommand(cmd) {
   const cmdKey = 'sp_cmd_' + commandId;
   const resultKey = 'sp_result_' + commandId;
   const isFrameTargeted = cmd.frameId != null && cmd.frameId !== 0;
-  const TIMEOUT_MS = isFrameTargeted ? 10000 : 30000;
+  // v0.1.36 Fix 3 (initial-soft) — gate timeout on content-script readiness.
+  // Initial shipping behaviour: track heartbeats for telemetry but do NOT
+  // fast-fail. The in-memory readiness map is wiped whenever Safari restarts
+  // the MV3 event page, which falsely flags long-lived tabs as not-ready.
+  // The tighter fast-fail behaviour will return in v0.1.37 once heartbeat
+  // rehydration from storage is robust.
+  const baseTimeout = isFrameTargeted ? 10000 : 30000;
+  const isCsReadyNow = spIsCsReady(tab.id, Date.now());
+  const TIMEOUT_MS = baseTimeout;
+  const timeoutReason = isCsReadyNow ? 'cs_ready' : 'cs_not_ready_observed';
   const storageCmd = {
     commandId,
     tabId: tab.id,
@@ -750,10 +938,22 @@ async function executeCommand(cmd) {
   const resultTimeout = setTimeout(() => {
     clearInterval(keepAlive);
     browser.storage.onChanged.removeListener(resultListener);
-    const errorCode = isFrameTargeted ? 'FRAME_UNREACHABLE' : 'STORAGE_BUS_TIMEOUT';
-    const errorMessage = isFrameTargeted
-      ? `Frame ${cmd.frameId} unreachable — content script did not respond within ${TIMEOUT_MS}ms (sandbox/CSP/injection failure?)`
-      : `Storage bus timeout (${TIMEOUT_MS}ms) — content script may not be loaded on target tab`;
+    // v0.1.36 Fix 3 — emit CONTENT_SCRIPT_NOT_READY when the timeout was
+    // gated short because no recent heartbeat existed. This is a recoverable
+    // error: agent should call safari_wait_for or safari_navigate, then retry.
+    let errorCode;
+    let errorMessage;
+    if (isFrameTargeted) {
+      errorCode = 'FRAME_UNREACHABLE';
+      errorMessage = `Frame ${cmd.frameId} unreachable — content script did not respond within ${TIMEOUT_MS}ms (sandbox/CSP/injection failure?)`;
+    } else if (timeoutReason === 'cs_not_ready_observed') {
+      // Heartbeat absent at decision time AND full timeout elapsed.
+      errorCode = 'CONTENT_SCRIPT_NOT_READY';
+      errorMessage = `Content script did not respond within ${TIMEOUT_MS}ms; no readiness heartbeat observed for this tab. Page may still be loading; call safari_wait_for with selector="body" before retrying.`;
+    } else {
+      errorCode = 'STORAGE_BUS_TIMEOUT';
+      errorMessage = `Storage bus timeout (${TIMEOUT_MS}ms) — content script registered but did not respond in time`;
+    }
     resultResolver({ ok: false, error: { name: errorCode, message: errorMessage } });
   }, TIMEOUT_MS);
 

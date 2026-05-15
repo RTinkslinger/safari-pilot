@@ -58,10 +58,10 @@ describe('cs-readiness map', () => {
 });
 
 describe('decideStorageBusTimeout — fast-fail gate', () => {
-  it('returns SHORT timeout (5000ms) for first call after load (no heartbeat)', () => {
+  it('returns SHORT timeout (10000ms) for first call after load (no heartbeat)', () => {
     const map = new Map();
     const { timeoutMs, reason } = decideStorageBusTimeout(map, 7, 1_000, /* default */ 30_000);
-    expect(timeoutMs).toBe(5_000);
+    expect(timeoutMs).toBe(10_000);
     expect(reason).toBe('cs_not_ready');
   });
 
@@ -79,7 +79,7 @@ describe('decideStorageBusTimeout — fast-fail gate', () => {
     const { timeoutMs, reason } = decideStorageBusTimeout(
       map, 7, 1_000 + CS_READY_MAX_AGE_MS + 1, 30_000,
     );
-    expect(timeoutMs).toBe(5_000);
+    expect(timeoutMs).toBe(10_000);
     expect(reason).toBe('cs_not_ready');
   });
 
@@ -92,10 +92,10 @@ describe('decideStorageBusTimeout — fast-fail gate', () => {
 
   it('short timeout overrides caller default when CS not ready (fast-fail floor)', () => {
     const map = new Map();
-    // Caller default is 30s; CS not ready → use 5s, not 30s.
+    // Caller default is 30s; CS not ready → use 10s, not 30s.
     const { timeoutMs } = decideStorageBusTimeout(map, 999, 1_000, 30_000);
-    expect(timeoutMs).toBe(5_000);
-    // Caller default is 3s (smaller than 5s); use the smaller, do not raise.
+    expect(timeoutMs).toBe(10_000);
+    // Caller default is 3s (smaller than 10s); use the smaller, do not raise.
     const { timeoutMs: t2 } = decideStorageBusTimeout(map, 999, 1_000, 3_000);
     expect(t2).toBe(3_000);
   });

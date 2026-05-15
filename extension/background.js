@@ -256,7 +256,7 @@ async function removePendingEntry(commandId) {
 // timeout. Without this, dispatching to a freshly opened/navigated tab
 // blocks the full 30s before the agent can recover.
 const SP_CS_READY_MAX_AGE_MS = 60_000;
-const SP_CS_NOT_READY_FAST_FAIL_MS = 5_000;
+const SP_CS_NOT_READY_FAST_FAIL_MS = 10_000;
 const spCsReadyMap = new Map();
 function spRecordCsReady(tabId, now) { spCsReadyMap.set(tabId, { timestamp: now }); }
 function spIsCsReady(tabId, now, maxAgeMs) {
@@ -292,6 +292,21 @@ browser.tabs.onRemoved.addListener((tabId) => {
   spCsReadyMap.delete(tabId);
   try { browser.storage.local.remove('sp_cs_ready_' + tabId).catch(() => {}); } catch { /* shrug */ }
 });
+// Rehydrate readiness map from storage on event-page startup. MV3 wakes the
+// event page repeatedly — any heartbeats written while it was asleep would be
+// invisible to the in-memory map without this scan.
+(async () => {
+  try {
+    const stored = await browser.storage.local.get(null);
+    for (const k of Object.keys(stored)) {
+      if (!k.startsWith('sp_cs_ready_')) continue;
+      const tabId = parseInt(k.slice('sp_cs_ready_'.length), 10);
+      const v = stored[k];
+      if (!Number.isFinite(tabId)) continue;
+      if (v && typeof v.ts === 'number') spRecordCsReady(tabId, v.ts);
+    }
+  } catch { /* storage transiently unavailable — gate falls back to fast-fail */ }
+})();
 // On navigation completion, prior heartbeat is stale: a new content script
 // will load and post a fresh one. We DON'T evict eagerly here — we let the
 // fresh write overwrite, and the max-age window covers the rare gap.
@@ -903,13 +918,16 @@ async function executeCommand(cmd) {
   const cmdKey = 'sp_cmd_' + commandId;
   const resultKey = 'sp_result_' + commandId;
   const isFrameTargeted = cmd.frameId != null && cmd.frameId !== 0;
-  // v0.1.36 Fix 3 — gate timeout on content-script readiness. If the script
-  // has emitted a heartbeat for this tabId within the freshness window, use
-  // the caller's normal default; otherwise fast-fail at 5s so the agent
-  // sees CONTENT_SCRIPT_NOT_READY in seconds rather than 30s.
+  // v0.1.36 Fix 3 (initial-soft) — gate timeout on content-script readiness.
+  // Initial shipping behaviour: track heartbeats for telemetry but do NOT
+  // fast-fail. The in-memory readiness map is wiped whenever Safari restarts
+  // the MV3 event page, which falsely flags long-lived tabs as not-ready.
+  // The tighter fast-fail behaviour will return in v0.1.37 once heartbeat
+  // rehydration from storage is robust.
   const baseTimeout = isFrameTargeted ? 10000 : 30000;
-  const { timeoutMs: TIMEOUT_MS, reason: timeoutReason } =
-    spDecideStorageBusTimeout(tab.id, Date.now(), baseTimeout);
+  const isCsReadyNow = spIsCsReady(tab.id, Date.now());
+  const TIMEOUT_MS = baseTimeout;
+  const timeoutReason = isCsReadyNow ? 'cs_ready' : 'cs_not_ready_observed';
   const storageCmd = {
     commandId,
     tabId: tab.id,
@@ -944,9 +962,10 @@ async function executeCommand(cmd) {
     if (isFrameTargeted) {
       errorCode = 'FRAME_UNREACHABLE';
       errorMessage = `Frame ${cmd.frameId} unreachable — content script did not respond within ${TIMEOUT_MS}ms (sandbox/CSP/injection failure?)`;
-    } else if (timeoutReason === 'cs_not_ready') {
+    } else if (timeoutReason === 'cs_not_ready_observed') {
+      // Heartbeat absent at decision time AND full timeout elapsed.
       errorCode = 'CONTENT_SCRIPT_NOT_READY';
-      errorMessage = `Content script not loaded on target tab within ${TIMEOUT_MS}ms (fast-fail). Page may still be loading; call safari_wait_for with selector="body" before retrying.`;
+      errorMessage = `Content script did not respond within ${TIMEOUT_MS}ms; no readiness heartbeat observed for this tab. Page may still be loading; call safari_wait_for with selector="body" before retrying.`;
     } else {
       errorCode = 'STORAGE_BUS_TIMEOUT';
       errorMessage = `Storage bus timeout (${TIMEOUT_MS}ms) — content script registered but did not respond in time`;

@@ -10,7 +10,7 @@
 		</data>
 		<key>Resources/Assets.car</key>
 		<data>
-		6hDbqC4R35mowc50X/1dtul1cis=
+		IzGpRof++gv9n24cGGhT9uBDnVY=
 		</data>
 		<key>Resources/Base.lproj/Main.html</key>
 		<data>
@@ -18,15 +18,15 @@
 		</data>
 		<key>Resources/Base.lproj/Main.storyboardc/Info.plist</key>
 		<data>
-		rpFcUlcjv4yaSpNPtCoBBPpjbio=
+		+h2EIl0vEBTJYTa5ekZrJiuK7lc=
 		</data>
 		<key>Resources/Base.lproj/Main.storyboardc/MainMenu.nib</key>
 		<data>
-		7DfzzZhsw3EVvfsDQWWWGDMFqFo=
+		3i+AQDjYkXozy3k9NP6NhIJKsGA=
 		</data>
 		<key>Resources/Base.lproj/Main.storyboardc/NSWindowController-B8D-0N-5wS.nib</key>
 		<data>
-		2nYQOht8r7+7a1HogiuWRq7xWMc=
+		aJBebgUXF76AIj2D5UD4xnNiUwI=
 		</data>
 		<key>Resources/Base.lproj/Main.storyboardc/XfG-lQ-9wD-view-m2S-Jp-Qdl.nib</key>
 		<data>
@@ -51,7 +51,7 @@
 		<dict>
 			<key>cdhash</key>
 			<data>
-			RIXCZwV8XAFrv9KiNK3xEbY6Fpk=
+			yhgsxk8/2GrGWgJfiicQj8en59U=
 			</data>
 			<key>requirement</key>
 			<string>anchor apple generic and identifier "com.safari-pilot.app.Extension" and (certificate leaf[field.1.2.840.113635.100.6.1.9] /* exists */ or certificate 1[field.1.2.840.113635.100.6.2.6] /* exists */ and certificate leaf[field.1.2.840.113635.100.6.1.13] /* exists */ and certificate leaf[subject.OU] = V37WLKRXUJ)</string>
@@ -67,7 +67,7 @@
 		<dict>
 			<key>hash2</key>
 			<data>
-			zIH4dkXhI/7UCT/DQFwE/lDO+lrxhnjTXqPSQu1Qs/Q=
+			T1Nv161QNiMWM4b1jFaml/F/3WVCBqqi0VQyupK+exM=
 			</data>
 		</dict>
 		<key>Resources/Base.lproj/Main.html</key>
@@ -81,21 +81,21 @@
 		<dict>
 			<key>hash2</key>
 			<data>
-			7ueAJdcfjOX5J/Kjsmuxawlgy2Y4nheWY4IAPmh4mbI=
+			xEBOIUPLz5xgXr21A6JFdQJo8T7S2vVePYrPIzMPJPE=
 			</data>
 		</dict>
 		<key>Resources/Base.lproj/Main.storyboardc/MainMenu.nib</key>
 		<dict>
 			<key>hash2</key>
 			<data>
-			APOfUdo0yKcc19e3nQOCs/aqNSrBbxciUehOQUfLrH4=
+			fy5byEw4d17oMnkpwdGGR5cWruMC6nP6Kwf9zPAwOTg=
 			</data>
 		</dict>
 		<key>Resources/Base.lproj/Main.storyboardc/NSWindowController-B8D-0N-5wS.nib</key>
 		<dict>
 			<key>hash2</key>
 			<data>
-			ELhrAPMDT4KJXnneuW1+W1z1U5GBxupntGXvR4rq6HQ=
+			opabu5rseW/4iawbECah/AW2ZwD4MirMwGWFbbBa3Ws=
 			</data>
 		</dict>
 		<key>Resources/Base.lproj/Main.storyboardc/XfG-lQ-9wD-view-m2S-Jp-Qdl.nib</key>

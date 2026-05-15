@@ -6,7 +6,7 @@
 	<dict>
 		<key>Resources/background.js</key>
 		<data>
-		2/1CfExEj3v05Op5yXKc+4ywXw4=
+		W9dX17keAk7LUurkENgXmpx/z7o=
 		</data>
 		<key>Resources/build.config.js</key>
 		<data>
@@ -14,7 +14,7 @@
 		</data>
 		<key>Resources/content-isolated.js</key>
 		<data>
-		9eGSgHI9PcYX92A6+UVWEheLU9w=
+		J1DLcfEv2abItbcASwukv5q+RIw=
 		</data>
 		<key>Resources/content-main.js</key>
 		<data>
@@ -32,6 +32,10 @@
 		<data>
 		BIDpanaSN0Y3OQQEOwLyXND4SNk=
 		</data>
+		<key>Resources/lib/cs-readiness.js</key>
+		<data>
+		yMC8O8lvihOQ170pPQRtlp/vSbc=
+		</data>
 		<key>Resources/lib/handshake-machine.js</key>
 		<data>
 		xglueEe3SHs65cWl1/dC5cEaJ1A=
@@ -44,13 +48,17 @@
 		<data>
 		QuKBeYVj7KLBM6uXEnrEc0NnHGg=
 		</data>
+		<key>Resources/lib/tab-url-matcher.js</key>
+		<data>
+		4qtnTluAPfkzvzh2sA7ZoIb8vQI=
+		</data>
 		<key>Resources/locator.js</key>
 		<data>
 		RY/9hY8lGtZsD+WWQNA+Q2VFxY4=
 		</data>
 		<key>Resources/manifest.json</key>
 		<data>
-		CIL7cq/tBJbzdhCd4F9AXCvZTlA=
+		9nENGeN8+wKcDKNT2Jwm6MN+P/o=
 		</data>
 		<key>Resources/native/SafariWebExtensionHandler.swift</key>
 		<data>
@@ -63,7 +71,7 @@
 		<dict>
 			<key>hash2</key>
 			<data>
-			/3ZIF42eGVz3ogcsRCRSH6PWS1e5rdMvERsT10CHmc8=
+			DFbuurvpRJUudylK2eAzDwUYc/de1nflc5HNHCDlW74=
 			</data>
 		</dict>
 		<key>Resources/build.config.js</key>
@@ -77,7 +85,7 @@
 		<dict>
 			<key>hash2</key>
 			<data>
-			NIxLnWNvR+DT7e4llL1K8G8i/VH6D9bjuD7kM2vGGM8=
+			dDX3sYpiCT1T+ftkUiT6i+EDwNo+MCSM+5g/PF63WDQ=
 			</data>
 		</dict>
 		<key>Resources/content-main.js</key>
@@ -108,6 +116,13 @@
 			4fU0j7l5IFPvOhj3hoiPbx4gJfRTvSIdLfUccwqeOVE=
 			</data>
 		</dict>
+		<key>Resources/lib/cs-readiness.js</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			cINpxkWuccTu1p/DHHZrC2ibEtcbfNQ7K1TiH1lSKaA=
+			</data>
+		</dict>
 		<key>Resources/lib/handshake-machine.js</key>
 		<dict>
 			<key>hash2</key>
@@ -129,6 +144,13 @@
 			z5QmK//NhQVtdCIBx8R+cH3vmu7dL7R7DF5ihq+KSEQ=
 			</data>
 		</dict>
+		<key>Resources/lib/tab-url-matcher.js</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			I+t0JgH89qpDT3ujLIxFB2FnVG8wOdOLK1J4M9KI3D8=
+			</data>
+		</dict>
 		<key>Resources/locator.js</key>
 		<dict>
 			<key>hash2</key>
@@ -140,7 +162,7 @@
 		<dict>
 			<key>hash2</key>
 			<data>
-			8ZIDjTkvXbBxxb29wKYAOBRmR9swA9AvMiJm0C+gXXA=
+			zrXFCP+frm4uPKzwELT0Og4H11dnwKbwsZhgH6tjtQk=
 			</data>
 		</dict>
 		<key>Resources/native/SafariWebExtensionHandler.swift</key>

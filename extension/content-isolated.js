@@ -612,11 +612,11 @@
     try {
       const response = await browser.runtime.sendMessage({ action: 'sp_getTabId' });
       myTabId = response?.tabId ?? null;
-      // v0.1.36 Fix 3 — write content-script readiness heartbeat as soon as
-      // we know our tabId. background.js's storage listener picks this up
-      // and gates storage-bus dispatch timeouts (decideStorageBusTimeout in
-      // extension/lib/cs-readiness.js). Without this, the first storage-bus
-      // call to a freshly opened/navigated tab would block the full 30s.
+      // v0.1.36 Fix 3 — readiness heartbeat. Written on every content-script
+      // load. background.js's storage listener mirrors it into spCsReadyMap;
+      // the dispatch-time gate uses isCsReady() for telemetry (the hard
+      // fast-fail behaviour is gated off in initial shipping pending more
+      // robust event-page-restart rehydration; see background.js).
       if (myTabId !== null) {
         try {
           await browser.storage.local.set({

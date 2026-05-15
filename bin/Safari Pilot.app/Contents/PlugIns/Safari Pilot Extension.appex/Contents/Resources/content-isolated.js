@@ -572,6 +572,18 @@
     try {
       const response = await browser.runtime.sendMessage({ action: 'sp_getTabId' });
       myTabId = response?.tabId ?? null;
+      // v0.1.36 Fix 3 — readiness heartbeat. Written on every content-script
+      // load. background.js's storage listener mirrors it into spCsReadyMap;
+      // the dispatch-time gate uses isCsReady() for telemetry (the hard
+      // fast-fail behaviour is gated off in initial shipping pending more
+      // robust event-page-restart rehydration; see background.js).
+      if (myTabId !== null) {
+        try {
+          await browser.storage.local.set({
+            ['sp_cs_ready_' + myTabId]: { ts: Date.now(), frameId: 0 },
+          });
+        } catch { /* storage may be transiently unavailable; non-fatal */ }
+      }
       // Check for commands written to storage BEFORE this content script loaded.
       // storage.onChanged only fires for future changes — commands written while
       // the page was loading (document_idle) are invisible to the listener.

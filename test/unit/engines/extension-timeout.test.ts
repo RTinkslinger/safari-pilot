@@ -56,12 +56,12 @@ describe('ExtensionEngine timeout passthrough (v0.1.36 Fix 2)', () => {
     expect(daemon.calls[0]?.timeout).toBe(5_000);
   });
 
-  it('uses 15_000ms default when caller passes no timeout (not 90_000ms)', async () => {
+  it('uses 30_000ms default when caller passes no timeout (not 90_000ms)', async () => {
     const daemon = new RecordingDaemon();
     const engine = new ExtensionEngine(daemon as unknown as DaemonEngine);
     await engine.executeJsInTab('https://example.com', 'return 1');
     expect(daemon.calls).toHaveLength(1);
-    expect(daemon.calls[0]?.timeout).toBe(15_000);
+    expect(daemon.calls[0]?.timeout).toBe(30_000);
   });
 
   it('passes caller timeout through executeJsInFrame too (frame path same contract)', async () => {
@@ -107,12 +107,12 @@ describe('ExtensionEngine timeout passthrough (v0.1.36 Fix 2)', () => {
     expect(daemon.calls[0]?.timeout).toBe(7_500);
   });
 
-  it('execute(): uses 15s default when no timeout passed', async () => {
+  it('execute(): uses 30s default when no timeout passed', async () => {
     const daemon = new RecordingDaemon();
     const engine = new ExtensionEngine(daemon as unknown as DaemonEngine);
     await engine.execute('return 1');
     expect(daemon.calls).toHaveLength(1);
-    expect(daemon.calls[0]?.timeout).toBe(15_000);
+    expect(daemon.calls[0]?.timeout).toBe(30_000);
   });
 
   it('execute(): translates daemon timeout error to DAEMON_TIMEOUT (translation parity across entry points)', async () => {

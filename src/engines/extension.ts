@@ -19,9 +19,9 @@ const INTERNAL_PREFIX = '__SAFARI_PILOT_INTERNAL__';
  * env var if a deployment proves 15s is too tight.
  */
 const DEFAULT_EXTENSION_TIMEOUT_MS = Number.parseInt(
-  process.env['SP_EXTENSION_DEFAULT_TIMEOUT_MS'] ?? '15000',
+  process.env['SP_EXTENSION_DEFAULT_TIMEOUT_MS'] ?? '30000',
   10,
-) || 15_000;
+) || 30_000;
 
 /** Detects daemon's textual "execute timed out" error from the underlying
  *  ExtensionBridge so the engine can translate it to a structured envelope. */
