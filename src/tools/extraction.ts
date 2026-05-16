@@ -9,6 +9,7 @@ import type { Engine, ToolResponse, ToolRequirements } from '../types.js';
 import { ScreenshotPolicy } from '../security/screenshot-policy.js';
 import { routeFrameAware } from './_frame-routing-helper.js';
 import { loadConfig } from '../config.js';
+import { wrapEngineError } from '../errors.js';
 
 const execFileP = promisify(execFile);
 
@@ -306,7 +307,7 @@ export class ExtractionTools {
     });
 
     const result = await this.engine.executeJsInTab(tabUrl, sentinel);
-    if (!result.ok) throw new Error(result.error?.message ?? 'Snapshot failed');
+    if (!result.ok) throw wrapEngineError(result.error, 'Snapshot failed');
 
     return this.makeResponse(result.value ? JSON.parse(result.value) : {}, Date.now() - start);
   }
@@ -328,7 +329,7 @@ export class ExtractionTools {
     });
 
     const result = await this.engine.executeJsInTab(tabUrl, js);
-    if (!result.ok) throw new Error(result.error?.message ?? 'Snapshot failed');
+    if (!result.ok) throw wrapEngineError(result.error, 'Snapshot failed');
 
     return this.makeResponse(result.value ? JSON.parse(result.value) : {}, Date.now() - start);
   }
@@ -377,7 +378,7 @@ export class ExtractionTools {
     });
 
     const result = await routeFrameAware(this.engine, { tabUrl, frameId }, sentinel);
-    if (!result.ok) throw new Error(result.error?.message ?? 'Get text failed');
+    if (!result.ok) throw wrapEngineError(result.error, 'Get text failed');
 
     return this.makeResponse(result.value ? JSON.parse(result.value) : {}, Date.now() - start);
   }
@@ -433,7 +434,7 @@ export class ExtractionTools {
     `;
 
     const result = await routeFrameAware(this.engine, { tabUrl, frameId }, js);
-    if (!result.ok) throw new Error(result.error?.message ?? 'Get text failed');
+    if (!result.ok) throw wrapEngineError(result.error, 'Get text failed');
 
     return this.makeResponse(result.value ? JSON.parse(result.value) : {}, Date.now() - start);
   }
@@ -491,7 +492,7 @@ export class ExtractionTools {
     `;
 
     const result = await routeFrameAware(this.engine, { tabUrl, frameId }, js);
-    if (!result.ok) throw new Error(result.error?.message ?? 'Get HTML failed');
+    if (!result.ok) throw wrapEngineError(result.error, 'Get HTML failed');
 
     return this.makeResponse(result.value ? JSON.parse(result.value) : {}, Date.now() - start);
   }
@@ -546,7 +547,7 @@ export class ExtractionTools {
     `;
 
     const result = await routeFrameAware(this.engine, { tabUrl, frameId }, js);
-    if (!result.ok) throw new Error(result.error?.message ?? 'Get HTML failed');
+    if (!result.ok) throw wrapEngineError(result.error, 'Get HTML failed');
 
     return this.makeResponse(result.value ? JSON.parse(result.value) : {}, Date.now() - start);
   }
@@ -610,7 +611,7 @@ export class ExtractionTools {
     `;
 
     const result = await routeFrameAware(this.engine, { tabUrl, frameId }, js);
-    if (!result.ok) throw new Error(result.error?.message ?? 'Get attribute failed');
+    if (!result.ok) throw wrapEngineError(result.error, 'Get attribute failed');
 
     return this.makeResponse(result.value ? JSON.parse(result.value) : {}, Date.now() - start);
   }
@@ -667,7 +668,7 @@ export class ExtractionTools {
     `;
 
     const result = await routeFrameAware(this.engine, { tabUrl, frameId }, js);
-    if (!result.ok) throw new Error(result.error?.message ?? 'Get attribute failed');
+    if (!result.ok) throw wrapEngineError(result.error, 'Get attribute failed');
 
     return this.makeResponse(result.value ? JSON.parse(result.value) : {}, Date.now() - start);
   }
@@ -915,7 +916,7 @@ export class ExtractionTools {
     `;
 
     const result = await this.engine.executeJsInTab(tabUrl, js);
-    if (!result.ok) throw new Error(result.error?.message ?? 'Get console messages failed');
+    if (!result.ok) throw wrapEngineError(result.error, 'Get console messages failed');
 
     return this.makeResponse(
       result.value ? JSON.parse(result.value) : { messages: [], count: 0 },
@@ -948,7 +949,7 @@ export class ExtractionTools {
     if (selector) {
       const sentinel = '__SP_QUERY_ALL__:' + JSON.stringify({ selector, limit });
       const result = await routeFrameAware(this.engine, { tabUrl, frameId }, sentinel);
-      if (!result.ok) throw new Error(result.error?.message ?? 'query_all (selector) failed');
+      if (!result.ok) throw wrapEngineError(result.error, 'query_all (selector) failed');
       const parsed = result.value ? JSON.parse(result.value) : { items: [], count: 0 };
       const normalized = parsed.found === false
         ? { items: [], count: 0, limit, truncated: false }
@@ -964,7 +965,7 @@ export class ExtractionTools {
     const sentinel = '__SP_QUERY_ALL__:' + JSON.stringify({ locator, limit });
 
     const result = await routeFrameAware(this.engine, { tabUrl, frameId }, sentinel);
-    if (!result.ok) throw new Error(result.error?.message ?? 'query_all failed');
+    if (!result.ok) throw wrapEngineError(result.error, 'query_all failed');
 
     const parsed = result.value ? JSON.parse(result.value) : { items: [], count: 0 };
     const normalized = parsed.found === false
@@ -1017,7 +1018,7 @@ export class ExtractionTools {
         return JSON.stringify({ items: __items, count: __all.length, limit: __limit, truncated: __truncated });
       `;
       const result = await routeFrameAware(this.engine, { tabUrl, frameId }, js);
-      if (!result.ok) throw new Error(result.error?.message ?? 'query_all (selector) failed');
+      if (!result.ok) throw wrapEngineError(result.error, 'query_all (selector) failed');
       const parsed = result.value ? JSON.parse(result.value) : { items: [], count: 0 };
       const normalized = parsed.found === false
         ? { items: [], count: 0, limit, truncated: false }
@@ -1033,7 +1034,7 @@ export class ExtractionTools {
     const js = generateQueryAllJs(locator, { limit });
 
     const result = await routeFrameAware(this.engine, { tabUrl, frameId }, js);
-    if (!result.ok) throw new Error(result.error?.message ?? 'query_all failed');
+    if (!result.ok) throw wrapEngineError(result.error, 'query_all failed');
 
     const parsed = result.value ? JSON.parse(result.value) : { items: [], count: 0 };
     const normalized = parsed.found === false
