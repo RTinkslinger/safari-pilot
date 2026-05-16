@@ -1,5 +1,6 @@
 import type { ToolResponse, ToolRequirements } from '../types.js';
 import type { IEngine } from '../engines/engine.js';
+import { wrapEngineError } from '../errors.js';
 import type { Engine } from '../types.js';
 import { escapeForJsSingleQuote } from '../escape.js';
 import { routeFrameAware } from './_frame-routing-helper.js';
@@ -104,7 +105,7 @@ export class ShadowTools {
     `;
 
     const result = await routeFrameAware(this.engine, { tabUrl, frameId }, js);
-    if (!result.ok) throw new Error(result.error?.message ?? 'Shadow query failed');
+    if (!result.ok) throw wrapEngineError(result.error, 'Shadow query failed');
 
     return this.makeResponse(result.value ? JSON.parse(result.value) : { found: false }, Date.now() - start);
   }
@@ -144,7 +145,7 @@ export class ShadowTools {
     `;
 
     const result = await routeFrameAware(this.engine, { tabUrl, frameId }, js);
-    if (!result.ok) throw new Error(result.error?.message ?? 'Shadow click failed');
+    if (!result.ok) throw wrapEngineError(result.error, 'Shadow click failed');
 
     return this.makeResponse(result.value ? JSON.parse(result.value) : { clicked: true }, Date.now() - start);
   }
