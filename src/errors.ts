@@ -1,4 +1,4 @@
-import type { Engine, StructuredUncertainty, ToolError } from './types.js';
+import type { Engine, EngineError, StructuredUncertainty, ToolError } from './types.js';
 
 // ─── Error Codes ─────────────────────────────────────────────────────────────
 
@@ -813,4 +813,52 @@ export function formatToolError(
       ? { uncertainResult: error.uncertainResult }
       : {}),
   };
+}
+
+// ─── EngineExecutionError + wrapEngineError ──────────────────────────────────
+//
+// Reviewer finding F3.1 (v0.1.36): tool handlers historically used
+//   if (!result.ok) throw new Error(result.error?.message ?? 'X failed');
+// which collapses the structured engine envelope to plain message text — the
+// `code`, `retryable`, and `hints` from EngineResult.error were dropped before
+// reaching the MCP response. The agent saw opaque strings instead of
+// recoverable structured errors, making the DAEMON_TIMEOUT /
+// CONTENT_SCRIPT_NOT_READY envelopes operationally inert in v0.1.36 Track A.
+//
+// EngineExecutionError preserves the full envelope so the catch block in
+// src/server.ts:executeToolWithSecurity can convert any caught
+// SafariPilotError into a structured `isError: true` MCP response (mirroring
+// the T30 HumanApproval soft-return). One return type — no separate
+// "fallback" class — keeps the catch block uniform.
+
+export class EngineExecutionError extends SafariPilotError {
+  readonly code: ErrorCode;
+  readonly retryable: boolean;
+  readonly hints: string[];
+
+  constructor(engineErr: EngineError) {
+    super(engineErr.message);
+    // Engine codes are strings from the daemon/extension layer; if the value
+    // matches a known ErrorCode it round-trips intact, otherwise we keep the
+    // raw string. The MCP response carries the string regardless — the
+    // ErrorCode union is documentation, not enforcement.
+    this.code = engineErr.code as ErrorCode;
+    this.retryable = engineErr.retryable ?? false;
+    this.hints = Array.isArray(engineErr.hints) ? [...engineErr.hints] : [];
+  }
+}
+
+export function wrapEngineError(
+  engineErr: EngineError | undefined,
+  fallbackMessage: string,
+): SafariPilotError {
+  if (!engineErr) {
+    return new EngineExecutionError({
+      code: ERROR_CODES.INTERNAL_ERROR,
+      message: fallbackMessage,
+      retryable: false,
+      hints: [],
+    });
+  }
+  return new EngineExecutionError(engineErr);
 }
