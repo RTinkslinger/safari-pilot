@@ -1,5 +1,6 @@
 import { validatePackName, validatePackBody } from '../security/selector-pack-validator.js';
 import type { IEngine } from '../engines/engine.js';
+import { wrapEngineError } from '../errors.js';
 import type { Engine, ToolResponse, ToolRequirements } from '../types.js';
 
 export interface ToolDefinition {
@@ -84,7 +85,7 @@ export class SelectorPackTools {
     // here for transport.
     const sentinel = '__SP_PACK_REGISTER__:' + JSON.stringify({ name, body });
     const result = await this.engine.executeJsInTab(tabUrl, sentinel);
-    if (!result.ok) throw new Error(result.error?.message ?? 'register failed');
+    if (!result.ok) throw wrapEngineError(result.error, 'register failed');
     const parsed = result.value ? JSON.parse(result.value) : { ok: false };
     if (!parsed.ok) throw new Error(`selectorPack register rejected by page: ${parsed.error}`);
 
@@ -101,7 +102,7 @@ export class SelectorPackTools {
     // and the page-side __sp_pack[name] entry.
     const sentinel = '__SP_PACK_UNREGISTER__:' + JSON.stringify({ name });
     const result = await this.engine.executeJsInTab(tabUrl, sentinel);
-    if (!result.ok) throw new Error(result.error?.message ?? 'unregister failed');
+    if (!result.ok) throw wrapEngineError(result.error, 'unregister failed');
     return this.makeResponse(result.value ? JSON.parse(result.value) : { ok: true }, Date.now() - start);
   }
 
