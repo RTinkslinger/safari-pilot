@@ -62,6 +62,7 @@ import {
   SessionWindowInitError,
   LoopDetectedError,
   ThrashDetectedError,
+  EngineExecutionError,
 } from './errors.js';
 import { loadConfig, DEFAULT_CONFIG, type SafariPilotConfig } from './config.js';
 import { trace } from './trace.js';
@@ -1276,6 +1277,39 @@ export class SafariPilotServer {
         elapsed_ms: Date.now() - start,
         session: this.sessionId,
       });
+
+      // F3.1 — Convert EngineExecutionError instances to a structured isError
+      // MCP response. Mirrors the T30 HumanApproval soft-return at
+      // server.ts:737-759 so the agent receives code/retryable/hints instead
+      // of the opaque text the MCP SDK would otherwise serialize from a bare
+      // thrown Error. Scope is intentionally narrow: only the new
+      // EngineExecutionError class added by F3.1. Other SafariPilotError
+      // subclasses (RateLimitedError, TabUrlNotRecognizedError,
+      // CircuitBreakerOpenError, KillSwitchActiveError, etc.) continue to
+      // throw — pre-F3.1 callers and tests (e.g. killswitch-auto-activation
+      // SD-31) depend on that contract, and broadening would be scope creep.
+      // Unifying everything to isError can land in a follow-up sprint.
+      if (error instanceof EngineExecutionError) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                error: error.code,
+                message: error.message,
+                retryable: error.retryable,
+                hints: error.hints,
+              }),
+            },
+          ],
+          isError: true,
+          metadata: {
+            engine: selectedEngineName,
+            degraded: false,
+            latencyMs: Date.now() - start,
+          },
+        };
+      }
 
       throw error;
     }

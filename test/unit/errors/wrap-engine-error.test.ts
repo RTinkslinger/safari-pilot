@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   wrapEngineError,
   EngineExecutionError,
+  InternalError,
   SafariPilotError,
   ERROR_CODES,
 } from '../../../src/errors.js';
@@ -71,5 +72,22 @@ describe('wrapEngineError (F3.1)', () => {
     );
     hints.push('c');
     expect(wrapped.hints).toEqual(['a', 'b']);
+  });
+
+  it('is distinguishable from other SafariPilotError subclasses (catch block uses instanceof EngineExecutionError, NOT instanceof SafariPilotError)', () => {
+    // Documents the narrow-scope decision in
+    // src/server.ts:executeToolWithSecurity catch block. Only
+    // EngineExecutionError is converted to a structured isError MCP
+    // response. Other SafariPilotError subclasses (RateLimitedError,
+    // TabUrlNotRecognizedError, KillSwitchActiveError, etc.) continue to
+    // throw — pre-F3.1 tests like killswitch-auto-activation SD-31 depend
+    // on that contract. Broadening to instanceof SafariPilotError is
+    // explicit scope creep and gets done in a follow-up.
+    const wrapped = wrapEngineError(
+      { code: 'CSP_BLOCKED', message: 'm', retryable: false, hints: [] },
+      'fb',
+    );
+    expect(wrapped).toBeInstanceOf(EngineExecutionError);
+    expect(wrapped).not.toBeInstanceOf(InternalError);
   });
 });
