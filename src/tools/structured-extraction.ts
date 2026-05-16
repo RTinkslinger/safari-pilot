@@ -1,5 +1,6 @@
 import type { ToolResponse, ToolRequirements } from '../types.js';
 import type { IEngine } from '../engines/engine.js';
+import { wrapEngineError } from '../errors.js';
 import { escapeForJsSingleQuote } from '../escape.js';
 import { loadConfig } from '../config.js';
 
@@ -167,7 +168,7 @@ export class StructuredExtractionTools {
     });
 
     const result = await this.engine.executeJsInTab(tabUrl, sentinel);
-    if (!result.ok) throw new Error(result.error?.message ?? 'Smart scrape failed');
+    if (!result.ok) throw wrapEngineError(result.error, 'Smart scrape failed');
 
     return this.makeResponse(result.value ? JSON.parse(result.value) : {}, Date.now() - start);
   }
@@ -260,7 +261,7 @@ export class StructuredExtractionTools {
     `;
 
     const result = await this.engine.executeJsInTab(tabUrl, js);
-    if (!result.ok) throw new Error(result.error?.message ?? 'Smart scrape failed');
+    if (!result.ok) throw wrapEngineError(result.error, 'Smart scrape failed');
 
     return this.makeResponse(result.value ? JSON.parse(result.value) : {}, Date.now() - start);
   }
@@ -280,7 +281,7 @@ export class StructuredExtractionTools {
     });
 
     const result = await this.engine.executeJsInTab(tabUrl, sentinel);
-    if (!result.ok) throw new Error(result.error?.message ?? 'Extract tables failed');
+    if (!result.ok) throw wrapEngineError(result.error, 'Extract tables failed');
 
     return this.makeResponse(result.value ? JSON.parse(result.value) : { tables: [], count: 0 }, Date.now() - start);
   }
@@ -344,7 +345,7 @@ export class StructuredExtractionTools {
     `;
 
     const result = await this.engine.executeJsInTab(tabUrl, js);
-    if (!result.ok) throw new Error(result.error?.message ?? 'Extract tables failed');
+    if (!result.ok) throw wrapEngineError(result.error, 'Extract tables failed');
 
     return this.makeResponse(result.value ? JSON.parse(result.value) : { tables: [], count: 0 }, Date.now() - start);
   }
@@ -361,7 +362,7 @@ export class StructuredExtractionTools {
     const sentinel = '__SP_EXTRACT_LINKS__:' + JSON.stringify({ filter });
 
     const result = await this.engine.executeJsInTab(tabUrl, sentinel);
-    if (!result.ok) throw new Error(result.error?.message ?? 'Extract links failed');
+    if (!result.ok) throw wrapEngineError(result.error, 'Extract links failed');
 
     return this.makeResponse(result.value ? JSON.parse(result.value) : { links: [], count: 0 }, Date.now() - start);
   }
@@ -419,7 +420,7 @@ export class StructuredExtractionTools {
     `;
 
     const result = await this.engine.executeJsInTab(tabUrl, js);
-    if (!result.ok) throw new Error(result.error?.message ?? 'Extract links failed');
+    if (!result.ok) throw wrapEngineError(result.error, 'Extract links failed');
 
     return this.makeResponse(result.value ? JSON.parse(result.value) : { links: [], count: 0 }, Date.now() - start);
   }
@@ -437,7 +438,7 @@ export class StructuredExtractionTools {
     const sentinel = '__SP_EXTRACT_IMAGES__:' + JSON.stringify({ minWidth, minHeight });
 
     const result = await this.engine.executeJsInTab(tabUrl, sentinel);
-    if (!result.ok) throw new Error(result.error?.message ?? 'Extract images failed');
+    if (!result.ok) throw wrapEngineError(result.error, 'Extract images failed');
 
     return this.makeResponse(result.value ? JSON.parse(result.value) : { images: [], count: 0 }, Date.now() - start);
   }
@@ -475,7 +476,7 @@ export class StructuredExtractionTools {
     `;
 
     const result = await this.engine.executeJsInTab(tabUrl, js);
-    if (!result.ok) throw new Error(result.error?.message ?? 'Extract images failed');
+    if (!result.ok) throw wrapEngineError(result.error, 'Extract images failed');
 
     return this.makeResponse(result.value ? JSON.parse(result.value) : { images: [], count: 0 }, Date.now() - start);
   }
@@ -491,7 +492,7 @@ export class StructuredExtractionTools {
     const sentinel = '__SP_EXTRACT_METADATA__:' + JSON.stringify({});
 
     const result = await this.engine.executeJsInTab(tabUrl, sentinel);
-    if (!result.ok) throw new Error(result.error?.message ?? 'Extract metadata failed');
+    if (!result.ok) throw wrapEngineError(result.error, 'Extract metadata failed');
 
     return this.makeResponse(result.value ? JSON.parse(result.value) : {}, Date.now() - start);
   }
@@ -560,7 +561,7 @@ export class StructuredExtractionTools {
     `;
 
     const result = await this.engine.executeJsInTab(tabUrl, js);
-    if (!result.ok) throw new Error(result.error?.message ?? 'Extract metadata failed');
+    if (!result.ok) throw wrapEngineError(result.error, 'Extract metadata failed');
 
     return this.makeResponse(result.value ? JSON.parse(result.value) : {}, Date.now() - start);
   }
