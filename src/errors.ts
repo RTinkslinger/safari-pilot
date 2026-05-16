@@ -122,11 +122,17 @@ export const ERROR_METADATA: Partial<Record<ErrorCode, { retryable: boolean; hin
     hints: ['Session wall-clock cap reached. Abort and report inability to complete.'],
   },
   DAEMON_TIMEOUT: {
-    retryable: true,
+    // retryable=false because the 50-task probe showed retryable=true caused
+    // an agent retry-storm on legit slow ops (DAEMON_TIMEOUT count ballooned
+    // from 119 to 450+). The agent should treat this as terminal for that
+    // call and pivot to a different tool or abandon the sub-step. The hints
+    // give recovery paths via different methods, not retries of the same.
+    retryable: false,
     hints: [
-      'Daemon execution exceeded the per-tool-class timeout (default 15s).',
-      'Page may still be loading — call safari_wait_for with a selector before retrying.',
-      'If using safari_evaluate, prefer a structured tool (safari_query_all, safari_get_text) — the page may be heavy and the structured path is faster.',
+      'Daemon execution exceeded the per-call timeout (default 90s).',
+      'Do NOT immediately retry the same call — switch strategies. Try a structured tool (safari_query_all, safari_get_text) if the failing call was safari_evaluate.',
+      'If the page is heavy, call safari_wait_for with a specific selector first, then a single targeted extract — not the same evaluate.',
+      'If the failure persists across two different tools, ABSTAIN — the page is uncooperative.',
     ],
   },
   CONTENT_SCRIPT_NOT_READY: {

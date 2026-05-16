@@ -56,12 +56,12 @@ describe('ExtensionEngine timeout passthrough (v0.1.36 Fix 2)', () => {
     expect(daemon.calls[0]?.timeout).toBe(5_000);
   });
 
-  it('uses 30_000ms default when caller passes no timeout (not 90_000ms)', async () => {
+  it('uses 90_000ms default when caller passes no timeout (Fix 2: passthrough is what changed; default is the same as pre-fix)', async () => {
     const daemon = new RecordingDaemon();
     const engine = new ExtensionEngine(daemon as unknown as DaemonEngine);
     await engine.executeJsInTab('https://example.com', 'return 1');
     expect(daemon.calls).toHaveLength(1);
-    expect(daemon.calls[0]?.timeout).toBe(30_000);
+    expect(daemon.calls[0]?.timeout).toBe(90_000);
   });
 
   it('passes caller timeout through executeJsInFrame too (frame path same contract)', async () => {
@@ -72,7 +72,7 @@ describe('ExtensionEngine timeout passthrough (v0.1.36 Fix 2)', () => {
     expect(daemon.calls[0]?.timeout).toBe(8_000);
   });
 
-  it('translates daemon "execute timed out" error to DAEMON_TIMEOUT with retryable=true and hints', async () => {
+  it('translates daemon "execute timed out" error to DAEMON_TIMEOUT with retryable=false and hints', async () => {
     const daemon = new RecordingDaemon(async () => ({
       ok: false,
       error: {
@@ -87,7 +87,7 @@ describe('ExtensionEngine timeout passthrough (v0.1.36 Fix 2)', () => {
 
     expect(result.ok).toBe(false);
     expect(result.error?.code).toBe(ERROR_CODES.DAEMON_TIMEOUT);
-    expect(result.error?.retryable).toBe(true);
+    expect(result.error?.retryable).toBe(false);
     expect(result.error?.hints).toBeDefined();
     expect(result.error?.hints?.length).toBeGreaterThan(0);
     // Hints should mention a concrete recovery path so the agent can act on them.
@@ -107,12 +107,12 @@ describe('ExtensionEngine timeout passthrough (v0.1.36 Fix 2)', () => {
     expect(daemon.calls[0]?.timeout).toBe(7_500);
   });
 
-  it('execute(): uses 30s default when no timeout passed', async () => {
+  it('execute(): uses 90s default when no timeout passed', async () => {
     const daemon = new RecordingDaemon();
     const engine = new ExtensionEngine(daemon as unknown as DaemonEngine);
     await engine.execute('return 1');
     expect(daemon.calls).toHaveLength(1);
-    expect(daemon.calls[0]?.timeout).toBe(30_000);
+    expect(daemon.calls[0]?.timeout).toBe(90_000);
   });
 
   it('execute(): translates daemon timeout error to DAEMON_TIMEOUT (translation parity across entry points)', async () => {

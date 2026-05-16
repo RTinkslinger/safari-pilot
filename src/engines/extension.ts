@@ -8,20 +8,27 @@ import { ERROR_CODES, ERROR_METADATA } from '../errors.js';
 const INTERNAL_PREFIX = '__SAFARI_PILOT_INTERNAL__';
 
 /**
- * v0.1.36 Track A Fix 2 — default per-call timeout for extension execution.
- * Replaced the previous EXTENSION_TIMEOUT_MS=90_000 floor that clamped every
- * caller's timeout upward (Math.max), which produced ~963 errors of "Daemon
- * command 'execute' timed out after 90000ms" in the v0.1.35 single-run bench
- * (~30% of all tool errors). Tools that need longer waits — safari_wait_for,
- * safari_navigate, safari_dismiss_overlays — pass an explicit `timeout`
- * parameter; the default applies to short ops (get_text, click, evaluate,
- * snapshot, query_all, etc.). Override via SP_EXTENSION_DEFAULT_TIMEOUT_MS
- * env var if a deployment proves 15s is too tight.
+ * v0.1.36 Track A Fix 2 — caller's `timeout` is now passed through to the
+ * daemon verbatim. Previously `Math.max(timeout ?? EXTENSION_TIMEOUT_MS,
+ * EXTENSION_TIMEOUT_MS)` clamped EVERY value up to 90s, so callers asking
+ * for 10s actually waited 90s. The Math.max floor is gone.
+ *
+ * Default (when caller passes no timeout) stays at 90s. A 50-task probe
+ * on the v0.1.35 worst-affected sites (2026-05-16) showed that aggressive
+ * defaults (15s, 30s, 60s) all turned a real product issue — many legit
+ * WebVoyager ops complete in 30-90s — into a retry-storm because the new
+ * structured DAEMON_TIMEOUT envelope (retryable=true) causes the agent
+ * to retry instead of giving up. The right fix for slow ops is on the
+ * product side (smaller results, server-side caching, in-tool wait
+ * primitives), not a unilateral timeout cut.
+ *
+ * Override via SP_EXTENSION_DEFAULT_TIMEOUT_MS — useful for tests or
+ * specialized deployments.
  */
 const DEFAULT_EXTENSION_TIMEOUT_MS = Number.parseInt(
-  process.env['SP_EXTENSION_DEFAULT_TIMEOUT_MS'] ?? '30000',
+  process.env['SP_EXTENSION_DEFAULT_TIMEOUT_MS'] ?? '90000',
   10,
-) || 30_000;
+) || 90_000;
 
 /** Detects daemon's textual "execute timed out" error from the underlying
  *  ExtensionBridge so the engine can translate it to a structured envelope. */
