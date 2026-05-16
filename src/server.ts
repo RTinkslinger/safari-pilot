@@ -49,6 +49,7 @@ import { IdpiAnnotator } from './security/idpi-annotator.js';
 import { HumanApproval, HUMAN_APPROVAL_SUGGESTED_NEXT_TOOLS } from './security/human-approval.js';
 import { ScreenshotPolicy } from './security/screenshot-policy.js';
 import { LoopDetector } from './security/loop-detector.js';
+import { WallCapEnforcer } from './security/wall-cap.js';
 import {
   RateLimitedError,
   HumanApprovalRequiredError,
@@ -63,6 +64,7 @@ import {
   LoopDetectedError,
   ThrashDetectedError,
   EngineExecutionError,
+  WallCapExceededError,
 } from './errors.js';
 import { loadConfig, DEFAULT_CONFIG, type SafariPilotConfig } from './config.js';
 import { trace } from './trace.js';
@@ -181,6 +183,7 @@ function isSecurityPipelineError(err: unknown): boolean {
     || err instanceof EngineUnavailableError
     || err instanceof LoopDetectedError
     || err instanceof ThrashDetectedError
+    || err instanceof WallCapExceededError
   ) {
     return true;
   }
@@ -229,6 +232,13 @@ export class SafariPilotServer {
   readonly idpiAnnotator: IdpiAnnotator;
   readonly humanApproval: HumanApproval;
   readonly loopDetector: LoopDetector = new LoopDetector();
+  // v0.1.36 — enforces MAX_WALL_MS env var (bench-set to 1.2M = 20 min by
+  // default). Pre-v0.1.36 the env var was advertised as a hard limit but
+  // never read; bench tasks routinely ran 25-30+ minutes. Constructed
+  // once at SafariPilotServer construction so the session start timestamp
+  // is fixed early; assertWithinCap() fires at the top of every tool
+  // call. Off when MAX_WALL_MS is unset / zero / non-numeric.
+  readonly wallCapEnforcer: WallCapEnforcer = WallCapEnforcer.fromEnv(process.env);
 
   private engineProxy: EngineProxy | null = null;
   private clickContexts: Map<string, ClickContext> = new Map();
@@ -689,6 +699,12 @@ export class SafariPilotServer {
       tabUrl: ((params['tabUrl'] ?? params['url'] ?? '') as string),
       paramKeys: Object.keys(params),
     });
+
+    // 0.9. Wall-clock cap (v0.1.36). Fires BEFORE killSwitch so a budget-
+    // expired session surfaces as WALL_CAP_EXCEEDED (clearer signal for
+    // the agent + telemetry) rather than KILL_SWITCH_ACTIVE. No-op when
+    // MAX_WALL_MS is unset (production default outside the bench).
+    this.wallCapEnforcer.assertWithinCap();
 
     // 1. Kill switch check — blocks all automation when active
     this.killSwitch.checkBeforeAction();

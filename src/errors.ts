@@ -771,6 +771,38 @@ export class FileUploadInvalidParamsError extends SafariPilotError {
  * Matches Playwright's strict-mode contract: actions must target exactly
  * one element. Multi-match is a caller-side spec issue, not retryable.
  */
+/**
+ * Session wall-clock cap exceeded (v0.1.36).
+ *
+ * Thrown by `WallCapEnforcer.assertWithinCap()` from `src/security/wall-cap.ts`
+ * when a single MCP-server session has been running longer than the
+ * configured `MAX_WALL_MS` budget (typically 1200000ms / 20 min, set by
+ * the bench wrapper). Pre-v0.1.36 this budget was advertised as a hard
+ * limit but had no enforcer; bench tasks routinely ran 25-30+ minutes.
+ *
+ * Non-retryable. The hint tells the agent to ABSTAIN — there is no
+ * "wait and try again" recovery because the budget for this session is
+ * fully consumed.
+ */
+export class WallCapExceededError extends SafariPilotError {
+  readonly code = ERROR_CODES.WALL_CAP_EXCEEDED;
+  readonly retryable = false;
+  readonly hints: string[];
+  readonly elapsedMs: number;
+  readonly capMs: number;
+
+  constructor(capMs: number, elapsedMs: number) {
+    super(`Session wall-clock cap exceeded: ${elapsedMs}ms elapsed exceeds ${capMs}ms budget`);
+    this.capMs = capMs;
+    this.elapsedMs = elapsedMs;
+    this.hints = [
+      'Session wall-clock cap reached. Abort and report inability to complete.',
+      'Do NOT retry — the per-session budget is fully consumed.',
+      'If this fires unexpectedly, MAX_WALL_MS may be set too low for the workload.',
+    ];
+  }
+}
+
 export class StrictnessViolationError extends SafariPilotError {
   readonly code = ERROR_CODES.STRICTNESS_VIOLATION;
   readonly retryable = false;
