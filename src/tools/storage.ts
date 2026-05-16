@@ -1,6 +1,7 @@
 import type { IEngine } from '../engines/engine.js';
 import type { Engine, ToolResponse, ToolRequirements } from '../types.js';
 import { escapeForJsSingleQuote, escapeForTemplateLiteral } from '../escape.js';
+import { wrapEngineError } from '../errors.js';
 
 export interface ToolDefinition {
   name: string;
@@ -263,7 +264,7 @@ export class StorageTools {
       else if (tabUrl) filter['url'] = tabUrl;
       const sentinel = `__SP_COOKIE_GET_ALL__:${JSON.stringify(filter)}`;
       const result = await this.engine.executeJsInTab(tabUrl ?? '', sentinel);
-      if (!result.ok) throw new Error(result.error?.message ?? 'Get cookies failed');
+      if (!result.ok) throw wrapEngineError(result.error, 'Get cookies failed');
       const raw = result.value ? JSON.parse(result.value) : [];
       const cookies = Array.isArray(raw) ? raw : [];
       return this.makeResponse({ cookies, count: cookies.length }, Date.now() - start);
@@ -304,7 +305,7 @@ export class StorageTools {
     `;
 
     const result = await this.engine.executeJsInTab(tabUrl ?? '', js);
-    if (!result.ok) throw new Error(result.error?.message ?? 'Get cookies failed');
+    if (!result.ok) throw wrapEngineError(result.error, 'Get cookies failed');
 
     return this.makeResponse(result.value ? JSON.parse(result.value) : { cookies: [], count: 0 }, Date.now() - start);
   }
@@ -340,7 +341,7 @@ export class StorageTools {
       if (expirationDate !== undefined) setParams['expirationDate'] = expirationDate;
       const sentinel = `__SP_COOKIE_SET__:${JSON.stringify(setParams)}`;
       const result = await this.engine.executeJsInTab(tabUrl, sentinel);
-      if (!result.ok) throw new Error(result.error?.message ?? 'Set cookie failed');
+      if (!result.ok) throw wrapEngineError(result.error, 'Set cookie failed');
       const cookie = result.value ? JSON.parse(result.value) : null;
       return this.makeResponse({ set: cookie != null, name, cookie }, Date.now() - start);
     }
@@ -391,7 +392,7 @@ export class StorageTools {
     `;
 
     const result = await this.engine.executeJsInTab(tabUrl, js);
-    if (!result.ok) throw new Error(result.error?.message ?? 'Set cookie failed');
+    if (!result.ok) throw wrapEngineError(result.error, 'Set cookie failed');
 
     return this.makeResponse(result.value ? JSON.parse(result.value) : {}, Date.now() - start);
   }
@@ -408,7 +409,7 @@ export class StorageTools {
     if (this.engine.name === 'extension') {
       const sentinel = `__SP_COOKIE_REMOVE__:${JSON.stringify({ url: tabUrl, name })}`;
       const result = await this.engine.executeJsInTab(tabUrl, sentinel);
-      if (!result.ok) throw new Error(result.error?.message ?? 'Delete cookie failed');
+      if (!result.ok) throw wrapEngineError(result.error, 'Delete cookie failed');
       const removed = result.value ? JSON.parse(result.value) : null;
       // browser.cookies.remove returns null if the cookie didn't exist;
       // returns the removed details if it did.
@@ -446,7 +447,7 @@ export class StorageTools {
     `;
 
     const result = await this.engine.executeJsInTab(tabUrl, js);
-    if (!result.ok) throw new Error(result.error?.message ?? 'Delete cookie failed');
+    if (!result.ok) throw wrapEngineError(result.error, 'Delete cookie failed');
 
     return this.makeResponse(result.value ? JSON.parse(result.value) : {}, Date.now() - start);
   }
@@ -510,7 +511,7 @@ export class StorageTools {
     `;
 
     const result = await this.engine.executeJsInTab(tabUrl, js);
-    if (!result.ok) throw new Error(result.error?.message ?? 'Storage state export failed');
+    if (!result.ok) throw wrapEngineError(result.error, 'Storage state export failed');
 
     return this.makeResponse(result.value ? JSON.parse(result.value) : {}, Date.now() - start);
   }
@@ -572,7 +573,7 @@ export class StorageTools {
     `;
 
     const result = await this.engine.executeJsInTab(tabUrl, js);
-    if (!result.ok) throw new Error(result.error?.message ?? 'Storage state import failed');
+    if (!result.ok) throw wrapEngineError(result.error, 'Storage state import failed');
 
     return this.makeResponse(result.value ? JSON.parse(result.value) : {}, Date.now() - start);
   }
@@ -598,7 +599,7 @@ export class StorageTools {
     `;
 
     const result = await this.engine.executeJsInTab(tabUrl, js);
-    if (!result.ok) throw new Error(result.error?.message ?? 'localStorage get failed');
+    if (!result.ok) throw wrapEngineError(result.error, 'localStorage get failed');
 
     return this.makeResponse(result.value ? JSON.parse(result.value) : {}, Date.now() - start);
   }
@@ -624,7 +625,7 @@ export class StorageTools {
     `;
 
     const result = await this.engine.executeJsInTab(tabUrl, js);
-    if (!result.ok) throw new Error(result.error?.message ?? 'localStorage set failed');
+    if (!result.ok) throw wrapEngineError(result.error, 'localStorage set failed');
 
     return this.makeResponse(result.value ? JSON.parse(result.value) : {}, Date.now() - start);
   }
@@ -650,7 +651,7 @@ export class StorageTools {
     `;
 
     const result = await this.engine.executeJsInTab(tabUrl, js);
-    if (!result.ok) throw new Error(result.error?.message ?? 'sessionStorage get failed');
+    if (!result.ok) throw wrapEngineError(result.error, 'sessionStorage get failed');
 
     return this.makeResponse(result.value ? JSON.parse(result.value) : {}, Date.now() - start);
   }
@@ -676,7 +677,7 @@ export class StorageTools {
     `;
 
     const result = await this.engine.executeJsInTab(tabUrl, js);
-    if (!result.ok) throw new Error(result.error?.message ?? 'sessionStorage set failed');
+    if (!result.ok) throw wrapEngineError(result.error, 'sessionStorage set failed');
 
     return this.makeResponse(result.value ? JSON.parse(result.value) : {}, Date.now() - start);
   }
@@ -701,7 +702,7 @@ export class StorageTools {
     `;
 
     const result = await this.engine.executeJsInTab(tabUrl, js);
-    if (!result.ok) throw new Error(result.error?.message ?? 'IndexedDB list failed');
+    if (!result.ok) throw wrapEngineError(result.error, 'IndexedDB list failed');
 
     return this.makeResponse(result.value ? JSON.parse(result.value) : { databases: [], count: 0 }, Date.now() - start);
   }
@@ -779,7 +780,7 @@ export class StorageTools {
     `;
 
     const result = await this.engine.executeJsInTab(tabUrl, js);
-    if (!result.ok) throw new Error(result.error?.message ?? 'IndexedDB get failed');
+    if (!result.ok) throw wrapEngineError(result.error, 'IndexedDB get failed');
 
     return this.makeResponse(result.value ? JSON.parse(result.value) : { records: [], count: 0 }, Date.now() - start);
   }
