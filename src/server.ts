@@ -1040,6 +1040,13 @@ export class SafariPilotServer {
               const parsed = parseInt(winId, 10);
               if (!isNaN(parsed)) {
                 this._sessionWindowId = parsed;
+                // F1.2 — keep ExtensionEngine's session id in sync after
+                // WINDOW_CLOSED recovery so subsequent extension_execute
+                // payloads carry the new window id.
+                const ext = this.engines.get('extension');
+                if (ext instanceof ExtensionEngine) {
+                  ext.setSessionWindowId(parsed);
+                }
               }
             } catch { /* best effort */ }
           }
@@ -1611,6 +1618,15 @@ end tell'`,
     }
     this._sessionWindowId = windowId;
     this._sessionTabOpened = true;
+    // F1.2 — surface the session window id to ExtensionEngine so every
+    // extension_execute payload carries it. background.js's findTargetTab
+    // filters candidate tabs by windowId === sessionWindowId before the URL
+    // matcher fires, preventing cross-session pollution when two MCP
+    // sessions share a Safari instance (bench concurrency case).
+    const ext = this.engines.get('extension');
+    if (ext instanceof ExtensionEngine) {
+      ext.setSessionWindowId(windowId);
+    }
     trace(traceId, 'server', 'session_window_created', { windowId });
   }
 

@@ -67,18 +67,31 @@ async function saveTabCache() {
 // load time so Safari wakes the event page when tabs change.
 browser.tabs.onCreated.addListener((tab) => {
   if (tab.id != null) {
-    tabCacheMap.set(tab.id, { url: tab.url || '', title: tab.title || '' });
+    // v0.1.36 reviewer F1.2 — store windowId so findTargetTab can filter
+    // candidates by the originating MCP session's window. Cross-session
+    // matchers would otherwise route one agent's command into another
+    // agent's tab when two MCP sessions share a Safari instance (typical
+    // at bench concurrency).
+    tabCacheMap.set(tab.id, {
+      url: tab.url || '',
+      title: tab.title || '',
+      windowId: tab.windowId,
+    });
     saveTabCache();
   }
 });
 
 browser.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-  const entry = tabCacheMap.get(tabId) || { url: '', title: '' };
+  const entry = tabCacheMap.get(tabId) || { url: '', title: '', windowId: undefined };
   if (changeInfo.url !== undefined) entry.url = changeInfo.url;
   if (changeInfo.title !== undefined) entry.title = changeInfo.title;
   // Also pick up from the full tab object if changeInfo is sparse
   if (tab.url && !entry.url) entry.url = tab.url;
   if (tab.title && !entry.title) entry.title = tab.title;
+  // F1.2: keep windowId fresh from the full tab object; tabs.onUpdated does
+  // not emit a windowId changeInfo even when the tab is moved between
+  // windows, so always sync from `tab.windowId`.
+  if (tab.windowId !== undefined) entry.windowId = tab.windowId;
   tabCacheMap.set(tabId, entry);
   saveTabCache();
 });
@@ -401,7 +414,21 @@ function spMatchTabUrl(requestedUrl, candidates) {
   return bestId !== null && bestCount === 1 ? bestId : null;
 }
 
-async function findTargetTab(tabUrl) {
+// v0.1.36 reviewer F1.2 — session-scoped candidate filter. Pre-filters the
+// tab list to only those belonging to the originating MCP session's window
+// BEFORE the URL matcher fires, so cross-session tabs cannot be matched.
+// Logic mirrors extension/lib/session-filter.js (tested in
+// test/unit/extension/session-filter.test.ts). Inlined because MV3
+// background can't import ES modules.
+function spFilterBySession(candidates, sessionWindowId) {
+  if (sessionWindowId === undefined || sessionWindowId === null) return candidates;
+  return candidates.filter((c) => c.windowId === sessionWindowId);
+}
+
+async function findTargetTab(tabUrl, opts) {
+  const sessionWindowId = (opts && opts.sessionWindowId !== undefined)
+    ? opts.sessionWindowId
+    : undefined;
   if (tabUrl) {
     // Test-only escape hatch: if `__sp_test_skip_tabs_query__` is set in
     // storage, the tabs.query primary path is skipped. Used by e2e tests to
@@ -421,7 +448,9 @@ async function findTargetTab(tabUrl) {
       // URL drift / www-prefix / tracking-params don't trigger TAB_NOT_FOUND.
       const all = await browser.tabs.query({});
       if (all.length > 0) {
-        const matchedId = spMatchTabUrl(tabUrl, all.map((t) => ({ id: t.id, url: t.url || '' })));
+        const liveCandidates = all.map((t) => ({ id: t.id, url: t.url || '', windowId: t.windowId }));
+        const sessionScoped = spFilterBySession(liveCandidates, sessionWindowId);
+        const matchedId = spMatchTabUrl(tabUrl, sessionScoped);
         if (matchedId != null) {
           const t = all.find((x) => x.id === matchedId);
           if (t) return t;
@@ -434,9 +463,10 @@ async function findTargetTab(tabUrl) {
     if (tabCacheMap.size > 0) {
       const cacheList = [];
       for (const [tabId, info] of tabCacheMap) {
-        cacheList.push({ id: tabId, url: info.url || '' });
+        cacheList.push({ id: tabId, url: info.url || '', windowId: info.windowId });
       }
-      const matchedId = spMatchTabUrl(tabUrl, cacheList);
+      const sessionScoped = spFilterBySession(cacheList, sessionWindowId);
+      const matchedId = spMatchTabUrl(tabUrl, sessionScoped);
       if (matchedId != null) {
         const info = tabCacheMap.get(matchedId);
         return { id: matchedId, url: info.url, title: info.title };
@@ -469,7 +499,10 @@ async function executeCommand(cmd) {
     return result;
   }
 
-  const tab = await findTargetTab(cmd.tabUrl);
+  // F1.2: scope candidates to the originating MCP session's Safari window
+  // when the command carries one. Commands without sessionWindowId (legacy
+  // callers, health probes) keep pre-F1.2 cross-session behaviour.
+  const tab = await findTargetTab(cmd.tabUrl, { sessionWindowId: cmd.sessionWindowId });
   if (!tab || tab.id == null) {
     // T27: structured error so the daemon's ExtensionBridge.handleResult
     // lifts `name` into StructuredError.code. The TS-side ExtensionEngine

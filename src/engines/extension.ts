@@ -67,10 +67,21 @@ function translateDaemonError(result: EngineResult): EngineResult {
 export class ExtensionEngine extends BaseEngine {
   readonly name: Engine = 'extension';
   private daemon: DaemonEngine;
+  // v0.1.36 reviewer F1.2 — session-scoped tab cache. The MCP server stamps
+  // its session window id here once start() has created the window; the value
+  // travels in every extension_execute payload so background.js's
+  // findTargetTab can filter candidates to this session's window only.
+  // Undefined before the window is created (extension_health probes during
+  // startup) or when running without a session window (test/internal calls).
+  private sessionWindowId?: number;
 
   constructor(daemon: DaemonEngine) {
     super();
     this.daemon = daemon;
+  }
+
+  setSessionWindowId(id: number | undefined): void {
+    this.sessionWindowId = id;
   }
 
   /**
@@ -122,7 +133,11 @@ export class ExtensionEngine extends BaseEngine {
   async executeJsInTab(tabUrl: string, jsCode: string, timeout?: number): Promise<EngineResult> {
     const start = Date.now();
     try {
-      const payload = JSON.stringify({ script: jsCode, tabUrl });
+      // F1.2: sessionWindowId is forwarded verbatim by the daemon's
+      // ExtensionBridge.handleExecute (params dict is copied wholesale to
+      // commandDict, see daemon/Sources/SafariPilotdCore/ExtensionBridge.swift).
+      // background.js then filters findTargetTab candidates by it.
+      const payload = JSON.stringify({ script: jsCode, tabUrl, sessionWindowId: this.sessionWindowId });
       const daemonResult = await this.daemon.execute(
         `${INTERNAL_PREFIX} extension_execute ${payload}`,
         timeout ?? DEFAULT_EXTENSION_TIMEOUT_MS,
@@ -181,7 +196,8 @@ export class ExtensionEngine extends BaseEngine {
   async executeJsInFrame(tabUrl: string, frameId: number, jsCode: string, timeout?: number): Promise<EngineResult> {
     const start = Date.now();
     try {
-      const payload = JSON.stringify({ script: jsCode, tabUrl, frameId });
+      // F1.2: sessionWindowId travels with frame-scoped calls too.
+      const payload = JSON.stringify({ script: jsCode, tabUrl, frameId, sessionWindowId: this.sessionWindowId });
       const daemonResult = await this.daemon.execute(
         `${INTERNAL_PREFIX} extension_execute ${payload}`,
         timeout ?? DEFAULT_EXTENSION_TIMEOUT_MS,
