@@ -12,7 +12,7 @@ VARIANT_TAG="${WV_VARIANT:-v0.1.33-inline-bare}"
 RUN_SEQ="${WV_RUN_SEQ:-1}"
 mkdir -p "$OUT_DIR"
 
-REPO_ROOT="/Users/Aakash/Claude Projects/Skills Factory/safari-pilot-v0136-track-a"
+REPO_ROOT="/Users/Aakash/Claude Projects/Skills Factory/safari-pilot"
 # Dataset source: honor $WV_DATASET if set (used by run-bench.sh --patched/--comparable
 # to point children at patched-2026.jsonl / comparable-original.jsonl). Falls back to
 # the canonical original WebVoyager dataset when unset.

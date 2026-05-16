@@ -6,7 +6,7 @@
 	<dict>
 		<key>Resources/background.js</key>
 		<data>
-		W9dX17keAk7LUurkENgXmpx/z7o=
+		eGxA48/waS+/C/Bb1kzquQZvV6U=
 		</data>
 		<key>Resources/build.config.js</key>
 		<data>
@@ -50,7 +50,7 @@
 		</data>
 		<key>Resources/lib/tab-url-matcher.js</key>
 		<data>
-		4qtnTluAPfkzvzh2sA7ZoIb8vQI=
+		la2sUE2+s0zqe65cFBylsZJ8zBg=
 		</data>
 		<key>Resources/locator.js</key>
 		<data>
@@ -58,7 +58,7 @@
 		</data>
 		<key>Resources/manifest.json</key>
 		<data>
-		iA6h2Arfqv+/Q+OdqI/PppmtyRo=
+		eKmupQ+tf/kYtu1UnBsTK+ihg4A=
 		</data>
 		<key>Resources/native/SafariWebExtensionHandler.swift</key>
 		<data>
@@ -71,7 +71,7 @@
 		<dict>
 			<key>hash2</key>
 			<data>
-			DFbuurvpRJUudylK2eAzDwUYc/de1nflc5HNHCDlW74=
+			HKeCtaeIqLyqa/0or2yAOhrcFzyRqFIb2sZAhcnM6MM=
 			</data>
 		</dict>
 		<key>Resources/build.config.js</key>
@@ -148,7 +148,7 @@
 		<dict>
 			<key>hash2</key>
 			<data>
-			I+t0JgH89qpDT3ujLIxFB2FnVG8wOdOLK1J4M9KI3D8=
+			Lg7zrWlNmQUSL7SIl9c3nuCAhNrymfme5SVbx+nxzGo=
 			</data>
 		</dict>
 		<key>Resources/locator.js</key>
@@ -162,7 +162,7 @@
 		<dict>
 			<key>hash2</key>
 			<data>
-			nWjCV0MpB5nXK4tfd2PnUhjYWqN0wPXsaGo+PevjezI=
+			oKuP75uu7AHApTXW+mknpfy/Xc37iVbNGNOAD/fWFX0=
 			</data>
 		</dict>
 		<key>Resources/native/SafariWebExtensionHandler.swift</key>

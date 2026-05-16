@@ -86,6 +86,21 @@ describe('matchTabUrl — 3-tier ladder (v0.1.36 Fix 1)', () => {
     ])).toBe(4);
   });
 
+  // v0.1.36 Track A code-reviewer finding F1.1 — Tier 1 must NOT return
+  // first-match-wins when two normalized-identical candidates exist.
+  // Realistic scenario: stale closed-tab leftover + live drifted tab both
+  // normalize to the same URL. First-match-wins routes the command into
+  // whichever tabs.query happens to enumerate first — possibly the stale
+  // (dead) tab → 30s storage-bus timeout cascade. Correct behaviour: return
+  // null on ambiguity, fall through to Tier 2 or final null. This mirrors
+  // Tier 2's existing ambiguity guard.
+  it('tier 1: TWO candidates normalize-identically → null (ambiguity guard, F1.1)', () => {
+    expect(matchTabUrl('https://www.amazon.com/dp/B001', [
+      { id: 1, url: 'https://www.amazon.com/dp/B001?utm_campaign=x' },
+      { id: 2, url: 'https://amazon.com/dp/B001' },
+    ])).toBe(null);
+  });
+
   it('tier 1: tracking query-param difference matches', () => {
     expect(matchTabUrl('https://x.test/p', [
       { id: 5, url: 'https://x.test/p?utm_source=email&gclid=abc' },

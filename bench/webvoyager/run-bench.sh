@@ -17,7 +17,7 @@ while [[ $# -gt 0 ]]; do
 done
 [[ -z "$MODE" ]] && { echo "usage: $0 --patched|--comparable [--runs N] [--out-dir DIR] [--concurrency N] [--limit N]" >&2; exit 2; }
 
-REPO_ROOT="/Users/Aakash/Claude Projects/Skills Factory/safari-pilot-v0136-track-a"
+REPO_ROOT="/Users/Aakash/Claude Projects/Skills Factory/safari-pilot"
 case "$MODE" in
   patched)    DATASET="$REPO_ROOT/bench/webvoyager/patched-2026.jsonl"; VARIANT_TAG="v0.1.35-patched-2026" ;;
   comparable) DATASET="$REPO_ROOT/bench/webvoyager/comparable-original.jsonl"; VARIANT_TAG="v0.1.35-comparable-original" ;;

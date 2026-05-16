@@ -356,11 +356,20 @@ function spMatchTabUrl(requestedUrl, candidates) {
   for (const c of candidates) {
     if (spStripTrailingSlash(c.url || '') === targetExact) return c.id;
   }
-  // Tier 1 — normalized.
+  // Tier 1 — normalized (ambiguity guard, F1.1). First-match-wins routed
+  // commands into stale or dead tabs when two candidates normalize-identically
+  // (live SPA-drifted tab + stale closed-tab leftover). Mirror Tier 2's
+  // ambiguity contract: return id only when exactly one candidate matches.
   const targetNorm = spNormalizeForMatch(requestedUrl);
+  let tier1Id = null;
+  let tier1Count = 0;
   for (const c of candidates) {
-    if (spNormalizeForMatch(c.url || '') === targetNorm) return c.id;
+    if (spNormalizeForMatch(c.url || '') === targetNorm) {
+      tier1Id = c.id;
+      tier1Count += 1;
+    }
   }
+  if (tier1Count === 1) return tier1Id;
   // Tier 2 — origin + path-prefix (longest unambiguous).
   const reqOriginPath = spOriginAndPath(requestedUrl);
   if (!reqOriginPath) return null;
