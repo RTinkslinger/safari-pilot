@@ -12,7 +12,14 @@ VARIANT_TAG="${WV_VARIANT:-v0.1.33-inline-bare}"
 RUN_SEQ="${WV_RUN_SEQ:-1}"
 mkdir -p "$OUT_DIR"
 
-REPO_ROOT="/Users/Aakash/Claude Projects/Skills Factory/safari-pilot"
+# Derive REPO_ROOT from this script's own location so the bench picks up
+# whichever working copy (main vs worktree) it's launched from. Pre-v0.1.36
+# this was hardcoded to the main checkout — every probe launched from a
+# worktree silently fell back to main's stale dist/, which masked Track A
+# Fix 2 (the Math.max-floor removal in src/engines/extension.ts) for every
+# bench run between 2026-05-15 and 2026-05-17. Caller can still pin
+# REPO_ROOT explicitly via env var for tests or special-case routing.
+REPO_ROOT="${REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
 # Dataset source: honor $WV_DATASET if set (used by run-bench.sh --patched/--comparable
 # to point children at patched-2026.jsonl / comparable-original.jsonl). Falls back to
 # the canonical original WebVoyager dataset when unset.
@@ -97,23 +104,36 @@ end tell' 2>/dev/null > "$SNAPSHOT_FILE"
 cd "$REPO_ROOT"
 
 set +e
-# Auth path selection. By default uses ANTHROPIC_API_KEY (pay-per-use). To use
-# the Claude.ai Max subscription instead, the user must first run
-# `claude /login` interactively to persist auth credentials accessible to
-# subshell invocations. Set WV_AUTH=max to drop ANTHROPIC_API_KEY from the
-# subshell so the persisted Max credentials are used. Default WV_AUTH=apikey
-# preserves prior behavior.
+# Auth path selection.
+#   WV_AUTH=max     -> Max subscription (cost_usd reported is theoretical;
+#                      Max users pay flat-rate). No --bare so claude reads
+#                      OAuth credentials from disk. ANTHROPIC_API_KEY is
+#                      also unset for defense-in-depth.
+#   WV_AUTH=apikey  -> API-key billed (legacy / emergency comparability
+#                      with pre-v0.1.36 baselines). --bare forces the
+#                      API-only code path; ANTHROPIC_API_KEY must be set
+#                      in env.
+# Default is apikey for backward compatibility, but every v0.1.36+ probe
+# and the full 641-task re-baseline should run with WV_AUTH=max.
+CLAUDE_BARE_FLAG=""
 if [ "${WV_AUTH:-apikey}" = "max" ]; then
   unset ANTHROPIC_API_KEY
+else
+  CLAUDE_BARE_FLAG="--bare"
 fi
-# v0.1.35 Task 5 — hard caps surfaced to the agent harness as env vars.
-# Default: 25 turns, 20 min wall-clock. Overridable upstream by the bench
-# wrapper. These are advisory env vars; the in-process LoopDetector +
-# ThrashDetector in src/security/loop-detector.ts is the enforcement.
+# v0.1.36 — MAX_TURNS / MAX_WALL_MS are surfaced both as ENV vars for the
+# in-process WallCapEnforcer (src/security/wall-cap.ts) AND copied into
+# the agent's prompt template as advisory limits the agent should
+# self-enforce. Pre-v0.1.36 the comment claimed LoopDetector enforced
+# these — it never did; the variables were dead.
 export MAX_TURNS="${MAX_TURNS:-25}"
 export MAX_WALL_MS="${MAX_WALL_MS:-1200000}"
+# Unquoted $CLAUDE_BARE_FLAG is intentional: empty -> no arg, "--bare" ->
+# one arg. Neither value contains whitespace, so word-splitting is safe
+# here and survives `set -u` (vs. `"${arr[@]}"` on an empty array, which
+# trips it).
 SAFARI_PILOT_NO_SESSION_WINDOW=1 \
-  claude --bare --dangerously-skip-permissions --mcp-config .mcp.json \
+  claude $CLAUDE_BARE_FLAG --dangerously-skip-permissions --mcp-config .mcp.json \
     -p "$(cat "$PROMPT_FILE")" --verbose --output-format stream-json \
     < /dev/null 2>&1 \
     | tee "$STREAM_JSONL" \

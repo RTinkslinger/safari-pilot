@@ -17,7 +17,14 @@ while [[ $# -gt 0 ]]; do
 done
 [[ -z "$MODE" ]] && { echo "usage: $0 --patched|--comparable [--runs N] [--out-dir DIR] [--concurrency N] [--limit N]" >&2; exit 2; }
 
-REPO_ROOT="/Users/Aakash/Claude Projects/Skills Factory/safari-pilot"
+# Derive REPO_ROOT from this script's own location so the bench picks up
+# whichever working copy (main vs worktree) it's launched from. Pre-v0.1.36
+# this was hardcoded to the main checkout — every probe launched from a
+# worktree silently fell back to main's stale dist/, which masked Track A
+# Fix 2 (the Math.max-floor removal in src/engines/extension.ts) for every
+# bench run between 2026-05-15 and 2026-05-17. Caller can still pin
+# REPO_ROOT explicitly via env var for tests or special-case routing.
+REPO_ROOT="${REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
 case "$MODE" in
   patched)    DATASET="$REPO_ROOT/bench/webvoyager/patched-2026.jsonl"; VARIANT_TAG="v0.1.35-patched-2026" ;;
   comparable) DATASET="$REPO_ROOT/bench/webvoyager/comparable-original.jsonl"; VARIANT_TAG="v0.1.35-comparable-original" ;;
