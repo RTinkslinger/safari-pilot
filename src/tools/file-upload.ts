@@ -4,8 +4,7 @@ import { basename } from 'node:path';
 import type { IEngine } from '../engines/engine.js';
 import type { DaemonEngine } from '../engines/daemon.js';
 import type { Engine, ToolResponse, ToolRequirements } from '../types.js';
-import {
-  EngineRequiredError,
+import { EngineRequiredError,
   FileUploadEmptyPathsError,
   FileUploadTooManyFilesError,
   FileUploadInvalidParamsError,
@@ -15,6 +14,7 @@ import {
   FileUploadInvalidElementError,
   FileUploadElementDetachedError,
   FileUploadMultipleNotAllowedError,
+  wrapEngineError,
 } from '../errors.js';
 import { mimeFromExtension } from './mime.js';
 import { resolveUploadPath, findClosestSibling } from '../path-resolve.js';
@@ -145,7 +145,7 @@ export class FileUploadTools {
     // d. Probe sentinel — locator + element-type validation BEFORE byte staging
     const probeJson = JSON.stringify({ locator, force, timeoutMs });
     const probeResult = await this.engine.executeJsInTab(tabUrl, `__SP_FILE_UPLOAD_PROBE__:${probeJson}`);
-    if (!probeResult.ok) throw new Error(probeResult.error?.message ?? 'probe dispatch failed');
+    if (!probeResult.ok) throw wrapEngineError(probeResult.error, 'probe dispatch failed');
     const probe = JSON.parse(probeResult.value ?? '{}') as ProbeResult;
     if (!probe.ok) {
       // Handler-side mapping
@@ -222,7 +222,7 @@ export class FileUploadTools {
       if (code === 'FILE_UPLOAD_ELEMENT_DETACHED') throw new FileUploadElementDetachedError();
       if (code === 'FILE_UPLOAD_INVALID_ELEMENT') throw new FileUploadInvalidElementError('UNKNOWN', '');
       if (code === 'FILE_UPLOAD_MULTIPLE_NOT_ALLOWED') throw new FileUploadMultipleNotAllowedError();
-      throw new Error(finalResult.error?.message ?? 'file upload dispatch failed');
+      throw wrapEngineError(finalResult.error, 'file upload dispatch failed');
     }
     const responsePayload = JSON.parse(finalResult.value ?? '{"uploaded":0,"files":[]}') as {
       uploaded: number;
