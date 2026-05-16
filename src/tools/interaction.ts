@@ -6,7 +6,7 @@ import { buildRefSelector } from '../aria.js';
 import { generateAutoWaitJs, ACTION_CHECKS } from '../auto-wait.js';
 import { hasLocatorParams, extractLocatorFromParams, buildLocatorSentinel, generateLocatorJs } from '../locator.js';
 import { escapeForJsSingleQuote } from '../escape.js';
-import { StrictnessViolationError } from '../errors.js';
+import { StrictnessViolationError, wrapEngineError } from '../errors.js';
 import { loadConfig } from '../config.js';
 
 export interface ToolDefinition {
@@ -135,7 +135,7 @@ export class InteractionTools {
 
     // Execute the action
     const result = await this.engine.executeJsInTab(tabUrl, actionJs, timeout);
-    if (!result.ok) throw new Error(result.error?.message ?? `${actionType} failed`);
+    if (!result.ok) throw wrapEngineError(result.error, `${actionType} failed`);
 
     return this.makeResponse(
       result.value ? JSON.parse(result.value) : { [actionType]: true },
@@ -835,7 +835,7 @@ export class InteractionTools {
 
     // type has no actionability checks (ACTION_CHECKS.type = []), execute directly
     const result = await this.engine.executeJsInTab(tabUrl, js);
-    if (!result.ok) throw new Error(result.error?.message ?? 'Type failed');
+    if (!result.ok) throw wrapEngineError(result.error, 'Type failed');
 
     return this.makeResponse(result.value ? JSON.parse(result.value) : { typed: true }, Date.now() - start);
   }
@@ -871,7 +871,7 @@ export class InteractionTools {
 
     // type has no actionability checks (ACTION_CHECKS.type = []), execute directly
     const result = await this.engine.executeJsInTab(tabUrl, js);
-    if (!result.ok) throw new Error(result.error?.message ?? 'Type failed');
+    if (!result.ok) throw wrapEngineError(result.error, 'Type failed');
 
     return this.makeResponse(result.value ? JSON.parse(result.value) : { typed: true }, Date.now() - start);
   }
@@ -914,7 +914,7 @@ export class InteractionTools {
 
     // pressKey has no actionability checks, execute directly
     const result = await this.engine.executeJsInTab(tabUrl, js);
-    if (!result.ok) throw new Error(result.error?.message ?? 'Press key failed');
+    if (!result.ok) throw wrapEngineError(result.error, 'Press key failed');
 
     return this.makeResponse(result.value ? JSON.parse(result.value) : { pressed: true }, Date.now() - start);
   }
@@ -957,7 +957,7 @@ export class InteractionTools {
 
     // scroll has no actionability checks, execute directly
     const result = await this.engine.executeJsInTab(tabUrl, js);
-    if (!result.ok) throw new Error(result.error?.message ?? 'Scroll failed');
+    if (!result.ok) throw wrapEngineError(result.error, 'Scroll failed');
 
     return this.makeResponse(result.value ? JSON.parse(result.value) : { scrolled: true }, Date.now() - start);
   }
@@ -1019,7 +1019,7 @@ export class InteractionTools {
 
     // scroll has no actionability checks, execute directly
     const result = await this.engine.executeJsInTab(tabUrl, js);
-    if (!result.ok) throw new Error(result.error?.message ?? 'Scroll failed');
+    if (!result.ok) throw wrapEngineError(result.error, 'Scroll failed');
 
     return this.makeResponse(result.value ? JSON.parse(result.value) : { scrolled: true }, Date.now() - start);
   }
@@ -1148,7 +1148,7 @@ export class InteractionTools {
     `;
 
     const result = await this.engine.executeJsInTab(tabUrl, js);
-    if (!result.ok) throw new Error(result.error?.message ?? 'Handle dialog failed');
+    if (!result.ok) throw wrapEngineError(result.error, 'Handle dialog failed');
 
     return this.makeResponse(result.value ? JSON.parse(result.value) : { status: 'installed' }, Date.now() - start);
   }
