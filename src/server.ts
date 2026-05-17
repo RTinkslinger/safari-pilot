@@ -11,6 +11,7 @@ import { ExtensionEngine } from './engines/extension.js';
 import { EngineProxy } from './engines/engine-proxy.js';
 import { NavigationTools } from './tools/navigation.js';
 import { InteractionTools } from './tools/interaction.js';
+import { BatchTools } from './tools/batch.js';
 import { ExtractionTools } from './tools/extraction.js';
 import { NetworkTools } from './tools/network.js';
 import { StorageTools } from './tools/storage.js';
@@ -289,6 +290,7 @@ export class SafariPilotServer {
     const modules = [
       new NavigationTools(engine),
       new InteractionTools(proxy, this),
+      new BatchTools(this),
       new ExtractionTools(proxy, new ScreenshotPolicy(this.config.screenshotPolicy)),
       new NetworkTools(proxy),
       new StorageTools(proxy),
@@ -433,6 +435,7 @@ export class SafariPilotServer {
     // engine directly (for tab management tools that always need AppleScript)
     const navTools = new NavigationTools(engine);
     const interactionTools = new InteractionTools(proxy, this);
+    const batchTools = new BatchTools(this);
     const extractionTools = new ExtractionTools(proxy, new ScreenshotPolicy(this.config.screenshotPolicy));
     const networkTools = new NetworkTools(proxy);
     const storageTools = new StorageTools(proxy);
@@ -504,6 +507,7 @@ export class SafariPilotServer {
     const modules: ToolModule[] = [
       navTools as unknown as ToolModule,
       interactionTools,
+      batchTools as unknown as ToolModule,
       extractionTools,
       networkTools,
       storageTools,
