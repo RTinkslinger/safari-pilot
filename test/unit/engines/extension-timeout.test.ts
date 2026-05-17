@@ -56,12 +56,18 @@ describe('ExtensionEngine timeout passthrough (v0.1.36 Fix 2)', () => {
     expect(daemon.calls[0]?.timeout).toBe(5_000);
   });
 
-  it('uses 90_000ms default when caller passes no timeout (Fix 2: passthrough is what changed; default is the same as pre-fix)', async () => {
+  it('uses 15_000ms default when caller passes no timeout (Fix 2 completion: default dropped 90s -> 15s)', async () => {
+    // Probe-C diagnosis (2026-05-17) showed 75% of median-task wall was
+    // burning on 90s defaults across ~50 handlers that don't pass a
+    // timeout. 15s matches the spec's "short ops" tier; tools needing
+    // longer (safari_wait_for_download, safari_navigate via AppleScript,
+    // safari_evaluate with caller-supplied longer timeout) pass it
+    // explicitly.
     const daemon = new RecordingDaemon();
     const engine = new ExtensionEngine(daemon as unknown as DaemonEngine);
     await engine.executeJsInTab('https://example.com', 'return 1');
     expect(daemon.calls).toHaveLength(1);
-    expect(daemon.calls[0]?.timeout).toBe(90_000);
+    expect(daemon.calls[0]?.timeout).toBe(15_000);
   });
 
   it('passes caller timeout through executeJsInFrame too (frame path same contract)', async () => {
@@ -107,12 +113,12 @@ describe('ExtensionEngine timeout passthrough (v0.1.36 Fix 2)', () => {
     expect(daemon.calls[0]?.timeout).toBe(7_500);
   });
 
-  it('execute(): uses 90s default when no timeout passed', async () => {
+  it('execute(): uses 15s default when no timeout passed (parity with executeJsInTab post-Fix-2-completion)', async () => {
     const daemon = new RecordingDaemon();
     const engine = new ExtensionEngine(daemon as unknown as DaemonEngine);
     await engine.execute('return 1');
     expect(daemon.calls).toHaveLength(1);
-    expect(daemon.calls[0]?.timeout).toBe(90_000);
+    expect(daemon.calls[0]?.timeout).toBe(15_000);
   });
 
   it('execute(): translates daemon timeout error to DAEMON_TIMEOUT (translation parity across entry points)', async () => {
@@ -135,6 +141,26 @@ describe('ExtensionEngine timeout passthrough (v0.1.36 Fix 2)', () => {
     const engine = new ExtensionEngine(daemon as unknown as DaemonEngine);
     const result = await engine.executeJsInFrame('https://x.test', 5, 'return 1');
     expect(result.error?.code).toBe(ERROR_CODES.DAEMON_TIMEOUT);
+  });
+
+  it('executeJsInTab() honors a caller timeout that exceeds the default (no upper-bound clamp)', async () => {
+    // Regression guard against re-introducing a Math.max-style floor or
+    // ceiling. A caller asking for 60s should get 60s, not the default 15s.
+    const daemon = new RecordingDaemon();
+    const engine = new ExtensionEngine(daemon as unknown as DaemonEngine);
+    await engine.executeJsInTab('https://example.com', 'return 1', 60_000);
+    expect(daemon.calls).toHaveLength(1);
+    expect(daemon.calls[0]?.timeout).toBe(60_000);
+  });
+
+  it('executeJsInTab() honors a caller timeout shorter than the default (passthrough not floor)', async () => {
+    // The fast-poll path: safari_wait_for's evalCondition passes 5000ms
+    // explicitly. The engine must NOT clamp it up to the 15s default.
+    const daemon = new RecordingDaemon();
+    const engine = new ExtensionEngine(daemon as unknown as DaemonEngine);
+    await engine.executeJsInTab('https://example.com', 'return 1', 5_000);
+    expect(daemon.calls).toHaveLength(1);
+    expect(daemon.calls[0]?.timeout).toBe(5_000);
   });
 
   it('still surfaces non-timeout daemon errors unchanged (regression guard)', async () => {

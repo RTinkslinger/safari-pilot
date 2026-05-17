@@ -8,27 +8,49 @@ import { ERROR_CODES, ERROR_METADATA } from '../errors.js';
 const INTERNAL_PREFIX = '__SAFARI_PILOT_INTERNAL__';
 
 /**
- * v0.1.36 Track A Fix 2 — caller's `timeout` is now passed through to the
- * daemon verbatim. Previously `Math.max(timeout ?? EXTENSION_TIMEOUT_MS,
- * EXTENSION_TIMEOUT_MS)` clamped EVERY value up to 90s, so callers asking
- * for 10s actually waited 90s. The Math.max floor is gone.
+ * v0.1.36 Track A Fix 2 (completed) — caller's `timeout` is passed through
+ * to the daemon verbatim, and the default itself dropped from 90s to 15s.
  *
- * Default (when caller passes no timeout) stays at 90s. A 50-task probe
- * on the v0.1.35 worst-affected sites (2026-05-16) showed that aggressive
- * defaults (15s, 30s, 60s) all turned a real product issue — many legit
- * WebVoyager ops complete in 30-90s — into a retry-storm because the new
- * structured DAEMON_TIMEOUT envelope (retryable=true) causes the agent
- * to retry instead of giving up. The right fix for slow ops is on the
- * product side (smaller results, server-side caching, in-tool wait
- * primitives), not a unilateral timeout cut.
+ * The pre-v0.1.36 default of 90s + `Math.max(timeout ?? 90s, 90s)` floor
+ * meant every per-tool-call wait was clamped to 90s even when the handler
+ * asked for less. Removing the floor (commit c7d9d51) only helped the ~4
+ * handlers that pass an explicit timeout (safari_evaluate, screenshot,
+ * the auto-wait in interaction.ts). The other ~50 handlers — including
+ * safari_query_all, safari_snapshot, safari_get_text, safari_get_html,
+ * and every safari_wait_for poll iteration via wait.ts:evalCondition —
+ * still hit 90s because they don't pass a timeout argument. Profiling
+ * the median probe-C task (Allrecipes--0, 903s wall) showed 540s of
+ * 716s tool time (75%) burning on these 90s defaults.
+ *
+ * The 90s default was previously justified by an earlier probe's finding
+ * that "aggressive defaults turn into retry storms because the
+ * DAEMON_TIMEOUT envelope reads as retryable=true." That justification
+ * doesn't hold:
+ *
+ *   1. v0.1.36 ERROR_METADATA[DAEMON_TIMEOUT].retryable is `false` — the
+ *      agent is explicitly told NOT to retry on timeout.
+ *   2. v0.1.36 F3.1 actually surfaces the structured envelope to the
+ *      MCP client (pre-F3.1 it was collapsed to message text and lost).
+ *   3. The earlier probe was running on the broken stack (REPO_ROOT
+ *      pointed at main's stale dist/, so Fix 2's floor removal never
+ *      reached the running TS), which inflated every timeout to 90s
+ *      regardless of caller intent and made retry costs synthetic.
+ *
+ * 15s is the right default for short ops. Tools that legitimately need
+ * longer (page loads, downloads, multi-step waits) pass an explicit
+ * `timeout` argument — `safari_evaluate` (10s default), the auto-wait
+ * inside `safari_click`/`safari_fill` (caller's timeout + 1s), the
+ * screenshot fast-path (15s explicit), and `safari_wait_for_download`
+ * (caller-supplied). `safari_wait_for` polls via wait.ts:evalCondition
+ * with its own short per-iteration timeout (see wait.ts).
  *
  * Override via SP_EXTENSION_DEFAULT_TIMEOUT_MS — useful for tests or
- * specialized deployments.
+ * specialized deployments that need the legacy 90s behaviour.
  */
 const DEFAULT_EXTENSION_TIMEOUT_MS = Number.parseInt(
-  process.env['SP_EXTENSION_DEFAULT_TIMEOUT_MS'] ?? '90000',
+  process.env['SP_EXTENSION_DEFAULT_TIMEOUT_MS'] ?? '15000',
   10,
-) || 90_000;
+) || 15_000;
 
 /** Detects daemon's textual "execute timed out" error from the underlying
  *  ExtensionBridge so the engine can translate it to a structured envelope. */
