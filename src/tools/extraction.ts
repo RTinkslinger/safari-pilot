@@ -188,7 +188,7 @@ export class ExtractionTools {
       {
         name: 'safari_evaluate',
         description:
-          'Run an arbitrary JavaScript expression in the page context. Returns the expression\'s value via JSON serialization.',
+          'Use when you need to run an arbitrary JavaScript expression in the page context — typically when no higher-level tool fits the data extraction or DOM-interaction shape you need. Returns the expression\'s value via JSON serialization.',
         inputSchema: {
           type: 'object',
           properties: {
