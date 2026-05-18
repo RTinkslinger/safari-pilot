@@ -276,6 +276,28 @@ export class NavigationTools {
       result = await this.engine.execute(script);
     }
 
+    // Fix B (2026-05-18) — when no _sessionWindowId is supplied (bench
+    // mode via SAFARI_PILOT_NO_SESSION_WINDOW=1) and Safari has zero
+    // windows, the `tell front window` AppleScript path errors with
+    // `-1719` ("Can't get window 1. Invalid index") or `-1700` ("Can't
+    // make missing value into type tab"). The 2026-05-18 batch-probe RCA
+    // (bench-runs/v0136-probes/RCA-batch-regression.md §4 Factor 3)
+    // documented four catastrophic tasks where the agent had to discover
+    // this and run `Bash osascript ... activate` itself, burning 4–6
+    // turns. Activate Safari ourselves and retry once. Match the
+    // message substring (not just the APPLESCRIPT_ERROR code class) so
+    // unrelated AppleScript errors fall through to errorResponse.
+    if (
+      !result.ok &&
+      sessionWindowId === undefined &&
+      result.error?.message !== undefined &&
+      (result.error.message.includes('(-1719)') || result.error.message.includes('(-1700)'))
+    ) {
+      await this.engine.execute('tell application "Safari" to activate');
+      script = this.engine.buildNewTabScript(url, privateWindow);
+      result = await this.engine.execute(script);
+    }
+
     if (!result.ok) {
       return this.errorResponse(result.error?.message ?? 'Failed to open new tab', start);
     }

@@ -44,7 +44,16 @@ export class AppleScriptEngine extends BaseEngine {
         maxBuffer: MAX_BUFFER,
       });
       const raw = stdout.trim();
-      const result = this.parseJsResult(raw);
+      // Fix A (js-helpers.ts) — `execute` is the shared entry for BOTH
+      // do-JavaScript paths (executeJsInTab → re-parses inner JSON envelope)
+      // and pure-AppleScript paths (handleListTabs, handleCloseTab, etc.).
+      // Pass `isJsExecution: false` here so an empty osascript stdout from
+      // a non-JS script (e.g. list_tabs when Safari has 0 windows)
+      // resolves to ok=true/value='' instead of CSP_BLOCKED. The JS path
+      // re-runs parseJsResult on `result.value` inside executeJsInTab
+      // with the default (isJsExecution=true) so T13's empty-as-CSP rule
+      // still fires for actual `do JavaScript` callers.
+      const result = this.parseJsResult(raw, { isJsExecution: false });
       return { ...result, elapsed_ms: Date.now() - start };
     } catch (err: unknown) {
       const elapsed = Date.now() - start;
@@ -209,12 +218,25 @@ end tell`;
     const script = this.buildTabScript(tabUrl, wrapped);
     const result = await this.execute(script, timeout);
 
-    // Parse the JSON wrapper from wrapJavaScript
-    if (result.ok && result.value) {
-      const parsed = this.parseJsResult(result.value);
-      return { ...parsed, elapsed_ms: result.elapsed_ms };
+    if (!result.ok) return result;
+
+    // Fix A — `execute()` now passes isJsExecution:false to parseJsResult so
+    // pure-AppleScript callers like list_tabs don't false-positive as CSP on
+    // 0-window Safari. For do-JavaScript callers, empty stdout still means
+    // the page-JS never ran (CSP block). Re-apply the empty-as-CSP rule
+    // here, where the JS-execution context is unambiguous. T13 preserved.
+    if (result.value === undefined || result.value === '') {
+      return {
+        ok: false,
+        error: { code: 'CSP_BLOCKED', message: 'JavaScript execution blocked by Content Security Policy', retryable: false },
+        elapsed_ms: result.elapsed_ms,
+      };
     }
-    return result;
+
+    // Parse the JSON wrapper from wrapJavaScript (idempotent for already-
+    // unwrapped values).
+    const parsed = this.parseJsResult(result.value);
+    return { ...parsed, elapsed_ms: result.elapsed_ms };
   }
 
   /**
@@ -237,11 +259,17 @@ end tell`;
   end tell
 end tell`;
     const result = await this.execute(script, timeout);
-    if (result.ok && result.value) {
-      const parsed = this.parseJsResult(result.value);
-      return { ...parsed, elapsed_ms: result.elapsed_ms };
+    if (!result.ok) return result;
+    // Fix A — same JS-path empty-as-CSP guard as executeJsInTab.
+    if (result.value === undefined || result.value === '') {
+      return {
+        ok: false,
+        error: { code: 'CSP_BLOCKED', message: 'JavaScript execution blocked by Content Security Policy', retryable: false },
+        elapsed_ms: result.elapsed_ms,
+      };
     }
-    return result;
+    const parsed = this.parseJsResult(result.value);
+    return { ...parsed, elapsed_ms: result.elapsed_ms };
   }
 
   // ── JS wrapping & result parsing ────────────────────────────────────────────
@@ -258,9 +286,12 @@ end tell`;
    * Parse the raw string returned by do JavaScript / osascript stdout.
    * T32 — delegates to shared `js-helpers.parseJsResult` so DaemonEngine
    * picks up the same CSP / ShadowDOM / JSON-envelope handling.
+   * Fix A — accepts the optional `opts.isJsExecution` flag. Defaults to
+   * `true` (T13-safe). `execute()` passes `false` to suppress the empty-
+   * as-CSP rule for pure-AppleScript callers like list_tabs.
    */
-  public parseJsResult(raw: string): EngineResult {
-    return sharedParseJsResult(raw);
+  public parseJsResult(raw: string, opts?: { isJsExecution?: boolean }): EngineResult {
+    return sharedParseJsResult(raw, opts);
   }
 
   /**
