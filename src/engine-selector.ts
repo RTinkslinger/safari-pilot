@@ -63,9 +63,13 @@ export const ENGINE_CAPS: Record<Engine, EngineCapabilities> = {
  * recovery for AppleScript-only tools when the extension is unreachable).
  */
 export function requiresExtension(tool: ToolRequirements): boolean {
+  // v0.1.35 Task 6 — `requiresCspBypass: 'preferred'` means "use extension
+  // when available, otherwise fall back". It must NOT trigger the strict
+  // extension-required path here, nor the pre-call extension health gate
+  // in server.ts that calls this function. Only `=== true` is strict.
   return !!(
     tool.requiresShadowDom ||
-    tool.requiresCspBypass ||
+    tool.requiresCspBypass === true ||
     tool.requiresDialogIntercept ||
     tool.requiresNetworkIntercept ||
     tool.requiresCookieHttpOnly ||
@@ -90,6 +94,21 @@ export function selectEngine(
     throw new EngineUnavailableError(
       'This operation requires the Safari Web Extension which is not available'
     );
+  }
+
+  // v0.1.35 Task 6 — `requiresCspBypass: 'preferred'` routing. Prefer
+  // extension when available; otherwise gracefully degrade to daemon or
+  // AppleScript instead of throwing. Tools that opt in (safari_click,
+  // safari_fill, safari_type, safari_scroll) have a config-gated legacy
+  // IIFE path (`legacyMainWorld: true`) that AppleScript can execute. Note:
+  // with the production default (`legacyMainWorld: false`), AppleScript will
+  // receive the literal __SP_*__ sentinel string and syntax-error — this
+  // branch is plumbing for the upcoming legacy-fallback wiring rather than
+  // an end-to-end fallback today. Degradation telemetry is set in server.ts.
+  if (tool.requiresCspBypass === 'preferred') {
+    if (extensionAvailable) return 'extension';
+    if (available.daemon) return 'daemon';
+    return 'applescript';
   }
 
   // T63 — tools that always use raw AppleScript (NavigationTools, CompoundTools,

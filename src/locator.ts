@@ -77,6 +77,38 @@ export interface LocatorResult {
   hint?: string;
 }
 
+/**
+ * v0.1.35 T10: per-element interactability hint for safari_query_all results.
+ * Computed in extension/locator.js `buildInteractability(el)`. AppleScript
+ * fallback path emits `null` (engine can't compute layered coverage).
+ */
+export interface QueryAllInteractability {
+  clickable: boolean;
+  fillable: boolean;
+  focusable: boolean;
+  role: string | null;
+  accessibleName: string | null;
+  isVisible: boolean;
+  boundingBox: { x: number; y: number; w: number; h: number };
+  isCovered: boolean;
+  isAriaDisabled: boolean;
+}
+
+/**
+ * Per-element record returned by safari_query_all. `interactability` is the
+ * structured hint object on the extension path, `null` on the AppleScript
+ * fallback path.
+ */
+export interface QueryAllItem {
+  ref: string;
+  tagName: string;
+  text: string;
+  attrs: Record<string, string>;
+  boundingBox: { x: number; y: number; width: number; height: number };
+  visible: boolean;
+  interactability: QueryAllInteractability | null;
+}
+
 // ─── Role → CSS Pre-Filter Map ───────────────────────────────────────────────
 //
 // Maps ARIA roles to CSS selectors that catch both explicit [role] attributes
@@ -414,6 +446,34 @@ function buildPlaceholderResolutionJs(
 function buildNameMatchJs(name: string, exact: boolean): string {
   // Just a marker — actual match logic is inline in buildRoleResolutionJs
   return 'HAS_NAME_FILTER';
+}
+
+// ─── Sentinel builder (v0.1.34 T7b) ──────────────────────────────────────────
+
+/**
+ * v0.1.34 T7b: build a `__SP_RESOLVE_LOCATOR__:<json>` sentinel string for
+ * CSP-immune locator resolution via the Extension engine. The MAIN-world
+ * sentinel handler in `extension/content-main.js` parses the JSON payload
+ * and dispatches to `window.__SP_LOCATOR__.resolveLocator(locator, options)`,
+ * which is the function-form equivalent of `generateLocatorJs`'s IIFE body.
+ *
+ * Why both forms exist:
+ *   - The IIFE form (generateLocatorJs) is the AppleScript / Daemon-engine
+ *     fallback path — those engines run JS via `do JavaScript` which has no
+ *     access to `window.__SP_LOCATOR__` (set only by the extension's MAIN-world
+ *     content script).
+ *   - The sentinel form (this builder) is the Extension-engine path. The
+ *     content-main.js intercept fires BEFORE `new Function()` would compile
+ *     the script, so Trusted-Types-strict pages don't block resolution.
+ *
+ * Drift between the two forms is guarded by
+ * `test/unit/locators/drift-detector.test.ts`.
+ */
+export function buildLocatorSentinel(
+  locator: LocatorDescriptor,
+  options?: LocatorOptions,
+): string {
+  return '__SP_RESOLVE_LOCATOR__:' + JSON.stringify({ locator, options: options ?? {} });
 }
 
 // ─── Main Entry Point ────────────────────────────────────────────────────────
@@ -806,6 +866,12 @@ export function generateQueryAllJs(
       attrs: __attrs,
       boundingBox: { x: __rect.x, y: __rect.y, width: __rect.width, height: __rect.height },
       visible: __visible,
+      // v0.1.35 T10: AppleScript fallback emits null per-element since the
+      // do-JavaScript engine cannot compute layered visibility plus
+      // elementFromPoint coverage. The extension path returns the structured
+      // object via __SP_LOCATOR__.buildInteractability. Drift-detector
+      // enforces parity (null here vs object there).
+      interactability: null,
     });
   }
   return JSON.stringify({

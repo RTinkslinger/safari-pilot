@@ -23,29 +23,29 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.1.33</string>
+	<string>0.1.36</string>
 	<key>CFBundleSupportedPlatforms</key>
 	<array>
 		<string>MacOSX</string>
 	</array>
 	<key>CFBundleVersion</key>
-	<string>202605121922</string>
+	<string>202605190102</string>
 	<key>DTCompiler</key>
 	<string>com.apple.compilers.llvm.clang.1_0</string>
 	<key>DTPlatformBuild</key>
-	<string>25E251</string>
+	<string>25F70</string>
 	<key>DTPlatformName</key>
 	<string>macosx</string>
 	<key>DTPlatformVersion</key>
-	<string>26.4</string>
+	<string>26.5</string>
 	<key>DTSDKBuild</key>
-	<string>25E251</string>
+	<string>25F70</string>
 	<key>DTSDKName</key>
-	<string>macosx26.4</string>
+	<string>macosx26.5</string>
 	<key>DTXcode</key>
-	<string>2641</string>
+	<string>2650</string>
 	<key>DTXcodeBuild</key>
-	<string>17E202</string>
+	<string>17F42</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>26.4</string>
 	<key>NSMainStoryboardFile</key>
@@ -53,6 +53,6 @@
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
 	<key>SFSafariWebExtensionConverterVersion</key>
-	<string>26.4.1</string>
+	<string>26.5</string>
 </dict>
 </plist>

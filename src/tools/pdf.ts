@@ -3,6 +3,7 @@
 // + PdfTools class for safari_export_pdf tool definition and handler.
 
 import { stat } from 'node:fs/promises';
+import { wrapEngineError } from '../errors.js';
 import { resolve as resolvePath } from 'node:path';
 import { homedir, tmpdir } from 'node:os';
 import type { ToolResponse, ToolRequirements, Engine } from '../types.js';
@@ -569,7 +570,7 @@ export class PdfTools {
 
     const result = await engine.execute(script, 10_000);
     if (!result.ok || !result.value) {
-      throw new Error(result.error?.message ?? 'Failed to extract HTML from Safari tab');
+      throw wrapEngineError(result.error, 'Failed to extract HTML from Safari tab');
     }
     return result.value;
   }
@@ -585,7 +586,7 @@ export class PdfTools {
     const script = 'tell application "Safari" to return URL of current tab of front window';
     const result = await engine.execute(script, 5_000);
     if (!result.ok || !result.value) {
-      throw new Error(result.error?.message ?? 'Failed to get tab URL');
+      throw wrapEngineError(result.error, 'Failed to get tab URL');
     }
     return result.value.trim();
   }

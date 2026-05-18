@@ -6,7 +6,7 @@
 	<dict>
 		<key>Resources/background.js</key>
 		<data>
-		2/1CfExEj3v05Op5yXKc+4ywXw4=
+		VTm8wJvICwkWOQ0H25NiqAB+i1A=
 		</data>
 		<key>Resources/build.config.js</key>
 		<data>
@@ -14,11 +14,11 @@
 		</data>
 		<key>Resources/content-isolated.js</key>
 		<data>
-		CnWSRKZK3+Gcl38CxqCvPTLS3Mc=
+		J1DLcfEv2abItbcASwukv5q+RIw=
 		</data>
 		<key>Resources/content-main.js</key>
 		<data>
-		QINLdjgkwSaauIXkTxltDwFqMeQ=
+		HCvKlO2MQJomfhr0wtQhMupl0JE=
 		</data>
 		<key>Resources/icons/icon-128.png</key>
 		<data>
@@ -32,6 +32,10 @@
 		<data>
 		BIDpanaSN0Y3OQQEOwLyXND4SNk=
 		</data>
+		<key>Resources/lib/cs-readiness.js</key>
+		<data>
+		yMC8O8lvihOQ170pPQRtlp/vSbc=
+		</data>
 		<key>Resources/lib/handshake-machine.js</key>
 		<data>
 		xglueEe3SHs65cWl1/dC5cEaJ1A=
@@ -40,17 +44,25 @@
 		<data>
 		HKuqS+wkhyyQtqWt/h3FZ6LGBVE=
 		</data>
+		<key>Resources/lib/session-filter.js</key>
+		<data>
+		RNo8MGWCDtZ7KS+lYQH0YrjqC5Q=
+		</data>
 		<key>Resources/lib/storage-keys.js</key>
 		<data>
 		QuKBeYVj7KLBM6uXEnrEc0NnHGg=
 		</data>
+		<key>Resources/lib/tab-url-matcher.js</key>
+		<data>
+		la2sUE2+s0zqe65cFBylsZJ8zBg=
+		</data>
 		<key>Resources/locator.js</key>
 		<data>
-		nzWZSf8d2l1FEHIJFixkz8ylJsc=
+		RY/9hY8lGtZsD+WWQNA+Q2VFxY4=
 		</data>
 		<key>Resources/manifest.json</key>
 		<data>
-		O7S7zKaRqxXwdpQqaurmeIRhsDY=
+		PrqgLHIdLc/BxbB9hZmYrvJYw9o=
 		</data>
 		<key>Resources/native/SafariWebExtensionHandler.swift</key>
 		<data>
@@ -63,7 +75,7 @@
 		<dict>
 			<key>hash2</key>
 			<data>
-			/3ZIF42eGVz3ogcsRCRSH6PWS1e5rdMvERsT10CHmc8=
+			V3wTbOaiQbTUDbAIGA4Ns48XSbGLm4uRJo1QMItQ2+k=
 			</data>
 		</dict>
 		<key>Resources/build.config.js</key>
@@ -77,14 +89,14 @@
 		<dict>
 			<key>hash2</key>
 			<data>
-			P6sfe4naUzt89VaRAA7rUPIc5zpfW9Zq+mJ1CQ1IaA4=
+			dDX3sYpiCT1T+ftkUiT6i+EDwNo+MCSM+5g/PF63WDQ=
 			</data>
 		</dict>
 		<key>Resources/content-main.js</key>
 		<dict>
 			<key>hash2</key>
 			<data>
-			XnFiueWRQl3A0v1u1GUcoEPavdQ6L/UNZUeXIMqeys8=
+			GmKkp0ftrCSRLVMq0R2MPilNIJDmItQ81c+r0o5/dZA=
 			</data>
 		</dict>
 		<key>Resources/icons/icon-128.png</key>
@@ -108,6 +120,13 @@
 			4fU0j7l5IFPvOhj3hoiPbx4gJfRTvSIdLfUccwqeOVE=
 			</data>
 		</dict>
+		<key>Resources/lib/cs-readiness.js</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			cINpxkWuccTu1p/DHHZrC2ibEtcbfNQ7K1TiH1lSKaA=
+			</data>
+		</dict>
 		<key>Resources/lib/handshake-machine.js</key>
 		<dict>
 			<key>hash2</key>
@@ -122,6 +141,13 @@
 			TmCGEnvNKTjj9MLLxSfNOG5dCHPLoL6LHvZmo9eGC5Y=
 			</data>
 		</dict>
+		<key>Resources/lib/session-filter.js</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			7KcK8GY39SJxhDF6sJdR5nGnwEumjy9JwlAUGZvRdgg=
+			</data>
+		</dict>
 		<key>Resources/lib/storage-keys.js</key>
 		<dict>
 			<key>hash2</key>
@@ -129,18 +155,25 @@
 			z5QmK//NhQVtdCIBx8R+cH3vmu7dL7R7DF5ihq+KSEQ=
 			</data>
 		</dict>
+		<key>Resources/lib/tab-url-matcher.js</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			Lg7zrWlNmQUSL7SIl9c3nuCAhNrymfme5SVbx+nxzGo=
+			</data>
+		</dict>
 		<key>Resources/locator.js</key>
 		<dict>
 			<key>hash2</key>
 			<data>
-			Bg4nLgxFIeEgKs6dVliERWafx7C3f75H6Tj/lZATqYM=
+			cSOdoY2PibfGpPTA1ivnFuel0HmVATBhm+qltTrevmo=
 			</data>
 		</dict>
 		<key>Resources/manifest.json</key>
 		<dict>
 			<key>hash2</key>
 			<data>
-			hIRcm5vlL90pOLVp+e2LBNTj+2ptVKSUoXJwfUFhlxM=
+			LkkxJNUHUwLVhq5NNdolMUXFKUJiEWDVK7mq70pUAGc=
 			</data>
 		</dict>
 		<key>Resources/native/SafariWebExtensionHandler.swift</key>

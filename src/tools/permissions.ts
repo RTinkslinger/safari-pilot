@@ -1,5 +1,6 @@
 import type { ToolResponse, ToolRequirements } from '../types.js';
 import type { IEngine } from '../engines/engine.js';
+import { wrapEngineError } from '../errors.js';
 import type { Engine } from '../types.js';
 import { escapeForJsSingleQuote } from '../escape.js';
 
@@ -193,7 +194,7 @@ export class PermissionTools {
     `;
 
     const result = await this.engine.executeJsInTab(tabUrl, js);
-    if (!result.ok) throw new Error(result.error?.message ?? 'Permission query failed');
+    if (!result.ok) throw wrapEngineError(result.error, 'Permission query failed');
 
     return this.makeResponse(
       result.value ? JSON.parse(result.value) : { permission, state: 'unknown' },
@@ -267,7 +268,7 @@ export class PermissionTools {
     `;
 
     const result = await this.engine.executeJsInTab(tabUrl, js);
-    if (!result.ok) throw new Error(result.error?.message ?? 'Geolocation override failed');
+    if (!result.ok) throw wrapEngineError(result.error, 'Geolocation override failed');
 
     return this.makeResponse(
       result.value ? JSON.parse(result.value) : { overridden: true, position: { latitude, longitude, accuracy } },
@@ -300,7 +301,7 @@ export class PermissionTools {
     `;
 
     const result = await this.engine.executeJsInTab(tabUrl, js);
-    if (!result.ok) throw new Error(result.error?.message ?? 'Timezone override failed');
+    if (!result.ok) throw wrapEngineError(result.error, 'Timezone override failed');
 
     return this.makeResponse(
       result.value ? JSON.parse(result.value) : { overridden: true, timezone },
@@ -330,7 +331,7 @@ export class PermissionTools {
     `;
 
     const result = await this.engine.executeJsInTab(tabUrl, js);
-    if (!result.ok) throw new Error(result.error?.message ?? 'Locale override failed');
+    if (!result.ok) throw wrapEngineError(result.error, 'Locale override failed');
 
     return this.makeResponse(
       result.value ? JSON.parse(result.value) : { overridden: true, locale },
@@ -355,7 +356,7 @@ export class PermissionTools {
     `;
 
     const result = await this.engine.executeJsInTab(tabUrl, js);
-    if (!result.ok) throw new Error(result.error?.message ?? 'User-Agent override failed');
+    if (!result.ok) throw wrapEngineError(result.error, 'User-Agent override failed');
 
     return this.makeResponse(
       result.value ? JSON.parse(result.value) : { overridden: true, userAgent },

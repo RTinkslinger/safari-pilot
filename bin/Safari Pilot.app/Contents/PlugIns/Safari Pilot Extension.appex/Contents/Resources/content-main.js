@@ -10,6 +10,33 @@
   // reference remains usable even on strict-CSP pages like Reddit/GitHub.
   const _Function = Function;
 
+  // ── Layer 3: Trusted Types policy registration (v0.1.34) ──
+  // On pages that enforce `require-trusted-types-for 'script'`, any remaining
+  // MAIN-world string→sink path (e.g. legacy code that does .innerHTML = str)
+  // needs a registered policy to route through. If the page's `trusted-types`
+  // directive doesn't allow the 'safari-pilot' policy name, the createPolicy
+  // call throws TypeError; we flag that and let task-3 error UX surface it.
+  // The probe sentinel __SP_TT_PROBE__:<json> below exposes this state.
+  (function registerTrustedTypesPolicy() {
+    try {
+      if (typeof window.trustedTypes === 'undefined' || typeof window.trustedTypes.createPolicy !== 'function') {
+        return;
+      }
+      try {
+        const policy = window.trustedTypes.createPolicy('safari-pilot', {
+          createScript: (s) => s,
+          createHTML: (s) => s,
+          createScriptURL: (s) => s,
+        });
+        window.__SP_TT_POLICY__ = policy;
+      } catch (e) {
+        window.__SP_TT_HARD_BLOCK = true;
+      }
+    } catch (e) {
+      // Defensive: anything unexpected shouldn't break the rest of the script.
+    }
+  })();
+
   // Namespace to minimize collision risk
   const SP = Object.create(null);
 
@@ -703,6 +730,589 @@
                   { name: 'NO_LOCATOR' },
                 );
               }
+            }
+            // ── EARLY INTERCEPT: __SP_TT_PROBE__:<json> (v0.1.34 Task 2) ──
+            // Reads Layer 3 init state. Used by csp-tt-policy-registration.test.ts AND by
+            // T3's safari_evaluate CSP_BLOCKED error UX to distinguish CSP_BLOCKED from
+            // CSP_HARD_BLOCK. Args ignored (probe takes no parameters; the trailing JSON
+            // is required only to satisfy the prefix-then-colon convention).
+            if (typeof params.script === 'string' && params.script.startsWith('__SP_TT_PROBE__:')) {
+              result = {
+                hardBlock: window.__SP_TT_HARD_BLOCK === true,
+                policyRegistered: typeof window.__SP_TT_POLICY__ !== 'undefined',
+              };
+              break;
+            }
+            // ── EARLY INTERCEPT: __SP_RESOLVE_LOCATOR__:<json> (v0.1.34 Task 7b) ──
+            // CSP-immune locator resolution for the playwright-style accessible
+            // locator path (role/text/label/testId/placeholder/xpath + chain).
+            // Replaces the TS-side generateLocatorJs JS-string call which hits
+            // `new Function()` and fails on Trusted-Types-strict pages. Returns
+            // the same envelope shape: { found, selector?, element?, matchCount?,
+            // strictnessSatisfied?, hint? }. AppleScript fallback path keeps
+            // using the IIFE form from src/locator.ts (no __SP_LOCATOR__ outside
+            // the extension).
+            if (typeof params.script === 'string' && params.script.startsWith('__SP_RESOLVE_LOCATOR__:')) {
+              const payload = JSON.parse(params.script.slice('__SP_RESOLVE_LOCATOR__:'.length));
+              const L = window.__SP_LOCATOR__;
+              if (!L || typeof L.resolveLocator !== 'function') {
+                throw Object.assign(
+                  new Error('__SP_LOCATOR__.resolveLocator not available'),
+                  { name: 'NO_LOCATOR' },
+                );
+              }
+              result = L.resolveLocator(payload.locator || payload, payload.options || {});
+              break;
+            }
+            // ── EARLY INTERCEPT: __SP_CLICK__:<json> (v0.1.34 Task 7) ──
+            // CSP-immune safari_click. Mirrors the previous actionJs body verbatim:
+            // MouseEvent dispatch (mousedown → mouseup → click/contextmenu/auxclick),
+            // modifier flags, native link-following for primary <a> clicks, and
+            // downloadContext payload for safari_download_link integration.
+            if (typeof params.script === 'string' && params.script.startsWith('__SP_CLICK__:')) {
+              const args = JSON.parse(params.script.slice('__SP_CLICK__:'.length));
+              const el = document.querySelector(args.selector);
+              if (!el) {
+                throw Object.assign(
+                  new Error('Element not found: ' + args.selector),
+                  { name: 'ELEMENT_NOT_FOUND' },
+                );
+              }
+              const buttonNum = args.buttonNum;
+              const m = args.modifiers || {};
+              const rect = el.getBoundingClientRect();
+              const opts = {
+                bubbles: true, cancelable: true, view: window,
+                clientX: rect.x + rect.width / 2, clientY: rect.y + rect.height / 2,
+                button: buttonNum,
+                buttons: 1 << buttonNum,
+                ctrlKey: !!m.ctrl, shiftKey: !!m.shift, altKey: !!m.alt, metaKey: !!m.meta,
+              };
+              const terminalEvent = buttonNum === 0 ? 'click' : buttonNum === 2 ? 'contextmenu' : 'auxclick';
+              el.dispatchEvent(new MouseEvent('mousedown', opts));
+              el.dispatchEvent(new MouseEvent('mouseup', opts));
+              el.dispatchEvent(new MouseEvent(terminalEvent, opts));
+
+              const linkEl = el.tagName === 'A' ? el : (el.closest ? el.closest('a') : null);
+              let navigatedTo = null;
+              if (buttonNum === 0 && linkEl && linkEl.href && !linkEl.hasAttribute('download')) {
+                const tgt = linkEl.getAttribute('target');
+                if (!tgt || tgt === '_self') navigatedTo = linkEl.href;
+              }
+
+              result = {
+                clicked: true,
+                navigatedTo: navigatedTo,
+                element: {
+                  tagName: el.tagName,
+                  id: el.id || undefined,
+                  textContent: (el.textContent || '').slice(0, 100),
+                },
+                downloadContext: linkEl ? {
+                  href: linkEl.href || undefined,
+                  downloadAttr: linkEl.getAttribute('download') == null ? undefined : linkEl.getAttribute('download'),
+                  isDownloadLink: linkEl.hasAttribute('download'),
+                } : undefined,
+              };
+
+              if (navigatedTo) {
+                window.location.href = navigatedTo;
+              }
+              break;
+            }
+            // ── EARLY INTERCEPT: __SP_FILL__:<json> (v0.1.34 Task 8) ──
+            // CSP-immune safari_fill. Mirrors the previous actionJs verbatim:
+            // framework auto-detect (react/vue/vanilla), React native-setter
+            // trick for controlled inputs, Vue path, clearFirst, pressEnterAfter.
+            if (typeof params.script === 'string' && params.script.startsWith('__SP_FILL__:')) {
+              const args = JSON.parse(params.script.slice('__SP_FILL__:'.length));
+              const el = document.querySelector(args.selector);
+              if (!el) {
+                throw Object.assign(
+                  new Error('Element not found: ' + args.selector),
+                  { name: 'ELEMENT_NOT_FOUND' },
+                );
+              }
+
+              let detectedFramework = 'vanilla';
+              if (Object.keys(el).some((k) => k.startsWith('__reactFiber$'))) {
+                detectedFramework = 'react';
+              } else if (el.__vue__ || el.__vueParentComponent) {
+                detectedFramework = 'vue';
+              }
+              const fw = args.framework === 'auto' ? detectedFramework : args.framework;
+
+              if (args.clearFirst) {
+                el.focus();
+                el.value = '';
+                el.dispatchEvent(new Event('input', { bubbles: true }));
+              }
+
+              if (fw === 'react') {
+                const inputDesc = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
+                const textareaDesc = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value');
+                const nativeSetter = inputDesc ? inputDesc.set : (textareaDesc ? textareaDesc.set : null);
+                if (nativeSetter) {
+                  nativeSetter.call(el, args.value);
+                } else {
+                  el.value = args.value;
+                }
+                el.dispatchEvent(new Event('input', { bubbles: true }));
+                el.dispatchEvent(new Event('change', { bubbles: true }));
+                el.dispatchEvent(new FocusEvent('blur', { bubbles: true }));
+              } else if (fw === 'vue') {
+                el.value = args.value;
+                el.dispatchEvent(new Event('input', { bubbles: true }));
+                el.dispatchEvent(new Event('change', { bubbles: true }));
+              } else {
+                el.focus();
+                el.value = args.value;
+                el.dispatchEvent(new Event('input', { bubbles: true }));
+                el.dispatchEvent(new Event('change', { bubbles: true }));
+                el.dispatchEvent(new FocusEvent('blur', { bubbles: true }));
+              }
+
+              if (args.pressEnterAfter) {
+                el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true }));
+              }
+
+              result = {
+                filled: true,
+                element: { tagName: el.tagName, id: el.id || undefined, name: el.name || undefined, type: el.type || undefined },
+                framework: fw,
+                verifiedValue: el.value,
+              };
+              break;
+            }
+            // ── EARLY INTERCEPT: __SP_TYPE__:<json> (v0.1.34 Task 9) ──
+            // CSP-immune safari_type. Per-character keyboard event dispatch in
+            // MAIN world. Mirrors the previous JS-string loop verbatim:
+            // focus → for each char: keydown / keypress / append to value /
+            // input / keyup.
+            if (typeof params.script === 'string' && params.script.startsWith('__SP_TYPE__:')) {
+              const args = JSON.parse(params.script.slice('__SP_TYPE__:'.length));
+              const el = document.querySelector(args.selector);
+              if (!el) {
+                throw Object.assign(
+                  new Error('Element not found'),
+                  { name: 'ELEMENT_NOT_FOUND' },
+                );
+              }
+              el.focus();
+              const text = String(args.content || '');
+              for (let i = 0; i < text.length; i++) {
+                const ch = text[i];
+                const code = 'Key' + ch.toUpperCase();
+                el.dispatchEvent(new KeyboardEvent('keydown', { key: ch, code, bubbles: true }));
+                el.dispatchEvent(new KeyboardEvent('keypress', { key: ch, code, bubbles: true }));
+                el.value = (el.value || '') + ch;
+                el.dispatchEvent(new Event('input', { bubbles: true }));
+                el.dispatchEvent(new KeyboardEvent('keyup', { key: ch, code, bubbles: true }));
+              }
+              result = { typed: true, length: text.length };
+              break;
+            }
+            // ── EARLY INTERCEPT: __SP_SCROLL__:<json> (v0.1.34 Task 10) ──
+            // CSP-immune safari_scroll. Mirrors the previous actionJs branching:
+            // toTop / toBottom / toElement / delta directional. Operates on the
+            // document.documentElement by default, or a passed targetSelector
+            // for scroll-inside-container.
+            if (typeof params.script === 'string' && params.script.startsWith('__SP_SCROLL__:')) {
+              const args = JSON.parse(params.script.slice('__SP_SCROLL__:'.length));
+              const target = args.targetSelector
+                ? document.querySelector(args.targetSelector)
+                : document.documentElement;
+              if (!target) {
+                throw Object.assign(
+                  new Error('Scroll target not found'),
+                  { name: 'ELEMENT_NOT_FOUND' },
+                );
+              }
+              if (args.toTop) {
+                target.scrollTo({ top: 0, behavior: 'smooth' });
+              } else if (args.toBottom) {
+                target.scrollTo({ top: target.scrollHeight, behavior: 'smooth' });
+              } else if (args.toElement) {
+                const scrollTarget = document.querySelector(args.toElement);
+                if (scrollTarget) scrollTarget.scrollIntoView({ behavior: 'smooth' });
+              } else {
+                const amt = args.amount;
+                const dir = args.direction;
+                if (dir === 'down') target.scrollBy({ top: amt, behavior: 'smooth' });
+                else if (dir === 'up') target.scrollBy({ top: -amt, behavior: 'smooth' });
+                else if (dir === 'right') target.scrollBy({ left: amt, behavior: 'smooth' });
+                else if (dir === 'left') target.scrollBy({ left: -amt, behavior: 'smooth' });
+              }
+              result = {
+                scrolled: true,
+                scrollPosition: { x: target.scrollLeft || window.scrollX, y: target.scrollTop || window.scrollY },
+                atTop: (target.scrollTop || window.scrollY) === 0,
+                atBottom: (target.scrollTop || window.scrollY) + (target.clientHeight || window.innerHeight) >= (target.scrollHeight - 1),
+              };
+              break;
+            }
+            // ── EARLY INTERCEPT: __SP_EXTRACT_METADATA__:<json> (v0.1.34 Task 15e) ──
+            // CSP-immune safari_extract_metadata. Reproduces the previous
+            // JS-string body using native DOM APIs. Result-envelope shape
+            // preserved verbatim: { meta, canonical, openGraph, twitter, jsonLd, url }
+            if (typeof params.script === 'string' && params.script.startsWith('__SP_EXTRACT_METADATA__:')) {
+              const getMeta = (n) => {
+                const el = document.querySelector('meta[name="' + n + '"]') ||
+                           document.querySelector('meta[property="' + n + '"]');
+                return el ? el.getAttribute('content') : null;
+              };
+
+              const meta = {
+                title: document.title || null,
+                description: getMeta('description'),
+                keywords: getMeta('keywords'),
+                author: getMeta('author'),
+                robots: getMeta('robots'),
+                viewport: getMeta('viewport'),
+              };
+
+              const canonicalEl = document.querySelector('link[rel="canonical"]');
+              const canonical = canonicalEl ? canonicalEl.getAttribute('href') : null;
+
+              const og = {};
+              const ogMetas = document.querySelectorAll('meta[property^="og:"]');
+              for (let i = 0; i < ogMetas.length; i++) {
+                const prop = ogMetas[i].getAttribute('property').replace('og:', '');
+                og[prop] = ogMetas[i].getAttribute('content');
+              }
+
+              const twitter = {};
+              const twMetas = document.querySelectorAll('meta[name^="twitter:"]');
+              for (let j = 0; j < twMetas.length; j++) {
+                const nm = twMetas[j].getAttribute('name').replace('twitter:', '');
+                twitter[nm] = twMetas[j].getAttribute('content');
+              }
+
+              const jsonLd = [];
+              const ldScripts = document.querySelectorAll('script[type="application/ld+json"]');
+              for (let k = 0; k < ldScripts.length; k++) {
+                try {
+                  jsonLd.push(JSON.parse(ldScripts[k].textContent));
+                } catch (_e) { /* skip malformed */ }
+              }
+
+              result = {
+                meta,
+                canonical,
+                openGraph: og,
+                twitter,
+                jsonLd,
+                url: location.href,
+              };
+              break;
+            }
+            // ── EARLY INTERCEPT: __SP_EXTRACT_IMAGES__:<json> (v0.1.34 Task 15d) ──
+            // CSP-immune safari_extract_images. Reproduces the previous
+            // JS-string body using native DOM APIs. Result-envelope shape
+            // preserved verbatim:
+            //   { images: [{src, alt, width, height, naturalWidth, naturalHeight}], count }
+            if (typeof params.script === 'string' && params.script.startsWith('__SP_EXTRACT_IMAGES__:')) {
+              const args = JSON.parse(params.script.slice('__SP_EXTRACT_IMAGES__:'.length));
+              const minW = typeof args.minWidth === 'number' ? args.minWidth : 0;
+              const minH = typeof args.minHeight === 'number' ? args.minHeight : 0;
+              const imgs = document.querySelectorAll('img');
+              const images = [];
+              for (let i = 0; i < imgs.length; i++) {
+                const img = imgs[i];
+                const w = img.width || img.offsetWidth || 0;
+                const h = img.height || img.offsetHeight || 0;
+                if (w < minW || h < minH) continue;
+                images.push({
+                  src: img.src || img.getAttribute('src') || '',
+                  alt: img.alt || '',
+                  width: w,
+                  height: h,
+                  naturalWidth: img.naturalWidth || 0,
+                  naturalHeight: img.naturalHeight || 0,
+                });
+              }
+              result = { images, count: images.length };
+              break;
+            }
+            // ── EARLY INTERCEPT: __SP_EXTRACT_LINKS__:<json> (v0.1.34 Task 15c) ──
+            // CSP-immune safari_extract_links. Reproduces the previous
+            // JS-string body using native DOM APIs. Result-envelope shape
+            // preserved verbatim: { links: [{href, text, context, internal}], count }
+            if (typeof params.script === 'string' && params.script.startsWith('__SP_EXTRACT_LINKS__:')) {
+              const args = JSON.parse(params.script.slice('__SP_EXTRACT_LINKS__:'.length));
+              const filterMode = args.filter || 'all';
+              const pageOrigin = location.origin;
+              const anchors = document.querySelectorAll('a[href]');
+              const links = [];
+
+              for (let i = 0; i < anchors.length; i++) {
+                const a = anchors[i];
+                const href = a.href || '';
+                const t = (a.innerText || a.textContent || '').trim().slice(0, 200);
+
+                let isInternal = false;
+                try {
+                  isInternal = new URL(href).origin === pageOrigin;
+                } catch (e) {
+                  isInternal = !href.startsWith('http') || href.startsWith(pageOrigin);
+                }
+
+                if (filterMode === 'internal' && !isInternal) continue;
+                if (filterMode === 'external' && isInternal) continue;
+
+                let context = '';
+                let node = a.parentElement;
+                while (node && node !== document.body) {
+                  const tag = node.tagName ? node.tagName.toUpperCase() : '';
+                  if (/^H[1-6]$/.test(tag) || tag === 'P' || tag === 'LI') {
+                    context = (node.innerText || node.textContent || '').trim().slice(0, 200);
+                    break;
+                  }
+                  node = node.parentElement;
+                }
+
+                links.push({ href, text: t, context, internal: isInternal });
+              }
+              result = { links, count: links.length };
+              break;
+            }
+            // ── EARLY INTERCEPT: __SP_EXTRACT_TABLES__:<json> (v0.1.34 Task 15b) ──
+            // CSP-immune safari_extract_tables. Reproduces the previous
+            // JS-string body using native DOM APIs. Result-envelope shape
+            // preserved verbatim: { tables: [{headers, rows}], count }
+            if (typeof params.script === 'string' && params.script.startsWith('__SP_EXTRACT_TABLES__:')) {
+              const args = JSON.parse(params.script.slice('__SP_EXTRACT_TABLES__:'.length));
+              const tables = args.selector
+                ? document.querySelectorAll(args.selector)
+                : document.querySelectorAll('table');
+              const out = [];
+              for (let t = 0; t < tables.length; t++) {
+                const table = tables[t];
+                const headers = [];
+                const rows = [];
+
+                let thEls = table.querySelectorAll('thead th');
+                if (thEls.length === 0) thEls = table.querySelectorAll('tr:first-child th');
+                for (let h = 0; h < thEls.length; h++) {
+                  headers.push((thEls[h].innerText || thEls[h].textContent || '').trim());
+                }
+
+                const trEls = table.querySelectorAll(headers.length > 0 ? 'tbody tr' : 'tr');
+                if (trEls.length === 0 && headers.length > 0) {
+                  const allRows = table.querySelectorAll('tr');
+                  for (let ri = 1; ri < allRows.length; ri++) {
+                    const cells = allRows[ri].querySelectorAll('td');
+                    if (cells.length > 0) {
+                      const row = [];
+                      for (let ci = 0; ci < cells.length; ci++) {
+                        row.push((cells[ci].innerText || cells[ci].textContent || '').trim());
+                      }
+                      rows.push(row);
+                    }
+                  }
+                } else {
+                  for (let ri2 = 0; ri2 < trEls.length; ri2++) {
+                    const cells2 = trEls[ri2].querySelectorAll('td');
+                    if (cells2.length > 0) {
+                      const row2 = [];
+                      for (let ci2 = 0; ci2 < cells2.length; ci2++) {
+                        row2.push((cells2[ci2].innerText || cells2[ci2].textContent || '').trim());
+                      }
+                      rows.push(row2);
+                    }
+                  }
+                }
+
+                out.push({ headers, rows });
+              }
+              result = { tables: out, count: out.length };
+              break;
+            }
+            // ── EARLY INTERCEPT: __SP_SMART_SCRAPE__:<json> (v0.1.34 Task 15a) ──
+            // CSP-immune safari_smart_scrape. Delegates to
+            // __SP_LOCATOR__.smartScrape (ported verbatim from
+            // src/tools/structured-extraction.ts handleSmartScrape).
+            // Result-envelope shape preserved verbatim:
+            //   { data: { [field]: value | null }, fieldsExtracted: number }
+            if (typeof params.script === 'string' && params.script.startsWith('__SP_SMART_SCRAPE__:')) {
+              const args = JSON.parse(params.script.slice('__SP_SMART_SCRAPE__:'.length));
+              const L = window.__SP_LOCATOR__;
+              if (!L || typeof L.smartScrape !== 'function') {
+                throw Object.assign(
+                  new Error('__SP_LOCATOR__.smartScrape not available'),
+                  { name: 'NO_LOCATOR' },
+                );
+              }
+              result = L.smartScrape({ schema: args.schema, scope: args.scope });
+              break;
+            }
+            // ── EARLY INTERCEPT: __SP_SNAPSHOT__:<json> (v0.1.34 Task 14) ──
+            // CSP-immune safari_snapshot. Delegates to
+            // __SP_LOCATOR__.buildSnapshot (ported from src/aria.ts
+            // generateSnapshotJs). Result-envelope shape preserved verbatim:
+            //   {snapshot, url, title, elementCount, interactiveCount, refMap}
+            if (typeof params.script === 'string' && params.script.startsWith('__SP_SNAPSHOT__:')) {
+              const args = JSON.parse(params.script.slice('__SP_SNAPSHOT__:'.length));
+              const L = window.__SP_LOCATOR__;
+              if (!L || typeof L.buildSnapshot !== 'function') {
+                throw Object.assign(
+                  new Error('__SP_LOCATOR__.buildSnapshot not available'),
+                  { name: 'NO_LOCATOR' },
+                );
+              }
+              result = L.buildSnapshot({
+                scopeSelector: args.scopeSelector,
+                maxDepth: args.maxDepth,
+                includeHidden: args.includeHidden,
+                format: args.format,
+              });
+              break;
+            }
+            // ── EARLY INTERCEPT: __SP_QUERY_ALL__:<json> (v0.1.34 Task 13) ──
+            // CSP-immune safari_query_all. Two payload variants:
+            //   selector branch: { selector, limit } → document.querySelectorAll
+            //   locator branch:  { locator, limit }  → __SP_LOCATOR__.resolveLocatorAll
+            // Result-envelope shape preserved verbatim:
+            //   {items: [{ref, tagName, text, attrs, boundingBox, visible}], count, limit, truncated}
+            if (typeof params.script === 'string' && params.script.startsWith('__SP_QUERY_ALL__:')) {
+              const args = JSON.parse(params.script.slice('__SP_QUERY_ALL__:'.length));
+              const limit = (typeof args.limit === 'number' && args.limit > 0) ? args.limit : 100;
+              if (args.selector) {
+                const all = Array.prototype.slice.call(document.querySelectorAll(args.selector));
+                const truncated = all.length > limit;
+                const slice = all.slice(0, limit);
+                const items = [];
+                for (let i = 0; i < slice.length; i++) {
+                  const el = slice[i];
+                  const ref = 'sp-' + Math.random().toString(36).substring(2, 8);
+                  el.setAttribute('data-sp-ref', ref);
+                  const rect = el.getBoundingClientRect();
+                  const attrs = {};
+                  if (el.attributes) {
+                    for (let ai = 0; ai < el.attributes.length; ai++) {
+                      const a = el.attributes[ai];
+                      if (a.name && a.name !== 'data-sp-ref') attrs[a.name] = a.value;
+                    }
+                  }
+                  const style = window.getComputedStyle(el);
+                  const visible = style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+                  // v0.1.35 T10: per-element interactability hint. Mirrored
+                  // as null in the AppleScript fallback path. Falls through to
+                  // null when the locator helper module isn't loaded.
+                  const __spL = window.__SP_LOCATOR__;
+                  const interactability = (__spL && typeof __spL.buildInteractability === 'function')
+                    ? __spL.buildInteractability(el)
+                    : null;
+                  items.push({
+                    ref,
+                    tagName: el.tagName || '',
+                    text: ((el.innerText !== undefined ? el.innerText : el.textContent) || '').replace(/\s+/g, ' ').trim().substring(0, 500),
+                    attrs,
+                    boundingBox: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
+                    visible,
+                    interactability,
+                  });
+                }
+                result = { items, count: all.length, limit, truncated };
+                break;
+              }
+              const L = window.__SP_LOCATOR__;
+              if (!L || typeof L.resolveLocatorAll !== 'function') {
+                throw Object.assign(
+                  new Error('__SP_LOCATOR__.resolveLocatorAll not available'),
+                  { name: 'NO_LOCATOR' },
+                );
+              }
+              result = L.resolveLocatorAll(args.locator || {}, { limit });
+              break;
+            }
+            // ── EARLY INTERCEPT: __SP_GET_TEXT__:<json> (v0.1.34 Task 12) ──
+            // CSP-immune safari_get_text. Mirrors the previous JS-string body:
+            //   multi:false → {text, length, truncated}   (full-page when no selector)
+            //   multi:true  → {matches: string[], count}  (selector required)
+            if (typeof params.script === 'string' && params.script.startsWith('__SP_GET_TEXT__:')) {
+              const args = JSON.parse(params.script.slice('__SP_GET_TEXT__:'.length));
+              const sel = args.selector;
+              const max = typeof args.maxLength === 'number' ? args.maxLength : 50000;
+              if (args.multi) {
+                if (!sel) {
+                  throw Object.assign(
+                    new Error('multi:true requires a selector'),
+                    { name: 'INVALID_PARAMS' },
+                  );
+                }
+                const els = document.querySelectorAll(sel);
+                const matches = [];
+                for (let i = 0; i < els.length; i++) {
+                  const t = els[i].innerText || els[i].textContent || '';
+                  matches.push(t.slice(0, max));
+                }
+                result = { matches, count: els.length };
+              } else {
+                const el = sel ? document.querySelector(sel) : document.body;
+                if (!el) {
+                  throw Object.assign(
+                    new Error('Element not found'),
+                    { name: 'ELEMENT_NOT_FOUND' },
+                  );
+                }
+                const text = el.innerText || el.textContent || '';
+                result = { text: text.slice(0, max), length: text.length, truncated: text.length > max };
+              }
+              break;
+            }
+            // ── EARLY INTERCEPT: __SP_WAIT_RATE_LIMIT_CLEAR__:<json> (v0.1.35 Task 9) ──
+            // Sentinel-routed handler for safari_wait_for_rate_limit_clear. Pure read:
+            // scans document.body.innerText for HTTP-429 / rate-limit indicators and
+            // returns { rate_limited } so the TS-side handler can poll until clear.
+            if (typeof params.script === 'string' && params.script.startsWith('__SP_WAIT_RATE_LIMIT_CLEAR__:')) {
+              const text = ((document.body && document.body.innerText) || '').toLowerCase();
+              const indicators = ['rate limit', '429', 'too many requests', 'try again later'];
+              const rate_limited = indicators.some((i) => text.includes(i));
+              result = { rate_limited };
+              break;
+            }
+            // ── EARLY INTERCEPT: __SP_COMPOSE_FINAL_EVIDENCE__:<json> (v0.1.35 Task 7) ──
+            // Sentinel-routed handler for safari_compose_final_evidence. Resolves the
+            // optional locator, scrolls the matched element into view (center), grabs
+            // the matching DOM snippet (or the body text fallback), and computes a
+            // simple textual claim_grounded check. The TS-side handler captures a
+            // screenshot afterward and returns all three fields in metadata.
+            if (typeof params.script === 'string' && params.script.startsWith('__SP_COMPOSE_FINAL_EVIDENCE__:')) {
+              const payload = JSON.parse(params.script.slice('__SP_COMPOSE_FINAL_EVIDENCE__:'.length));
+              const claim = typeof payload.claim === 'string' ? payload.claim : '';
+              const locator = payload.locator;
+              let element = null;
+              if (locator) {
+                const L = window.__SP_LOCATOR__;
+                if (L && typeof L.resolveLocator === 'function') {
+                  const resolved = L.resolveLocator(locator, {});
+                  if (resolved && resolved.found && resolved.selector) {
+                    try { element = document.querySelector(resolved.selector); } catch { element = null; }
+                  }
+                }
+                // Fallback: direct selector if locator has a literal `selector` key
+                if (!element && locator.selector) {
+                  try { element = document.querySelector(locator.selector); } catch { element = null; }
+                }
+                if (element && typeof element.scrollIntoView === 'function') {
+                  try { element.scrollIntoView({ behavior: 'instant', block: 'center' }); } catch { /* best-effort */ }
+                }
+              }
+              const dom_snippet = element
+                ? element.outerHTML.slice(0, 2000)
+                : (document.body ? document.body.innerText.slice(0, 2000) : '');
+              let claim_grounded = false;
+              if (claim) {
+                if (dom_snippet.includes(claim)) {
+                  claim_grounded = true;
+                } else {
+                  const words = claim.split(/\s+/).filter((w) => w.length > 3);
+                  claim_grounded = words.length > 0 && words.every((w) => dom_snippet.includes(w));
+                }
+              }
+              result = { dom_snippet, claim_grounded };
+              break;
             }
             // ── existing default execute_script path ──
             const commandId = params.commandId;

@@ -1,6 +1,8 @@
 import type { ToolResponse, ToolRequirements } from '../types.js';
 import type { IEngine } from '../engines/engine.js';
+import { wrapEngineError } from '../errors.js';
 import { escapeForJsSingleQuote } from '../escape.js';
+import { loadConfig } from '../config.js';
 
 export interface ToolDefinition {
   name: string;
@@ -12,7 +14,14 @@ export interface ToolDefinition {
 type Handler = (params: Record<string, unknown>) => Promise<ToolResponse>;
 
 export class StructuredExtractionTools {
-  constructor(private readonly engine: IEngine) {}
+  /** v0.1.34 T16: rollback flag — when true, the 5 refactored structured-
+   *  extraction tools dispatch via the verbatim v0.1.33 JS-string paths
+   *  preserved as `*Legacy` companions. */
+  private readonly legacyMainWorld: boolean;
+
+  constructor(private readonly engine: IEngine) {
+    this.legacyMainWorld = loadConfig().legacyMainWorld === true;
+  }
 
   // ── Public API ──────────────────────────────────────────────────────────────
 
@@ -39,7 +48,9 @@ export class StructuredExtractionTools {
           },
           required: ['tabUrl', 'schema'],
         },
-        requirements: { idempotent: true },
+        // v0.1.34 T15a: __SP_SMART_SCRAPE__ sentinel for CSP-immunity on
+        // Trusted-Types-strict pages. requiresCspBypass pins to Extension engine.
+        requirements: { idempotent: true, requiresCspBypass: true },
       },
       {
         name: 'safari_extract_tables',
@@ -56,7 +67,8 @@ export class StructuredExtractionTools {
           },
           required: ['tabUrl'],
         },
-        requirements: { idempotent: true },
+        // v0.1.34 T15b: __SP_EXTRACT_TABLES__ sentinel for CSP-immunity.
+        requirements: { idempotent: true, requiresCspBypass: true },
       },
       {
         name: 'safari_extract_links',
@@ -75,7 +87,8 @@ export class StructuredExtractionTools {
           },
           required: ['tabUrl'],
         },
-        requirements: { idempotent: true },
+        // v0.1.34 T15c: __SP_EXTRACT_LINKS__ sentinel for CSP-immunity.
+        requirements: { idempotent: true, requiresCspBypass: true },
       },
       {
         name: 'safari_extract_images',
@@ -98,7 +111,8 @@ export class StructuredExtractionTools {
           },
           required: ['tabUrl'],
         },
-        requirements: { idempotent: true },
+        // v0.1.34 T15d: __SP_EXTRACT_IMAGES__ sentinel for CSP-immunity.
+        requirements: { idempotent: true, requiresCspBypass: true },
       },
       {
         name: 'safari_extract_metadata',
@@ -111,7 +125,8 @@ export class StructuredExtractionTools {
           },
           required: ['tabUrl'],
         },
-        requirements: { idempotent: true },
+        // v0.1.34 T15e: __SP_EXTRACT_METADATA__ sentinel for CSP-immunity.
+        requirements: { idempotent: true, requiresCspBypass: true },
       },
     ];
   }
@@ -136,6 +151,30 @@ export class StructuredExtractionTools {
   // ── Handlers ────────────────────────────────────────────────────────────────
 
   private async handleSmartScrape(params: Record<string, unknown>): Promise<ToolResponse> {
+    if (this.legacyMainWorld) return this.handleSmartScrapeLegacy(params);
+    const start = Date.now();
+    const tabUrl = params['tabUrl'] as string;
+    const schema = params['schema'] as Record<string, unknown>;
+    const scope = params['scope'] as string | undefined;
+
+    // v0.1.34 T15a: __SP_SMART_SCRAPE__ sentinel for CSP-immunity on
+    // Trusted-Types-strict pages. Extension engine intercepts in MAIN world
+    // (no `new Function()` compile), delegates to __SP_LOCATOR__.smartScrape
+    // (ported verbatim from the previous JS-string body). Result-envelope
+    // shape preserved verbatim: { data: { [field]: value | null }, fieldsExtracted: number }
+    const sentinel = '__SP_SMART_SCRAPE__:' + JSON.stringify({
+      schema,
+      scope: scope ?? null,
+    });
+
+    const result = await this.engine.executeJsInTab(tabUrl, sentinel);
+    if (!result.ok) throw wrapEngineError(result.error, 'Smart scrape failed');
+
+    return this.makeResponse(result.value ? JSON.parse(result.value) : {}, Date.now() - start);
+  }
+
+  /** v0.1.34 T16 rollback path. Verbatim v0.1.33 body (commit b00990d^). */
+  private async handleSmartScrapeLegacy(params: Record<string, unknown>): Promise<ToolResponse> {
     const start = Date.now();
     const tabUrl = params['tabUrl'] as string;
     const schema = params['schema'] as Record<string, unknown>;
@@ -222,12 +261,33 @@ export class StructuredExtractionTools {
     `;
 
     const result = await this.engine.executeJsInTab(tabUrl, js);
-    if (!result.ok) throw new Error(result.error?.message ?? 'Smart scrape failed');
+    if (!result.ok) throw wrapEngineError(result.error, 'Smart scrape failed');
 
     return this.makeResponse(result.value ? JSON.parse(result.value) : {}, Date.now() - start);
   }
 
   private async handleExtractTables(params: Record<string, unknown>): Promise<ToolResponse> {
+    if (this.legacyMainWorld) return this.handleExtractTablesLegacy(params);
+    const start = Date.now();
+    const tabUrl = params['tabUrl'] as string;
+    const selector = params['selector'] as string | undefined;
+
+    // v0.1.34 T15b: __SP_EXTRACT_TABLES__ sentinel for CSP-immunity on
+    // Trusted-Types-strict pages. Extension engine intercepts in MAIN world
+    // (no `new Function()` compile). Result-envelope shape preserved verbatim:
+    //   { tables: [{headers: string[], rows: string[][]}], count: number }
+    const sentinel = '__SP_EXTRACT_TABLES__:' + JSON.stringify({
+      selector: selector ?? null,
+    });
+
+    const result = await this.engine.executeJsInTab(tabUrl, sentinel);
+    if (!result.ok) throw wrapEngineError(result.error, 'Extract tables failed');
+
+    return this.makeResponse(result.value ? JSON.parse(result.value) : { tables: [], count: 0 }, Date.now() - start);
+  }
+
+  /** v0.1.34 T16 rollback path. Verbatim v0.1.33 body (commit 8e4538b^). */
+  private async handleExtractTablesLegacy(params: Record<string, unknown>): Promise<ToolResponse> {
     const start = Date.now();
     const tabUrl = params['tabUrl'] as string;
     const selector = params['selector'] as string | undefined;
@@ -285,12 +345,30 @@ export class StructuredExtractionTools {
     `;
 
     const result = await this.engine.executeJsInTab(tabUrl, js);
-    if (!result.ok) throw new Error(result.error?.message ?? 'Extract tables failed');
+    if (!result.ok) throw wrapEngineError(result.error, 'Extract tables failed');
 
     return this.makeResponse(result.value ? JSON.parse(result.value) : { tables: [], count: 0 }, Date.now() - start);
   }
 
   private async handleExtractLinks(params: Record<string, unknown>): Promise<ToolResponse> {
+    if (this.legacyMainWorld) return this.handleExtractLinksLegacy(params);
+    const start = Date.now();
+    const tabUrl = params['tabUrl'] as string;
+    const filter = (params['filter'] as string | undefined) ?? 'all';
+
+    // v0.1.34 T15c: __SP_EXTRACT_LINKS__ sentinel for CSP-immunity on
+    // Trusted-Types-strict pages. Result-envelope shape preserved verbatim:
+    //   { links: [{href, text, context, internal}], count: number }
+    const sentinel = '__SP_EXTRACT_LINKS__:' + JSON.stringify({ filter });
+
+    const result = await this.engine.executeJsInTab(tabUrl, sentinel);
+    if (!result.ok) throw wrapEngineError(result.error, 'Extract links failed');
+
+    return this.makeResponse(result.value ? JSON.parse(result.value) : { links: [], count: 0 }, Date.now() - start);
+  }
+
+  /** v0.1.34 T16 rollback path. Verbatim v0.1.33 body (commit 4d122fa^). */
+  private async handleExtractLinksLegacy(params: Record<string, unknown>): Promise<ToolResponse> {
     const start = Date.now();
     const tabUrl = params['tabUrl'] as string;
     const filter = (params['filter'] as string | undefined) ?? 'all';
@@ -342,12 +420,31 @@ export class StructuredExtractionTools {
     `;
 
     const result = await this.engine.executeJsInTab(tabUrl, js);
-    if (!result.ok) throw new Error(result.error?.message ?? 'Extract links failed');
+    if (!result.ok) throw wrapEngineError(result.error, 'Extract links failed');
 
     return this.makeResponse(result.value ? JSON.parse(result.value) : { links: [], count: 0 }, Date.now() - start);
   }
 
   private async handleExtractImages(params: Record<string, unknown>): Promise<ToolResponse> {
+    if (this.legacyMainWorld) return this.handleExtractImagesLegacy(params);
+    const start = Date.now();
+    const tabUrl = params['tabUrl'] as string;
+    const minWidth = typeof params['minWidth'] === 'number' ? params['minWidth'] : 0;
+    const minHeight = typeof params['minHeight'] === 'number' ? params['minHeight'] : 0;
+
+    // v0.1.34 T15d: __SP_EXTRACT_IMAGES__ sentinel for CSP-immunity on
+    // Trusted-Types-strict pages. Result-envelope shape preserved verbatim:
+    //   { images: [{src, alt, width, height, naturalWidth, naturalHeight}], count }
+    const sentinel = '__SP_EXTRACT_IMAGES__:' + JSON.stringify({ minWidth, minHeight });
+
+    const result = await this.engine.executeJsInTab(tabUrl, sentinel);
+    if (!result.ok) throw wrapEngineError(result.error, 'Extract images failed');
+
+    return this.makeResponse(result.value ? JSON.parse(result.value) : { images: [], count: 0 }, Date.now() - start);
+  }
+
+  /** v0.1.34 T16 rollback path. Verbatim v0.1.33 body (commit c89c52b^). */
+  private async handleExtractImagesLegacy(params: Record<string, unknown>): Promise<ToolResponse> {
     const start = Date.now();
     const tabUrl = params['tabUrl'] as string;
     const minWidth = typeof params['minWidth'] === 'number' ? params['minWidth'] : 0;
@@ -379,12 +476,29 @@ export class StructuredExtractionTools {
     `;
 
     const result = await this.engine.executeJsInTab(tabUrl, js);
-    if (!result.ok) throw new Error(result.error?.message ?? 'Extract images failed');
+    if (!result.ok) throw wrapEngineError(result.error, 'Extract images failed');
 
     return this.makeResponse(result.value ? JSON.parse(result.value) : { images: [], count: 0 }, Date.now() - start);
   }
 
   private async handleExtractMetadata(params: Record<string, unknown>): Promise<ToolResponse> {
+    if (this.legacyMainWorld) return this.handleExtractMetadataLegacy(params);
+    const start = Date.now();
+    const tabUrl = params['tabUrl'] as string;
+
+    // v0.1.34 T15e: __SP_EXTRACT_METADATA__ sentinel for CSP-immunity on
+    // Trusted-Types-strict pages. Result-envelope shape preserved verbatim:
+    //   { meta, canonical, openGraph, twitter, jsonLd, url }
+    const sentinel = '__SP_EXTRACT_METADATA__:' + JSON.stringify({});
+
+    const result = await this.engine.executeJsInTab(tabUrl, sentinel);
+    if (!result.ok) throw wrapEngineError(result.error, 'Extract metadata failed');
+
+    return this.makeResponse(result.value ? JSON.parse(result.value) : {}, Date.now() - start);
+  }
+
+  /** v0.1.34 T16 rollback path. Verbatim v0.1.33 body (commit 94c5bf7^). */
+  private async handleExtractMetadataLegacy(params: Record<string, unknown>): Promise<ToolResponse> {
     const start = Date.now();
     const tabUrl = params['tabUrl'] as string;
 
@@ -447,7 +561,7 @@ export class StructuredExtractionTools {
     `;
 
     const result = await this.engine.executeJsInTab(tabUrl, js);
-    if (!result.ok) throw new Error(result.error?.message ?? 'Extract metadata failed');
+    if (!result.ok) throw wrapEngineError(result.error, 'Extract metadata failed');
 
     return this.makeResponse(result.value ? JSON.parse(result.value) : {}, Date.now() - start);
   }

@@ -1,0 +1,533 @@
+{
+  "schema_version": "1",
+  "dataset_sha": "5a7896738c10bfb8b9edccce6bb0e0411f8ae569",
+  "generated_date": "2026-05-14",
+  "patches": {
+    "Booking--5": {
+      "action": "substitute",
+      "field": "ques",
+      "find": "Jan 1 to Jan 4, 2024",
+      "replace": "Jan 1 to Jan 4, 2027",
+      "rationale": "forward-scheduling hotel search; substitution preserves 4-day stay intent"
+    },
+    "Booking--8": {
+      "action": "substitute",
+      "field": "ques",
+      "find": "20/12/2023 - 21/12/2023",
+      "replace": "20/12/2027 - 21/12/2027",
+      "rationale": "forward-scheduling Chennai hotel; preserves 1-night stay intent"
+    },
+    "Booking--10": {
+      "action": "substitute",
+      "field": "ques",
+      "find": "February 14-21, 2024",
+      "replace": "February 14-21, 2027",
+      "rationale": "forward-scheduling Valentine's week; preserves week-long Paris stay"
+    },
+    "Booking--11": {
+      "action": "substitute",
+      "field": "ques",
+      "find": "March 20-27, 2024",
+      "replace": "March 20-27, 2027",
+      "rationale": "forward-scheduling Chicago week"
+    },
+    "Booking--12": {
+      "action": "substitute",
+      "field": "ques",
+      "find": "January 5th, 2024",
+      "replace": "January 5th, 2027",
+      "rationale": "forward-scheduling 5-night Paris stay"
+    },
+    "Booking--13": {
+      "action": "substitute",
+      "field": "ques",
+      "find": "February 14-21, 2024",
+      "replace": "February 14-21, 2027",
+      "rationale": "forward-scheduling Paris family stay"
+    },
+    "Booking--14": {
+      "action": "substitute",
+      "field": "ques",
+      "find": "March 3-5, 2024",
+      "replace": "March 3-5, 2027",
+      "rationale": "forward-scheduling Paris weekend"
+    },
+    "Booking--15": {
+      "action": "substitute",
+      "field": "ques",
+      "find": "from January 10, 2024, to January 20, 2024",
+      "replace": "from January 10, 2027, to January 20, 2027",
+      "rationale": "forward-scheduling Rome 10-day stay; both dates substituted in one find/replace"
+    },
+    "Booking--16": {
+      "action": "substitute",
+      "field": "ques",
+      "find": "January 15, 2024",
+      "replace": "January 15, 2027",
+      "rationale": "forward-scheduling 5-night Paris stay"
+    },
+    "Booking--17": {
+      "action": "substitute",
+      "field": "ques",
+      "find": "February 14, 2024",
+      "replace": "February 14, 2027",
+      "rationale": "forward-scheduling 5-night Paris stay"
+    },
+    "Booking--18": {
+      "action": "substitute",
+      "field": "ques",
+      "find": "between February 14th, 2024, and February 21st, 2024",
+      "replace": "between February 14th, 2027, and February 21st, 2027",
+      "rationale": "forward-scheduling London couple stay"
+    },
+    "Booking--19": {
+      "action": "substitute",
+      "field": "ques",
+      "find": "from March 18, 2024, to March 20, 2024",
+      "replace": "from March 18, 2027, to March 20, 2027",
+      "rationale": "forward-scheduling Paris weekend stay"
+    },
+    "Booking--20": {
+      "action": "substitute",
+      "field": "ques",
+      "find": "February 28 to March 2, 2024",
+      "replace": "February 28 to March 2, 2027",
+      "rationale": "forward-scheduling Rome 3-night stay"
+    },
+    "Booking--21": {
+      "action": "substitute",
+      "field": "ques",
+      "find": "March 10, 2024",
+      "replace": "March 10, 2027",
+      "rationale": "forward-scheduling Sydney 4-night stay"
+    },
+    "Booking--22": {
+      "action": "substitute",
+      "field": "ques",
+      "find": "March 15 to March 22, 2024",
+      "replace": "March 15 to March 22, 2027",
+      "rationale": "forward-scheduling Amsterdam week"
+    },
+    "Booking--23": {
+      "action": "substitute",
+      "field": "ques",
+      "find": "February 20, 2024",
+      "replace": "February 20, 2027",
+      "rationale": "forward-scheduling Tokyo 5-night stay"
+    },
+    "Booking--24": {
+      "action": "substitute",
+      "field": "ques",
+      "find": "February 25-28, 2024",
+      "replace": "February 25-28, 2027",
+      "rationale": "forward-scheduling Barcelona stay"
+    },
+    "Booking--25": {
+      "action": "substitute",
+      "field": "ques",
+      "find": "March 1 to March 7, 2024",
+      "replace": "March 1 to March 7, 2027",
+      "rationale": "forward-scheduling Lisbon 6-night stay"
+    },
+    "Booking--26": {
+      "action": "substitute",
+      "field": "ques",
+      "find": "February 20-23, 2024",
+      "replace": "February 20-23, 2027",
+      "rationale": "forward-scheduling Paris stay"
+    },
+    "Booking--27": {
+      "action": "substitute",
+      "field": "ques",
+      "find": "February 28 to March 4, 2024",
+      "replace": "February 28 to March 4, 2027",
+      "rationale": "forward-scheduling Melbourne stay"
+    },
+    "Booking--28": {
+      "action": "substitute",
+      "field": "ques",
+      "find": "February 22 to February 29, 2024",
+      "replace": "February 22 to February 28, 2027",
+      "rationale": "forward-scheduling Dubai week; Feb 29 only exists in leap years \u2014 2027 not leap, switched to Feb 28"
+    },
+    "Booking--29": {
+      "action": "substitute",
+      "field": "ques",
+      "find": "March 5 to March 7, 2024",
+      "replace": "March 5 to March 7, 2027",
+      "rationale": "forward-scheduling Toronto 2-night stay"
+    },
+    "Booking--30": {
+      "action": "substitute",
+      "field": "ques",
+      "find": "March 20 to March 23, 2024",
+      "replace": "March 20 to March 23, 2027",
+      "rationale": "forward-scheduling London filter task"
+    },
+    "Booking--31": {
+      "action": "substitute",
+      "field": "ques",
+      "find": "March 1-7, 2024",
+      "replace": "March 1-7, 2027",
+      "rationale": "forward-scheduling Rio de Janeiro week"
+    },
+    "Booking--32": {
+      "action": "substitute",
+      "field": "ques",
+      "find": "February 24 to February 27, 2024",
+      "replace": "February 24 to February 27, 2027",
+      "rationale": "forward-scheduling Sydney filter task"
+    },
+    "Booking--34": {
+      "action": "substitute",
+      "field": "ques",
+      "find": "March 15 to March 18, 2024",
+      "replace": "March 15 to March 18, 2027",
+      "rationale": "forward-scheduling Berlin 3-night stay"
+    },
+    "Booking--36": {
+      "action": "substitute",
+      "field": "ques",
+      "find": "March 20 to March 23, 2024",
+      "replace": "March 20 to March 23, 2027",
+      "rationale": "forward-scheduling Rome budget hotel"
+    },
+    "Booking--37": {
+      "action": "substitute",
+      "field": "ques",
+      "find": "between March 20, 2024, and March 25, 2024",
+      "replace": "between March 20, 2027, and March 25, 2027",
+      "rationale": "forward-scheduling Bali resort"
+    },
+    "Booking--38": {
+      "action": "substitute",
+      "field": "ques",
+      "find": "February 28 to March 4, 2024",
+      "replace": "February 28 to March 4, 2027",
+      "rationale": "forward-scheduling Vienna 4-night stay"
+    },
+    "Booking--39": {
+      "action": "substitute",
+      "field": "ques",
+      "find": "February 24-26, 2024",
+      "replace": "February 24-26, 2027",
+      "rationale": "forward-scheduling Toronto pet-friendly stay"
+    },
+    "Booking--40": {
+      "action": "substitute",
+      "field": "ques",
+      "find": "6 March to 8 March 2024",
+      "replace": "6 March to 8 March 2027",
+      "rationale": "forward-scheduling Shenzhen stay"
+    },
+    "Booking--42": {
+      "action": "substitute",
+      "field": "ques",
+      "find": "March 1 to March 7, 2024",
+      "replace": "March 1 to March 7, 2027",
+      "rationale": "forward-scheduling Hokkaido week"
+    },
+    "Google Flights--1": {
+      "action": "substitute",
+      "field": "ques",
+      "find": "February 17, 2024",
+      "replace": "February 17, 2027",
+      "rationale": "forward-scheduling one-way; \"today\" wording is rhetorical since explicit date given"
+    },
+    "Google Flights--10": {
+      "action": "substitute",
+      "field": "ques",
+      "find": "January 25, 2024, and returning on February 15, 2024",
+      "replace": "January 25, 2027, and returning on February 15, 2027",
+      "rationale": "forward-scheduling round-trip"
+    },
+    "Google Flights--11": {
+      "action": "substitute",
+      "field": "ques",
+      "find": "February 10, 2024, and a return on February 24, 2024",
+      "replace": "February 10, 2027, and a return on February 24, 2027",
+      "rationale": "forward-scheduling round-trip"
+    },
+    "Google Flights--12": {
+      "action": "substitute",
+      "field": "ques",
+      "find": "December 25, 2023, and returning on January 5, 2024",
+      "replace": "December 25, 2027, and returning on January 5, 2028",
+      "rationale": "forward-scheduling round-trip spanning year-end"
+    },
+    "Google Flights--13": {
+      "action": "substitute",
+      "field": "ques",
+      "find": "January 10, 2024, and a return on January 24, 2024",
+      "replace": "January 10, 2027, and a return on January 24, 2027",
+      "rationale": "forward-scheduling round-trip"
+    },
+    "Google Flights--14": {
+      "action": "substitute",
+      "field": "ques",
+      "find": "January 10, 2024, and returning on January 17, 2024",
+      "replace": "January 10, 2027, and returning on January 17, 2027",
+      "rationale": "forward-scheduling round-trip"
+    },
+    "Google Flights--15": {
+      "action": "substitute",
+      "field": "ques",
+      "find": "February 12th, 2024, and returning on February 26th, 2024",
+      "replace": "February 12th, 2027, and returning on February 26th, 2027",
+      "rationale": "forward-scheduling round-trip"
+    },
+    "Google Flights--16": {
+      "action": "substitute",
+      "field": "ques",
+      "find": "January 15, 2024",
+      "replace": "January 15, 2027",
+      "rationale": "forward-scheduling one-way"
+    },
+    "Google Flights--17": {
+      "action": "substitute",
+      "field": "ques",
+      "find": "December 27, 2023, and returning on January 10, 2024",
+      "replace": "December 27, 2027, and returning on January 10, 2028",
+      "rationale": "forward-scheduling round-trip spanning year-end"
+    },
+    "Google Flights--18": {
+      "action": "substitute",
+      "field": "ques",
+      "find": "January 25, 2024, and returning on February 15, 2024",
+      "replace": "January 25, 2027, and returning on February 15, 2027",
+      "rationale": "forward-scheduling round-trip"
+    },
+    "Google Flights--19": {
+      "action": "substitute",
+      "field": "ques",
+      "find": "January 25, 2024",
+      "replace": "January 25, 2027",
+      "rationale": "forward-scheduling one-way"
+    },
+    "Google Flights--20": {
+      "action": "substitute",
+      "field": "ques",
+      "find": "March 5, 2024, and returning on March 12, 2024",
+      "replace": "March 5, 2027, and returning on March 12, 2027",
+      "rationale": "forward-scheduling round-trip"
+    },
+    "Google Flights--21": {
+      "action": "substitute",
+      "field": "ques",
+      "find": "February 25, 2024",
+      "replace": "February 25, 2027",
+      "rationale": "forward-scheduling one-way"
+    },
+    "Google Flights--22": {
+      "action": "substitute",
+      "field": "ques",
+      "find": "March 15, 2024, and returning on March 22, 2024",
+      "replace": "March 15, 2027, and returning on March 22, 2027",
+      "rationale": "forward-scheduling round-trip"
+    },
+    "Google Flights--23": {
+      "action": "substitute",
+      "field": "ques",
+      "find": "February 28, 2024",
+      "replace": "February 28, 2027",
+      "rationale": "forward-scheduling one-way"
+    },
+    "Google Flights--24": {
+      "action": "substitute",
+      "field": "ques",
+      "find": "March 1, 2024, and returning on March 8, 2024",
+      "replace": "March 1, 2027, and returning on March 8, 2027",
+      "rationale": "forward-scheduling round-trip"
+    },
+    "Google Flights--25": {
+      "action": "substitute",
+      "field": "ques",
+      "find": "March 10, 2024",
+      "replace": "March 10, 2027",
+      "rationale": "forward-scheduling one-way business class"
+    },
+    "Google Flights--26": {
+      "action": "substitute",
+      "field": "ques",
+      "find": "February 26, 2024, and returning on February 28, 2024",
+      "replace": "February 26, 2027, and returning on February 28, 2027",
+      "rationale": "forward-scheduling round-trip"
+    },
+    "Google Flights--27": {
+      "action": "substitute",
+      "field": "ques",
+      "find": "March 30, 2024",
+      "replace": "March 30, 2027",
+      "rationale": "forward-scheduling one-way"
+    },
+    "Google Flights--28": {
+      "action": "substitute",
+      "field": "ques",
+      "find": "February 27, 2024, and returning on March 1, 2024",
+      "replace": "February 27, 2027, and returning on March 1, 2027",
+      "rationale": "forward-scheduling round-trip"
+    },
+    "Google Flights--29": {
+      "action": "substitute",
+      "field": "ques",
+      "find": "March 5, 2024, and returning on March 15, 2024",
+      "replace": "March 5, 2027, and returning on March 15, 2027",
+      "rationale": "forward-scheduling non-stop round-trip"
+    },
+    "Google Flights--30": {
+      "action": "substitute",
+      "field": "ques",
+      "find": "March 20, 2024",
+      "replace": "March 20, 2027",
+      "rationale": "forward-scheduling one-way"
+    },
+    "Google Flights--31": {
+      "action": "substitute",
+      "field": "ques",
+      "find": "March 25, 2024",
+      "replace": "March 25, 2027",
+      "rationale": "forward-scheduling one-way economy"
+    },
+    "Google Flights--32": {
+      "action": "substitute",
+      "field": "ques",
+      "find": "March 3, 2024, and returning on March 10, 2024",
+      "replace": "March 3, 2027, and returning on March 10, 2027",
+      "rationale": "forward-scheduling round-trip"
+    },
+    "Google Flights--33": {
+      "action": "substitute",
+      "field": "ques",
+      "find": "February 27, 2024",
+      "replace": "February 27, 2027",
+      "rationale": "forward-scheduling one-way"
+    },
+    "Google Flights--34": {
+      "action": "substitute",
+      "field": "ques",
+      "find": "March 15, 2024",
+      "replace": "March 15, 2027",
+      "rationale": "forward-scheduling business class one-way"
+    },
+    "Google Flights--35": {
+      "action": "substitute",
+      "field": "ques",
+      "find": "February 21, 2024",
+      "replace": "February 21, 2027",
+      "rationale": "forward-scheduling one-way"
+    },
+    "Google Flights--36": {
+      "action": "substitute",
+      "field": "ques",
+      "find": "March 28, 2024, and returning on April 4, 2024",
+      "replace": "March 28, 2027, and returning on April 4, 2027",
+      "rationale": "forward-scheduling round-trip"
+    },
+    "Google Flights--37": {
+      "action": "substitute",
+      "field": "ques",
+      "find": "February 28, 2024, and returning on March 3, 2024",
+      "replace": "February 28, 2027, and returning on March 3, 2027",
+      "rationale": "forward-scheduling round-trip"
+    },
+    "Google Flights--38": {
+      "action": "substitute",
+      "field": "ques",
+      "find": "March 8, 2024",
+      "replace": "March 8, 2027",
+      "rationale": "forward-scheduling one-way"
+    },
+    "Google Flights--39": {
+      "action": "substitute",
+      "field": "ques",
+      "find": "March 20, 2024",
+      "replace": "March 20, 2027",
+      "rationale": "forward-scheduling one-way"
+    },
+    "Google Flights--41": {
+      "action": "substitute",
+      "field": "ques",
+      "find": "8 March 2024",
+      "replace": "8 March 2027",
+      "rationale": "forward-scheduling one-way business class"
+    },
+    "Apple--9": {
+      "action": "substitute",
+      "field": "ques",
+      "find": "January 10, 2024",
+      "replace": "January 10, 2027",
+      "rationale": "forward-scheduling in-store pickup; substitution preserves scheduling intent"
+    },
+    "Amazon--30": {
+      "action": "substitute",
+      "field": "ques",
+      "find": "2024",
+      "replace": "2027",
+      "rationale": "\"released in 2024\" is a recency marker that becomes stale; 2027 preserves the \"recent year\" intent"
+    },
+    "Amazon--39": {
+      "action": "substitute",
+      "field": "ques",
+      "find": "2024",
+      "replace": "2027",
+      "rationale": "\"published in 2024\" is a recency marker; 2027 preserves the \"recent travel guide\" intent"
+    },
+    "Google Search--39": {
+      "action": "substitute",
+      "field": "ques",
+      "find": "2024",
+      "replace": "2027",
+      "rationale": "\"top trending destinations for 2024\" is a recency marker; 2027 preserves the current-year-trending intent"
+    },
+    "GitHub--11": {
+      "action": "substitute",
+      "field": "ques",
+      "find": "January 2023",
+      "replace": "January 2027",
+      "rationale": "\"newly created project initiated in January 2023\" is a recency marker; substitution preserves \"recently created\" intent"
+    },
+    "GitHub--28": {
+      "action": "substitute",
+      "field": "ques",
+      "find": "2023-12-29",
+      "replace": "2027-12-29",
+      "rationale": "\"most starred repos created after date\" is a recency marker; substitution preserves the \"recently created\" intent"
+    },
+    "GitHub--36": {
+      "action": "substitute",
+      "field": "ques",
+      "find": "2022",
+      "replace": "2027",
+      "rationale": "\"new open-source project created in 2022\" is a recency marker; substitution preserves \"recently created\" intent"
+    },
+    "Huggingface--0": {
+      "action": "substitute",
+      "field": "ques",
+      "find": "March 2023",
+      "replace": "March 2027",
+      "rationale": "\"last update within March 2023\" is a recency marker; substitution preserves \"recently updated\" intent"
+    },
+    "Huggingface--20": {
+      "action": "substitute",
+      "field": "ques",
+      "find": "2022",
+      "replace": "2027",
+      "rationale": "\"last updated in 2022\" is a recency marker; substitution preserves \"recently updated\" intent"
+    },
+    "BBC News--18": {
+      "action": "substitute",
+      "field": "ques",
+      "find": "2023",
+      "replace": "2026",
+      "rationale": "\"best PodCasts for 2023\" is a recency marker for the BBC current-year list; 2026 is the latest year that should have a list page"
+    },
+    "ArXiv--15": {
+      "action": "remove",
+      "rationale": "Cross-references AAAI 2024 acceptance announcements made in December 2023 \u2014 both events have concluded and no plausible 2027 substitution preserves the task semantics (AAAI 2027 acceptances will not yet be announced in late 2026)."
+    },
+    "ESPN--33": {
+      "action": "remove",
+      "rationale": "\"Latest ESPN articles discussing MVP candidates for 2023 season\" \u2014 the 2023 NFL season has concluded and MVP voting is settled; \"latest articles\" implies current-season speculation that no longer exists. Substituting 2027 fails because that season has not yet been played."
+    }
+  }
+}

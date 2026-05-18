@@ -9,21 +9,23 @@
  * accepted by the schema and dropped. This is the same class of "schema lies"
  * caught in T49/T50/T51 (see docs/AUDIT-TASKS.md).
  *
- * Post-fix the dispatched MouseEvent payload reflects the params:
- *   - button: 'right'   → dispatch mousedown/mouseup (button=2) + contextmenu
- *   - button: 'middle'  → dispatch mousedown/mouseup (button=1) + auxclick
- *   - button: 'left'    → dispatch mousedown/mouseup/click (button=0) — preserves prior behavior
- *   - modifiers ['ctrl','shift'] → MouseEvent options include ctrlKey:true, shiftKey:true
+ * Post-fix the dispatched payload reflects the params:
+ *   - button: 'right'   → buttonNum=2 (sentinel handler dispatches mousedown/mouseup + contextmenu)
+ *   - button: 'middle'  → buttonNum=1 (sentinel handler dispatches mousedown/mouseup + auxclick)
+ *   - button: 'left'    → buttonNum=0 (sentinel handler dispatches mousedown/mouseup/click) — preserves prior behavior
+ *   - modifiers ['ctrl','shift'] → modifiers.ctrl=true, modifiers.shift=true on the sentinel payload
  *
  * The W3C UI Events spec is explicit: 'click' fires only for primary-button
  * (button=0). For non-primary buttons 'auxclick' fires; for right-click
- * additionally 'contextmenu' fires. We mirror that contract — agents
+ * additionally 'contextmenu' fires. The sentinel handler in content-main.js
+ * branches on buttonNum and dispatches the right terminal event — agents
  * exercising right-click need the contextmenu event to land on real handlers.
  *
- * Test strategy: unit-test the GENERATED action-JS string (vitest env is node,
- * no DOM). Capture engine.executeJsInTab calls via a recording engine, then
- * assert on substrings of the dispatched script. Pattern matches
- * test/unit/tools/handle-dialog-requirement.test.ts and the T49/T50/T51 suite.
+ * v0.1.34 Task 7 — handler now marshals via __SP_CLICK__:<json> sentinel
+ * (CSP-immune; Trusted Types blocks `new Function`). Tests parse the sentinel
+ * payload and check structured fields instead of regexing inline JS. The
+ * terminal-event branching is asserted via e2e (sentinel handler lives in
+ * extension/content-main.js, not in TS).
  */
 import { describe, it, expect } from 'vitest';
 import { InteractionTools } from '../../../src/tools/interaction.js';
@@ -60,10 +62,16 @@ function fakeServer(): SafariPilotServer {
   return { setClickContext: () => {} } as unknown as SafariPilotServer;
 }
 
-async function runClick(
+interface ClickSentinel {
+  selector: string;
+  buttonNum: number;
+  modifiers: { ctrl: boolean; shift: boolean; alt: boolean; meta: boolean };
+}
+
+async function runClickSentinel(
   engine: IEngine & { capturedScripts: string[] },
   params: Record<string, unknown>,
-): Promise<string> {
+): Promise<ClickSentinel> {
   const tools = new InteractionTools(engine, fakeServer());
   const handler = tools.getHandler('safari_click');
   if (!handler) throw new Error('safari_click handler not registered');
@@ -72,87 +80,46 @@ async function runClick(
   // The action script is the LAST captured (waitAndExecute may also probe).
   const action = engine.capturedScripts[engine.capturedScripts.length - 1];
   if (!action) throw new Error('no action script captured');
-  return action;
+  if (!action.startsWith('__SP_CLICK__:')) {
+    throw new Error(`expected __SP_CLICK__ sentinel; got: ${action.slice(0, 80)}`);
+  }
+  return JSON.parse(action.slice('__SP_CLICK__:'.length)) as ClickSentinel;
 }
 
-describe('5A.3 — safari_click button + modifiers honored', () => {
-  it('button="right" dispatches mousedown/mouseup + contextmenu with button=2 (and NOT a primary click event)', async () => {
+describe('5A.3 — safari_click button + modifiers honored (sentinel transport)', () => {
+  it('button="right" marshals buttonNum=2 (sentinel handler dispatches mousedown/mouseup + contextmenu)', async () => {
     const engine = recordingEngine();
-    const script = await runClick(engine, { button: 'right' });
-    // The MouseEvent options block must carry button: 2.
-    expect(script, 'expected button: 2 in MouseEvent opts').toMatch(/button:\s*2\b/);
-    // mousedown/mouseup must precede the terminating event — many real-world
-    // contextmenu handlers also listen on mousedown.
-    expect(script, 'expected mousedown dispatch').toMatch(/dispatchEvent\(new MouseEvent\(['"]mousedown['"]/);
-    expect(script, 'expected mouseup dispatch').toMatch(/dispatchEvent\(new MouseEvent\(['"]mouseup['"]/);
-    // contextmenu must be dispatched (this is what real handlers listen to).
-    expect(script, 'expected contextmenu dispatch').toMatch(/dispatchEvent\(new MouseEvent\(['"]contextmenu['"]/);
-    // Primary 'click' event must NOT fire for right-button (per W3C UI Events).
-    expect(
-      /dispatchEvent\(new MouseEvent\(['"]click['"]/.test(script),
-      'right-click must not dispatch primary "click" event',
-    ).toBe(false);
+    const payload = await runClickSentinel(engine, { button: 'right' });
+    expect(payload.buttonNum, 'right click → buttonNum=2').toBe(2);
   });
 
-  it('button="middle" dispatches mousedown/mouseup + auxclick with button=1 (and NOT primary click or contextmenu)', async () => {
+  it('button="middle" marshals buttonNum=1 (sentinel handler dispatches mousedown/mouseup + auxclick)', async () => {
     const engine = recordingEngine();
-    const script = await runClick(engine, { button: 'middle' });
-    expect(script, 'expected button: 1 in MouseEvent opts').toMatch(/button:\s*1\b/);
-    expect(script, 'expected mousedown dispatch').toMatch(/dispatchEvent\(new MouseEvent\(['"]mousedown['"]/);
-    expect(script, 'expected mouseup dispatch').toMatch(/dispatchEvent\(new MouseEvent\(['"]mouseup['"]/);
-    expect(script, 'expected auxclick dispatch').toMatch(/dispatchEvent\(new MouseEvent\(['"]auxclick['"]/);
-    expect(
-      /dispatchEvent\(new MouseEvent\(['"]click['"]/.test(script),
-      'middle-click must not dispatch primary "click" event',
-    ).toBe(false);
-    expect(
-      /dispatchEvent\(new MouseEvent\(['"]contextmenu['"]/.test(script),
-      'middle-click must not dispatch contextmenu',
-    ).toBe(false);
+    const payload = await runClickSentinel(engine, { button: 'middle' });
+    expect(payload.buttonNum, 'middle click → buttonNum=1').toBe(1);
   });
 
-  it('button="left" (default) preserves prior behavior — dispatches mousedown/mouseup/click with button=0', async () => {
+  it('button="left" (default) marshals buttonNum=0 — preserves prior behavior', async () => {
     const engine = recordingEngine();
-    const script = await runClick(engine, {}); // no button param → defaults to left
-    expect(script, 'default left click expects button: 0').toMatch(/button:\s*0\b/);
-    expect(script, 'expected mousedown dispatch').toMatch(/dispatchEvent\(new MouseEvent\(['"]mousedown['"]/);
-    expect(script, 'expected mouseup dispatch').toMatch(/dispatchEvent\(new MouseEvent\(['"]mouseup['"]/);
-    expect(script, 'left click must dispatch the primary click event').toMatch(/dispatchEvent\(new MouseEvent\(['"]click['"]/);
-    expect(
-      /dispatchEvent\(new MouseEvent\(['"]contextmenu['"]/.test(script),
-      'left click must not dispatch contextmenu',
-    ).toBe(false);
-    expect(
-      /dispatchEvent\(new MouseEvent\(['"]auxclick['"]/.test(script),
-      'left click must not dispatch auxclick',
-    ).toBe(false);
+    const payload = await runClickSentinel(engine, {}); // no button param → defaults to left
+    expect(payload.buttonNum, 'default left click → buttonNum=0').toBe(0);
   });
 
-  it('modifiers ["ctrl","shift"] set ctrlKey and shiftKey on the dispatched MouseEvent', async () => {
+  it('modifiers ["ctrl","shift"] set ctrl and shift true on the sentinel payload', async () => {
     const engine = recordingEngine();
-    const script = await runClick(engine, { modifiers: ['ctrl', 'shift'] });
-    expect(script, 'expected ctrlKey: true').toMatch(/ctrlKey:\s*true\b/);
-    expect(script, 'expected shiftKey: true').toMatch(/shiftKey:\s*true\b/);
-    // Unspecified modifiers must NOT be set true.
-    expect(
-      /altKey:\s*true\b/.test(script),
-      'altKey must not be true when not in modifiers array',
-    ).toBe(false);
-    expect(
-      /metaKey:\s*true\b/.test(script),
-      'metaKey must not be true when not in modifiers array',
-    ).toBe(false);
+    const payload = await runClickSentinel(engine, { modifiers: ['ctrl', 'shift'] });
+    expect(payload.modifiers.ctrl, 'expected modifiers.ctrl=true').toBe(true);
+    expect(payload.modifiers.shift, 'expected modifiers.shift=true').toBe(true);
+    expect(payload.modifiers.alt, 'alt must not be true when not in modifiers array').toBe(false);
+    expect(payload.modifiers.meta, 'meta must not be true when not in modifiers array').toBe(false);
   });
 
-  it('no modifiers param means no modifier keys set true on the MouseEvent', async () => {
+  it('no modifiers param means all four modifier flags are false', async () => {
     const engine = recordingEngine();
-    const script = await runClick(engine, {});
-    // None of the four modifier flags should be true.
-    for (const k of ['ctrlKey', 'shiftKey', 'altKey', 'metaKey']) {
-      expect(
-        new RegExp(`${k}:\\s*true\\b`).test(script),
-        `${k} must not be true when modifiers is omitted`,
-      ).toBe(false);
-    }
+    const payload = await runClickSentinel(engine, {});
+    expect(payload.modifiers.ctrl, 'ctrl must be false when modifiers omitted').toBe(false);
+    expect(payload.modifiers.shift, 'shift must be false when modifiers omitted').toBe(false);
+    expect(payload.modifiers.alt, 'alt must be false when modifiers omitted').toBe(false);
+    expect(payload.modifiers.meta, 'meta must be false when modifiers omitted').toBe(false);
   });
 });

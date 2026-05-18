@@ -177,6 +177,30 @@
       return;
     }
 
+    // v0.1.34 Task 4: __SP_GET_PAGE_INFO__:<json> — CSP-immune page metadata read.
+    // ISOLATED world bypasses page CSP/Trusted Types entirely; the DOM is shared
+    // between MAIN and ISOLATED so document.title/.querySelector all work.
+    if (cmd.method === 'execute_script' && typeof cmd.params?.script === 'string'
+        && cmd.params.script.startsWith('__SP_GET_PAGE_INFO__:')) {
+      handleGetPageInfo(cmd);
+      return;
+    }
+
+    // v0.1.34 Task 5: __SP_GET_META_TAGS__:<json> — read <meta> tags (CSP-immune).
+    if (cmd.method === 'execute_script' && typeof cmd.params?.script === 'string'
+        && cmd.params.script.startsWith('__SP_GET_META_TAGS__:')) {
+      handleGetMetaTags(cmd);
+      return;
+    }
+
+    // v0.1.34 Task 6: __SP_EXTRACT_TEXT_WINDOW__:<json> — textContent of selector
+    // matches, capped at max_chars (CSP-immune).
+    if (cmd.method === 'execute_script' && typeof cmd.params?.script === 'string'
+        && cmd.params.script.startsWith('__SP_EXTRACT_TEXT_WINDOW__:')) {
+      handleExtractTextWindow(cmd);
+      return;
+    }
+
     const requestId = `sp_${++nextRequestId}_${Date.now()}`;
 
     const promise = new Promise((resolve, reject) => {
@@ -431,6 +455,98 @@
     }
   }
 
+  // v0.1.34 Tasks 4-6: shared storage-bus writer for ISOLATED-world sentinels.
+  // Mirrors writeFileUploadResult — wire-result shape {ok, value, error} written
+  // directly to sp_result_<commandId>. ExtensionBridge.handleResult on the daemon
+  // side reads value and surfaces it as EngineResult.value.
+  async function writeIsolatedSentinelResult(commandId, result) {
+    try {
+      await browser.storage.local.set({
+        [makeSpResultKey(commandId)]: { commandId, result, timestamp: Date.now() },
+      });
+    } catch (e) {
+      console.warn('[safari-pilot] isolated-sentinel sp_result write failed:', e?.message);
+    }
+  }
+
+  // v0.1.34 Task 4 — __SP_GET_PAGE_INFO__
+  async function handleGetPageInfo(cmd) {
+    let result;
+    try {
+      const json = cmd.params.script.slice('__SP_GET_PAGE_INFO__:'.length);
+      const args = json ? JSON.parse(json) : {};
+      const bodyMaxChars = typeof args.bodyMaxChars === 'number' ? args.bodyMaxChars : 2000;
+      const bodyText = (document.body && document.body.innerText) ? document.body.innerText : '';
+      const truncated = bodyText.length > bodyMaxChars;
+      const trimmedBody = truncated ? bodyText.slice(0, bodyMaxChars) : bodyText;
+      const metaDesc = document.querySelector('meta[name="description"]');
+      const metaOgImage = document.querySelector('meta[property="og:image"]');
+      const lang = document.documentElement.lang || (navigator.language || '');
+      const value = JSON.stringify({
+        title: document.title || '',
+        url: location.href,
+        body_snippet: trimmedBody,
+        body_truncated: truncated,
+        meta_description: metaDesc ? metaDesc.getAttribute('content') : null,
+        meta_og_image: metaOgImage ? metaOgImage.getAttribute('content') : null,
+        lang: lang,
+      });
+      result = { ok: true, value };
+    } catch (e) {
+      result = { ok: false, error: { name: 'GET_PAGE_INFO_ERROR', message: String(e && e.message || e) } };
+    }
+    await writeIsolatedSentinelResult(cmd.commandId, result);
+  }
+
+  // v0.1.34 Task 5 — __SP_GET_META_TAGS__
+  async function handleGetMetaTags(cmd) {
+    let result;
+    try {
+      const json = cmd.params.script.slice('__SP_GET_META_TAGS__:'.length);
+      const args = json ? JSON.parse(json) : {};
+      const namesFilter = Array.isArray(args.names) ? new Set(args.names) : null;
+      const tags = [];
+      const metaEls = document.querySelectorAll('meta');
+      for (const m of metaEls) {
+        let n = m.getAttribute('name');
+        let attr_source = 'name';
+        if (!n) { n = m.getAttribute('property'); attr_source = 'property'; }
+        if (!n) { n = m.getAttribute('http-equiv'); attr_source = 'http-equiv'; }
+        if (!n) continue;
+        if (namesFilter && !namesFilter.has(n)) continue;
+        tags.push({ name: n, content: m.getAttribute('content') || '', attr_source });
+      }
+      result = { ok: true, value: JSON.stringify({ tags }) };
+    } catch (e) {
+      result = { ok: false, error: { name: 'META_TAGS_ERROR', message: String(e && e.message || e) } };
+    }
+    await writeIsolatedSentinelResult(cmd.commandId, result);
+  }
+
+  // v0.1.34 Task 6 — __SP_EXTRACT_TEXT_WINDOW__
+  async function handleExtractTextWindow(cmd) {
+    let result;
+    try {
+      const json = cmd.params.script.slice('__SP_EXTRACT_TEXT_WINDOW__:'.length);
+      const args = json ? JSON.parse(json) : {};
+      const sel = args.selector;
+      const maxChars = typeof args.maxChars === 'number' ? args.maxChars : 5000;
+      const matches = document.querySelectorAll(sel);
+      let combined = '';
+      for (const node of matches) {
+        const t = (node.textContent || '').replace(/\s+/g, ' ').trim();
+        combined += (combined ? '\n' : '') + t;
+        if (combined.length >= maxChars) break;
+      }
+      const truncated = combined.length > maxChars;
+      const text = truncated ? combined.slice(0, maxChars) : combined;
+      result = { ok: true, value: JSON.stringify({ text, truncated, selector_matched_count: matches.length }) };
+    } catch (e) {
+      result = { ok: false, error: { name: 'EXTRACT_TEXT_ERROR', message: String(e && e.message || e) } };
+    }
+    await writeIsolatedSentinelResult(cmd.commandId, result);
+  }
+
   // Minimal locator resolution for 5A.1 v1 — supports selector, xpath, ref.
   // (Other types — role, text, label, placeholder — require shared resolver
   // not yet wired into extension JS. Phase 7 e2e tests focus on selector + xpath.)
@@ -456,6 +572,18 @@
     try {
       const response = await browser.runtime.sendMessage({ action: 'sp_getTabId' });
       myTabId = response?.tabId ?? null;
+      // v0.1.36 Fix 3 — readiness heartbeat. Written on every content-script
+      // load. background.js's storage listener mirrors it into spCsReadyMap;
+      // the dispatch-time gate uses isCsReady() for telemetry (the hard
+      // fast-fail behaviour is gated off in initial shipping pending more
+      // robust event-page-restart rehydration; see background.js).
+      if (myTabId !== null) {
+        try {
+          await browser.storage.local.set({
+            ['sp_cs_ready_' + myTabId]: { ts: Date.now(), frameId: 0 },
+          });
+        } catch { /* storage may be transiently unavailable; non-fatal */ }
+      }
       // Check for commands written to storage BEFORE this content script loaded.
       // storage.onChanged only fires for future changes — commands written while
       // the page was loading (document_idle) are invisible to the listener.

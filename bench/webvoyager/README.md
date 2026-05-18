@@ -1,18 +1,43 @@
-# WebVoyager Adapter
+# WebVoyager Bench Protocol — v0.1.35
 
-Canonical benchmark for Safari Pilot v0.1.x ship gates.
+## Sets
 
-- **Source:** github.com/MinorJerry/WebVoyager (commit pinned in `DATASET_COMMIT`)
-- **Dataset path:** see `TASKS_PATH` (resolved at PF-5)
-- **Tasks:** 642 across 15 sites (upstream removed one of the original 643)
-- **Eval:** gpt-4o judge with WebVoyager-verbatim prompt extracted to `judge-upstream.py`
-  - Verdict tokens emitted by judge: `SUCCESS` / `NOT SUCCESS` (verbatim per upstream `auto_eval.py`)
-- **Driver:** `claude -p` per task (Max subscription)
-- **Concurrency:** see `CONCURRENCY` (decided at PF-6)
-- **Cadence:** dev sample (175 tasks, fixed seed) weekly; full N=3 at ship gates
-- **Cost metric:** `wall_ms` (token telemetry not available via claude -p)
+| Set | File | Purpose |
+|---|---|---|
+| `patched-2026` | `patched-2026.jsonl` | Stale-dated tasks substituted, impossible tasks removed. 641 tasks. PRIMARY ship metric. |
+| `comparable-original` | `comparable-original.jsonl` | Original tasks that are still valid in 2026 (subset of 643). 567 tasks. Anti-regression baseline. |
 
-Full protocol: `docs/benchmarking.md`.
+## Patches
 
-Run dev sample: `bash bench/webvoyager/run.sh --variant <tag> --sample dev`
-Run full ship gate: `bash bench/webvoyager/run.sh --variant <tag> --sample full --runs 3`
+`patches.json` defines per-task substitutions and removals. See `AUDIT.md` for per-task rationale. Regenerate the two `.jsonl` outputs when patches.json changes:
+
+```bash
+python3 bench/webvoyager/apply-patches.py \
+  --dataset bench/webvoyager/data/data/WebVoyager_data.jsonl \
+  --patches bench/webvoyager/patches.json \
+  --out-patched bench/webvoyager/patched-2026.jsonl \
+  --out-comparable bench/webvoyager/comparable-original.jsonl
+```
+
+> Note: outputs are at `bench/webvoyager/*.jsonl` (not `bench/webvoyager/data/`) because `data/` is the nested upstream WebVoyager git clone.
+
+## Running the bench
+
+```bash
+# Single-run dev loop:
+bash bench/webvoyager/run-bench.sh --patched --concurrency 4 --limit 20
+
+# Ship gate (multi-run majority):
+bash bench/webvoyager/run-bench.sh --patched    --runs 3 --concurrency 4
+bash bench/webvoyager/run-bench.sh --comparable --runs 3 --concurrency 4
+```
+
+Output goes to `/tmp/wv-runs-<mode>-<timestamp>/` per (task × run-seq).
+
+## Scoring
+
+```bash
+npx tsx bench/webvoyager/score.ts --in /tmp/wv-runs-patched-... --runs 3
+```
+
+Reports: Pass@1 (majority-of-N), median steps, median wall, total $.

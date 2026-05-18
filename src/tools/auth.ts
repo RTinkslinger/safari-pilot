@@ -1,6 +1,6 @@
 import type { IEngine } from '../engines/engine.js';
 import type { ToolResponse, ToolRequirements } from '../types.js';
-import { EngineRequiredError } from '../errors.js';
+import { EngineRequiredError, wrapEngineError } from '../errors.js';
 
 interface ToolDefinition {
   name: string;
@@ -130,7 +130,7 @@ export class AuthTools {
 
     const sentinel = `__SP_DNR_ADD_RULE__:${JSON.stringify({ rule })}`;
     const result = await this.engine.executeJsInTab(tabUrl, sentinel);
-    if (!result.ok) throw new Error(result.error?.message ?? 'DNR add rule failed');
+    if (!result.ok) throw wrapEngineError(result.error, 'DNR add rule failed');
 
     return {
       content: [{ type: 'text', text: JSON.stringify({ ruleId, urlPattern, authType: 'basic' }) }],
@@ -147,7 +147,7 @@ export class AuthTools {
     const ruleId = urlPatternToRuleId(urlPattern);
     const sentinel = `__SP_DNR_REMOVE_RULE__:${JSON.stringify({ ruleId })}`;
     const result = await this.engine.executeJsInTab(tabUrl, sentinel);
-    if (!result.ok) throw new Error(result.error?.message ?? 'DNR remove rule failed');
+    if (!result.ok) throw wrapEngineError(result.error, 'DNR remove rule failed');
 
     return {
       content: [{ type: 'text', text: JSON.stringify({ cleared: true, ruleId, urlPattern }) }],

@@ -1,13 +1,15 @@
 import { writeFile, readFile, unlink } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { generateSnapshotJs, buildRefSelector } from '../aria.js';
+import { buildRefSelector, generateSnapshotJs } from '../aria.js';
 import { escapeForJsSingleQuote } from '../escape.js';
-import { generateQueryAllJs, hasLocatorParams, extractLocatorFromParams, generateLocatorJs, resolveMaybePackSelector } from '../locator.js';
+import { hasLocatorParams, extractLocatorFromParams, buildLocatorSentinel, generateLocatorJs, generateQueryAllJs, resolveMaybePackSelector } from '../locator.js';
 import type { IEngine } from '../engines/engine.js';
 import type { Engine, ToolResponse, ToolRequirements } from '../types.js';
 import { ScreenshotPolicy } from '../security/screenshot-policy.js';
 import { routeFrameAware } from './_frame-routing-helper.js';
+import { loadConfig } from '../config.js';
+import { wrapEngineError } from '../errors.js';
 
 const execFileP = promisify(execFile);
 
@@ -24,10 +26,15 @@ export class ExtractionTools {
   private engine: IEngine;
   private screenshotPolicy: ScreenshotPolicy | undefined;
   private handlers: Map<string, Handler> = new Map();
+  /** v0.1.34 T16: rollback flag — when true, the 5 refactored extraction tools
+   *  (snapshot, get_text, get_html, get_attribute, query_all) dispatch via the
+   *  verbatim v0.1.33 JS-string paths preserved as `*Legacy` companions. */
+  private readonly legacyMainWorld: boolean;
 
   constructor(engine: IEngine, screenshotPolicy?: ScreenshotPolicy) {
     this.engine = engine;
     this.screenshotPolicy = screenshotPolicy;
+    this.legacyMainWorld = loadConfig().legacyMainWorld === true;
     this.registerHandlers();
   }
 
@@ -74,7 +81,9 @@ export class ExtractionTools {
           },
           required: ['tabUrl'],
         },
-        requirements: { idempotent: true },
+        // v0.1.34 T14: leaf read now sentinel-routed via __SP_SNAPSHOT__ →
+        // __SP_LOCATOR__.buildSnapshot, CSP-immune on TT-strict pages.
+        requirements: { idempotent: true, requiresCspBypass: true },
       },
       {
         name: 'safari_get_text',
@@ -106,7 +115,7 @@ export class ExtractionTools {
           },
           required: ['tabUrl'],
         },
-        requirements: { idempotent: true, requiresFramesCrossOrigin: true },
+        requirements: { idempotent: true, requiresFramesCrossOrigin: true, requiresCspBypass: true },
       },
       {
         name: 'safari_get_html',
@@ -142,7 +151,7 @@ export class ExtractionTools {
           },
           required: ['tabUrl'],
         },
-        requirements: { idempotent: true, requiresFramesCrossOrigin: true },
+        requirements: { idempotent: true, requiresFramesCrossOrigin: true, requiresCspBypass: true },
       },
       {
         name: 'safari_get_attribute',
@@ -174,12 +183,12 @@ export class ExtractionTools {
           },
           required: ['tabUrl', 'attribute'],
         },
-        requirements: { idempotent: true, requiresFramesCrossOrigin: true },
+        requirements: { idempotent: true, requiresFramesCrossOrigin: true, requiresCspBypass: true },
       },
       {
         name: 'safari_evaluate',
         description:
-          'Run arbitrary JavaScript in the page and return its value. Use when no structured tool fits the need — prefer safari_get_text, safari_extract_tables, or safari_query_all; subject to security pipeline.',
+          'Use when you need to run an arbitrary JavaScript expression in the page context — typically when no higher-level tool fits the data extraction or DOM-interaction shape you need. Returns the expression\'s value via JSON serialization.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -263,7 +272,9 @@ export class ExtractionTools {
           },
           required: ['tabUrl'],
         },
-        requirements: { idempotent: true, requiresFramesCrossOrigin: true },
+        // v0.1.34 T13: leaf read now sentinel-routed via __SP_QUERY_ALL__ →
+        // __SP_LOCATOR__.resolveLocatorAll, CSP-immune on TT-strict pages.
+        requirements: { idempotent: true, requiresFramesCrossOrigin: true, requiresCspBypass: true },
       },
     ];
   }
@@ -275,6 +286,34 @@ export class ExtractionTools {
   // ── Handlers ────────────────────────────────────────────────────────────────
 
   private async handleSnapshot(params: Record<string, unknown>): Promise<ToolResponse> {
+    if (this.legacyMainWorld) return this.handleSnapshotLegacy(params);
+    const start = Date.now();
+    const tabUrl = params['tabUrl'] as string;
+    const scope = (params['scope'] as string | undefined) ?? 'page';
+    const maxDepth = typeof params['maxDepth'] === 'number' ? params['maxDepth'] : 15;
+    const includeHidden = params['includeHidden'] === true;
+    const format = (params['format'] as string | undefined) ?? 'yaml';
+
+    // v0.1.34 T14: __SP_SNAPSHOT__ sentinel for CSP-immunity. In-page handler
+    // in content-main.js calls __SP_LOCATOR__.buildSnapshot (ported verbatim
+    // from src/aria.ts generateSnapshotJs). Result-envelope shape preserved
+    // verbatim: {snapshot, url, title, elementCount, interactiveCount, refMap}.
+    // Legacy generateSnapshotJs IIFE retained for AppleScript fallback path.
+    const sentinel = '__SP_SNAPSHOT__:' + JSON.stringify({
+      scopeSelector: scope === 'page' ? undefined : scope,
+      maxDepth,
+      includeHidden,
+      format,
+    });
+
+    const result = await this.engine.executeJsInTab(tabUrl, sentinel);
+    if (!result.ok) throw wrapEngineError(result.error, 'Snapshot failed');
+
+    return this.makeResponse(result.value ? JSON.parse(result.value) : {}, Date.now() - start);
+  }
+
+  /** v0.1.34 T16 rollback path. Verbatim v0.1.33 body (commit b3d0eac^). */
+  private async handleSnapshotLegacy(params: Record<string, unknown>): Promise<ToolResponse> {
     const start = Date.now();
     const tabUrl = params['tabUrl'] as string;
     const scope = (params['scope'] as string | undefined) ?? 'page';
@@ -290,12 +329,62 @@ export class ExtractionTools {
     });
 
     const result = await this.engine.executeJsInTab(tabUrl, js);
-    if (!result.ok) throw new Error(result.error?.message ?? 'Snapshot failed');
+    if (!result.ok) throw wrapEngineError(result.error, 'Snapshot failed');
 
     return this.makeResponse(result.value ? JSON.parse(result.value) : {}, Date.now() - start);
   }
 
   private async handleGetText(params: Record<string, unknown>): Promise<ToolResponse> {
+    if (this.legacyMainWorld) return this.handleGetTextLegacy(params);
+    const start = Date.now();
+    const tabUrl = params['tabUrl'] as string;
+    const frameId = params['frameId'] as number | undefined;
+    const maxLength = typeof params['maxLength'] === 'number' ? params['maxLength'] : 50000;
+
+    // Resolve targeting: ref → locator → selector
+    let selector = params['selector'] as string | undefined;
+    const ref = params['ref'] as string | undefined;
+    if (ref) {
+      selector = buildRefSelector(ref);
+    }
+    selector = await resolveMaybePackSelector(this.engine, { tabUrl, frameId }, selector);
+    if (!selector && hasLocatorParams(params)) {
+      const locator = extractLocatorFromParams(params)!;
+      // v0.1.34 T7b: __SP_RESOLVE_LOCATOR__ sentinel → CSP-immune resolution
+      // on Trusted-Types-strict pages (Extension engine intercepts in MAIN
+      // world; legacy generateLocatorJs IIFE retained for AppleScript path).
+      const locatorJs = buildLocatorSentinel(locator);
+      const locatorResult = await routeFrameAware(this.engine, { tabUrl, frameId }, locatorJs);
+      if (locatorResult.ok && locatorResult.value) {
+        const parsed = JSON.parse(locatorResult.value);
+        if (parsed.found && parsed.selector) {
+          selector = parsed.selector;
+        } else {
+          throw new Error(parsed.hint || 'Locator did not match any element');
+        }
+      }
+    }
+
+    const multi = params['multi'] === true;
+    // v0.1.34 T12: __SP_GET_TEXT__ sentinel for CSP-immunity on Trusted-Types-strict
+    // pages. Extension engine intercepts in MAIN world (no `new Function()` compile).
+    // Result-envelope shape preserved verbatim:
+    //   multi:false → {text, length, truncated}
+    //   multi:true  → {matches: string[], count}
+    const sentinel = '__SP_GET_TEXT__:' + JSON.stringify({
+      selector: selector ?? null,
+      maxLength,
+      multi,
+    });
+
+    const result = await routeFrameAware(this.engine, { tabUrl, frameId }, sentinel);
+    if (!result.ok) throw wrapEngineError(result.error, 'Get text failed');
+
+    return this.makeResponse(result.value ? JSON.parse(result.value) : {}, Date.now() - start);
+  }
+
+  /** v0.1.34 T16 rollback path. Verbatim v0.1.33 body (commit d7f5c25^). */
+  private async handleGetTextLegacy(params: Record<string, unknown>): Promise<ToolResponse> {
     const start = Date.now();
     const tabUrl = params['tabUrl'] as string;
     const frameId = params['frameId'] as number | undefined;
@@ -324,8 +413,6 @@ export class ExtractionTools {
 
     const escapedSelector = selector ? escapeForJsSingleQuote(selector) : '';
     const multi = params['multi'] === true;
-    // 5A.6: multi:true returns {matches: string[], count} via querySelectorAll;
-    // multi:false (default) preserves the original {text, length, truncated}.
     const js = multi
       ? `
       if (!${selector ? 'true' : 'false'}) throw Object.assign(new Error('multi:true requires a selector'), { name: 'INVALID_PARAMS' });
@@ -347,12 +434,13 @@ export class ExtractionTools {
     `;
 
     const result = await routeFrameAware(this.engine, { tabUrl, frameId }, js);
-    if (!result.ok) throw new Error(result.error?.message ?? 'Get text failed');
+    if (!result.ok) throw wrapEngineError(result.error, 'Get text failed');
 
     return this.makeResponse(result.value ? JSON.parse(result.value) : {}, Date.now() - start);
   }
 
   private async handleGetHtml(params: Record<string, unknown>): Promise<ToolResponse> {
+    if (this.legacyMainWorld) return this.handleGetHtmlLegacy(params);
     const start = Date.now();
     const tabUrl = params['tabUrl'] as string;
     const frameId = params['frameId'] as number | undefined;
@@ -367,7 +455,10 @@ export class ExtractionTools {
     selector = await resolveMaybePackSelector(this.engine, { tabUrl, frameId }, selector);
     if (!selector && hasLocatorParams(params)) {
       const locator = extractLocatorFromParams(params)!;
-      const locatorJs = generateLocatorJs(locator);
+      // v0.1.34 T7b: __SP_RESOLVE_LOCATOR__ sentinel → CSP-immune resolution
+      // on Trusted-Types-strict pages (Extension engine intercepts in MAIN
+      // world; legacy generateLocatorJs IIFE retained for AppleScript path).
+      const locatorJs = buildLocatorSentinel(locator);
       const locatorResult = await routeFrameAware(this.engine, { tabUrl, frameId }, locatorJs);
       if (locatorResult.ok && locatorResult.value) {
         const parsed = JSON.parse(locatorResult.value);
@@ -401,12 +492,68 @@ export class ExtractionTools {
     `;
 
     const result = await routeFrameAware(this.engine, { tabUrl, frameId }, js);
-    if (!result.ok) throw new Error(result.error?.message ?? 'Get HTML failed');
+    if (!result.ok) throw wrapEngineError(result.error, 'Get HTML failed');
+
+    return this.makeResponse(result.value ? JSON.parse(result.value) : {}, Date.now() - start);
+  }
+
+  /** v0.1.34 T16 rollback path. Verbatim v0.1.33 body (commit d7f5c25^).
+   *  The sentinel path above and this legacy path differ ONLY in locator
+   *  resolution (buildLocatorSentinel vs generateLocatorJs) — the rest of
+   *  the get-html JS body was unchanged at T7b. */
+  private async handleGetHtmlLegacy(params: Record<string, unknown>): Promise<ToolResponse> {
+    const start = Date.now();
+    const tabUrl = params['tabUrl'] as string;
+    const frameId = params['frameId'] as number | undefined;
+    const outer = params['outer'] !== false;
+
+    let selector = params['selector'] as string | undefined;
+    const ref = params['ref'] as string | undefined;
+    if (ref) {
+      selector = buildRefSelector(ref);
+    }
+    selector = await resolveMaybePackSelector(this.engine, { tabUrl, frameId }, selector);
+    if (!selector && hasLocatorParams(params)) {
+      const locator = extractLocatorFromParams(params)!;
+      const locatorJs = generateLocatorJs(locator);
+      const locatorResult = await routeFrameAware(this.engine, { tabUrl, frameId }, locatorJs);
+      if (locatorResult.ok && locatorResult.value) {
+        const parsed = JSON.parse(locatorResult.value);
+        if (parsed.found && parsed.selector) {
+          selector = parsed.selector;
+        } else {
+          throw new Error(parsed.hint || 'Locator did not match any element');
+        }
+      }
+    }
+
+    const escapedSelector = selector ? escapeForJsSingleQuote(selector) : '';
+    const multi = params['multi'] === true;
+    const js = multi
+      ? `
+      if (!${selector ? 'true' : 'false'}) throw Object.assign(new Error('multi:true requires a selector'), { name: 'INVALID_PARAMS' });
+      var els = document.querySelectorAll('${escapedSelector}');
+      var matches = [];
+      for (var i = 0; i < els.length; i++) {
+        matches.push(${outer ? 'els[i].outerHTML' : 'els[i].innerHTML'});
+      }
+      return { matches: matches, count: els.length };
+    `
+      : `
+      var el = ${selector ? `document.querySelector('${escapedSelector}')` : 'document.documentElement'};
+      if (!el) throw Object.assign(new Error('Element not found'), { name: 'ELEMENT_NOT_FOUND' });
+      var html = ${outer ? 'el.outerHTML' : 'el.innerHTML'};
+      return { html: html, length: html.length };
+    `;
+
+    const result = await routeFrameAware(this.engine, { tabUrl, frameId }, js);
+    if (!result.ok) throw wrapEngineError(result.error, 'Get HTML failed');
 
     return this.makeResponse(result.value ? JSON.parse(result.value) : {}, Date.now() - start);
   }
 
   private async handleGetAttribute(params: Record<string, unknown>): Promise<ToolResponse> {
+    if (this.legacyMainWorld) return this.handleGetAttributeLegacy(params);
     const start = Date.now();
     const tabUrl = params['tabUrl'] as string;
     const frameId = params['frameId'] as number | undefined;
@@ -421,7 +568,10 @@ export class ExtractionTools {
     selector = await resolveMaybePackSelector(this.engine, { tabUrl, frameId }, selector);
     if (!selector && hasLocatorParams(params)) {
       const locator = extractLocatorFromParams(params)!;
-      const locatorJs = generateLocatorJs(locator);
+      // v0.1.34 T7b: __SP_RESOLVE_LOCATOR__ sentinel → CSP-immune resolution
+      // on Trusted-Types-strict pages (Extension engine intercepts in MAIN
+      // world; legacy generateLocatorJs IIFE retained for AppleScript path).
+      const locatorJs = buildLocatorSentinel(locator);
       const locatorResult = await routeFrameAware(this.engine, { tabUrl, frameId }, locatorJs);
       if (locatorResult.ok && locatorResult.value) {
         const parsed = JSON.parse(locatorResult.value);
@@ -461,7 +611,64 @@ export class ExtractionTools {
     `;
 
     const result = await routeFrameAware(this.engine, { tabUrl, frameId }, js);
-    if (!result.ok) throw new Error(result.error?.message ?? 'Get attribute failed');
+    if (!result.ok) throw wrapEngineError(result.error, 'Get attribute failed');
+
+    return this.makeResponse(result.value ? JSON.parse(result.value) : {}, Date.now() - start);
+  }
+
+  /** v0.1.34 T16 rollback path. Verbatim v0.1.33 body (commit d7f5c25^). */
+  private async handleGetAttributeLegacy(params: Record<string, unknown>): Promise<ToolResponse> {
+    const start = Date.now();
+    const tabUrl = params['tabUrl'] as string;
+    const frameId = params['frameId'] as number | undefined;
+    const attribute = params['attribute'] as string;
+
+    let selector = params['selector'] as string | undefined;
+    const ref = params['ref'] as string | undefined;
+    if (ref) {
+      selector = buildRefSelector(ref);
+    }
+    selector = await resolveMaybePackSelector(this.engine, { tabUrl, frameId }, selector);
+    if (!selector && hasLocatorParams(params)) {
+      const locator = extractLocatorFromParams(params)!;
+      const locatorJs = generateLocatorJs(locator);
+      const locatorResult = await routeFrameAware(this.engine, { tabUrl, frameId }, locatorJs);
+      if (locatorResult.ok && locatorResult.value) {
+        const parsed = JSON.parse(locatorResult.value);
+        if (parsed.found && parsed.selector) {
+          selector = parsed.selector;
+        } else {
+          throw new Error(parsed.hint || 'Locator did not match any element');
+        }
+      }
+    }
+    if (!selector) {
+      throw new Error('safari_get_attribute requires a target element: provide selector, ref, or a locator (role, text, label, testId, placeholder)');
+    }
+
+    const escapedSelector = escapeForJsSingleQuote(selector);
+    const escapedAttribute = escapeForJsSingleQuote(attribute);
+    const multi = params['multi'] === true;
+    const js = multi
+      ? `
+      var els = document.querySelectorAll('${escapedSelector}');
+      var matches = [];
+      for (var i = 0; i < els.length; i++) {
+        matches.push(els[i].getAttribute('${escapedAttribute}'));
+      }
+      return { matches: matches, count: els.length };
+    `
+      : `
+      var el = document.querySelector('${escapedSelector}');
+      if (!el) throw Object.assign(new Error('Element not found'), { name: 'ELEMENT_NOT_FOUND' });
+      return {
+        value: el.getAttribute('${escapedAttribute}'),
+        element: { tagName: el.tagName, id: el.id || undefined },
+      };
+    `;
+
+    const result = await routeFrameAware(this.engine, { tabUrl, frameId }, js);
+    if (!result.ok) throw wrapEngineError(result.error, 'Get attribute failed');
 
     return this.makeResponse(result.value ? JSON.parse(result.value) : {}, Date.now() - start);
   }
@@ -498,7 +705,11 @@ export class ExtractionTools {
       // wrapping below would prefix the script with `return (async () => {...`
       // and break the `cmd.script.startsWith('__SP_PACK_')` check upstream.
       script.startsWith('__SP_PACK_REGISTER__:') ||
-      script.startsWith('__SP_PACK_UNREGISTER__:')
+      script.startsWith('__SP_PACK_UNREGISTER__:') ||
+      // v0.1.34 T2 probe sentinel; intercepted in content-main.js's
+      // execute_script case. IIFE wrapping below would break the
+      // params.script.startsWith('__SP_TT_PROBE__:') check.
+      script.startsWith('__SP_TT_PROBE__:')
     );
     const js = isSentinelBypass ? script : `
       return (async () => {
@@ -508,7 +719,56 @@ export class ExtractionTools {
     `;
 
     const result = await this.engine.executeJsInTab(tabUrl, js, timeout);
-    if (!result.ok) throw new Error(result.error?.message ?? 'Evaluate failed');
+    if (!result.ok) {
+      const rawMsg = result.error?.message ?? 'safari_evaluate failed';
+      // Match Trusted Types / CSP eval refusal patterns. Safari surfaces these as
+      // "Refused to evaluate a string as JavaScript because this document requires
+      // a 'Trusted Type' assignment" OR "...because 'unsafe-eval' is not an
+      // allowed source". v0.1.34 Task 3: wrap with CSP_BLOCKED / CSP_HARD_BLOCK
+      // and an alternative_tools hint pointing at the sentinel-based tools
+      // (safari_get_page_info, safari_click, etc. — added T4-T15).
+      const isTT = /trusted[- ]?type|trustedTypes/i.test(rawMsg);
+      const isEvalBlock = /unsafe-eval|refused to evaluate/i.test(rawMsg);
+      if (isTT || isEvalBlock) {
+        // Probe the tab via the __SP_TT_PROBE__ sentinel (installed in extension
+        // from v0.1.34 Task 2) to distinguish CSP_BLOCKED (soft — Layer 3 policy
+        // registered; sentinel-based tools work) from CSP_HARD_BLOCK (hard —
+        // page's trusted-types allowlist excludes 'safari-pilot'; even the
+        // policy registration was refused). Probe failure defaults to soft.
+        let isHardBlock = false;
+        try {
+          const probe = await this.engine.executeJsInTab(tabUrl, '__SP_TT_PROBE__:{}', 5_000);
+          if (probe.ok && probe.value) {
+            const parsed = JSON.parse(probe.value);
+            isHardBlock = parsed.hardBlock === true;
+          }
+        } catch { /* probe failure — default to CSP_BLOCKED */ }
+
+        const code = isHardBlock ? 'CSP_HARD_BLOCK' : 'CSP_BLOCKED';
+        // Precedence: check eval-block first because Safari's no-eval message also contains
+        // the substring 'trusted-types-eval', which would otherwise make isTT match. Concrete:
+        //   tt-strict only:  "...requires a 'Trusted Type' assignment"           → isTT && !isEvalBlock → 'tt-strict'
+        //   no-eval:         "'unsafe-eval' or 'trusted-types-eval' is not..."  → isTT && isEvalBlock  → 'eval-blocked'
+        const cspMode: string = isHardBlock ? 'hard-block' : (isEvalBlock ? 'eval-blocked' : 'tt-strict');
+        // v0.1.35 Task 6 — softened from prescriptive `alternative_tools` array
+        // to an informational hint. The explicit list of named tools was one of
+        // the four nudges that pivoted the agent away from safari_evaluate and
+        // halved its usage; `cspMode` is preserved for callers that route on it.
+        const hint = {
+          fallback_available: true,
+          note: 'This script could not run because the page enforces a CSP that disallows eval() or string-to-script.',
+          cspMode,
+        };
+        const wrapped = new Error(
+          code + ': ' + rawMsg + ' | hint: ' + JSON.stringify(hint),
+        );
+        (wrapped as Error & { code?: string }).code = code;
+        throw wrapped;
+      }
+      const err = new Error(rawMsg);
+      if (result.error?.code) (err as Error & { code?: string }).code = result.error.code;
+      throw err;
+    }
 
     return this.makeResponse(result.value ? JSON.parse(result.value) : {}, Date.now() - start);
   }
@@ -656,7 +916,7 @@ export class ExtractionTools {
     `;
 
     const result = await this.engine.executeJsInTab(tabUrl, js);
-    if (!result.ok) throw new Error(result.error?.message ?? 'Get console messages failed');
+    if (!result.ok) throw wrapEngineError(result.error, 'Get console messages failed');
 
     return this.makeResponse(
       result.value ? JSON.parse(result.value) : { messages: [], count: 0 },
@@ -665,6 +925,57 @@ export class ExtractionTools {
   }
 
   private async handleQueryAll(params: Record<string, unknown>): Promise<ToolResponse> {
+    if (this.legacyMainWorld) return this.handleQueryAllLegacy(params);
+    const start = Date.now();
+    const tabUrl = params['tabUrl'] as string;
+    const frameId = params['frameId'] as number | undefined;
+    const limit = typeof params['limit'] === 'number' ? Math.max(1, Math.min(1000, params['limit'])) : 100;
+
+    // v0.1.34 T13: __SP_QUERY_ALL__ sentinel for CSP-immunity. Both selector and
+    // locator paths emit the sentinel; in-page handler in content-main.js calls
+    // either document.querySelectorAll (selector branch) or
+    // __SP_LOCATOR__.resolveLocatorAll (locator branch). Result-envelope shape
+    // preserved verbatim: {items, count, limit, truncated}. AppleScript engine
+    // never sees __SP_LOCATOR__ — for that path the legacy generateQueryAllJs
+    // IIFE is retained via an `appleScriptFallback` field that the engine
+    // selector + extension-down path resolves. Since T11 added
+    // requiresCspBypass to this tool below, the engine selector now pins
+    // safari_query_all to the extension when CSP-sensitive routing is needed;
+    // the AppleScript fallback path through `generateQueryAllJs` is preserved
+    // for non-CSP pages where the daemon/AppleScript engine is selected.
+    let selector = params['selector'] as string | undefined;
+    selector = await resolveMaybePackSelector(this.engine, { tabUrl, frameId }, selector);
+
+    if (selector) {
+      const sentinel = '__SP_QUERY_ALL__:' + JSON.stringify({ selector, limit });
+      const result = await routeFrameAware(this.engine, { tabUrl, frameId }, sentinel);
+      if (!result.ok) throw wrapEngineError(result.error, 'query_all (selector) failed');
+      const parsed = result.value ? JSON.parse(result.value) : { items: [], count: 0 };
+      const normalized = parsed.found === false
+        ? { items: [], count: 0, limit, truncated: false }
+        : parsed;
+      return this.makeResponse(normalized, Date.now() - start);
+    }
+
+    // Locator path
+    if (!hasLocatorParams(params)) {
+      throw new Error('safari_query_all requires either selector or a locator (role, text, label, testId, placeholder, xpath)');
+    }
+    const locator = extractLocatorFromParams(params)!;
+    const sentinel = '__SP_QUERY_ALL__:' + JSON.stringify({ locator, limit });
+
+    const result = await routeFrameAware(this.engine, { tabUrl, frameId }, sentinel);
+    if (!result.ok) throw wrapEngineError(result.error, 'query_all failed');
+
+    const parsed = result.value ? JSON.parse(result.value) : { items: [], count: 0 };
+    const normalized = parsed.found === false
+      ? { items: [], count: 0, limit, truncated: false }
+      : parsed;
+    return this.makeResponse(normalized, Date.now() - start);
+  }
+
+  /** v0.1.34 T16 rollback path. Verbatim v0.1.33 body (commit 1d84568^). */
+  private async handleQueryAllLegacy(params: Record<string, unknown>): Promise<ToolResponse> {
     const start = Date.now();
     const tabUrl = params['tabUrl'] as string;
     const frameId = params['frameId'] as number | undefined;
@@ -707,7 +1018,7 @@ export class ExtractionTools {
         return JSON.stringify({ items: __items, count: __all.length, limit: __limit, truncated: __truncated });
       `;
       const result = await routeFrameAware(this.engine, { tabUrl, frameId }, js);
-      if (!result.ok) throw new Error(result.error?.message ?? 'query_all (selector) failed');
+      if (!result.ok) throw wrapEngineError(result.error, 'query_all (selector) failed');
       const parsed = result.value ? JSON.parse(result.value) : { items: [], count: 0 };
       const normalized = parsed.found === false
         ? { items: [], count: 0, limit, truncated: false }
@@ -723,7 +1034,7 @@ export class ExtractionTools {
     const js = generateQueryAllJs(locator, { limit });
 
     const result = await routeFrameAware(this.engine, { tabUrl, frameId }, js);
-    if (!result.ok) throw new Error(result.error?.message ?? 'query_all failed');
+    if (!result.ok) throw wrapEngineError(result.error, 'query_all failed');
 
     const parsed = result.value ? JSON.parse(result.value) : { items: [], count: 0 };
     const normalized = parsed.found === false

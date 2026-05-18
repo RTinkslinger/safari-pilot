@@ -1,5 +1,6 @@
 import type { ToolResponse, ToolRequirements } from '../types.js';
 import type { IEngine } from '../engines/engine.js';
+import { wrapEngineError } from '../errors.js';
 import type { Engine } from '../types.js';
 import { escapeForJsSingleQuote, escapeForTemplateLiteral } from '../escape.js';
 import { routeFrameAware } from './_frame-routing-helper.js';
@@ -78,7 +79,7 @@ export class FrameTools {
     // frame topology directly — no DOM enumeration, no merge.
     if (this.engine.name === 'extension') {
       const result = await this.engine.executeJsInTab(tabUrl, '__SP_LIST_FRAMES__');
-      if (!result.ok) throw new Error(result.error?.message ?? 'List frames failed');
+      if (!result.ok) throw wrapEngineError(result.error, 'List frames failed');
       return this.makeResponse(
         result.value ? JSON.parse(result.value) : { count: 0, frames: [] },
         Date.now() - start,
@@ -109,7 +110,7 @@ export class FrameTools {
     `;
 
     const result = await this.engine.executeJsInTab(tabUrl, js);
-    if (!result.ok) throw new Error(result.error?.message ?? 'List frames failed');
+    if (!result.ok) throw wrapEngineError(result.error, 'List frames failed');
 
     return this.makeResponse(result.value ? JSON.parse(result.value) : { count: 0, frames: [] }, Date.now() - start);
   }
@@ -125,7 +126,7 @@ export class FrameTools {
     // enforces engine === 'extension' and dispatches to executeJsInFrame.
     if (frameId != null && frameId !== 0) {
       const result = await routeFrameAware(this.engine, { tabUrl, frameId }, script);
-      if (!result.ok) throw new Error(result.error?.message ?? 'Frame eval failed');
+      if (!result.ok) throw wrapEngineError(result.error, 'Frame eval failed');
       return this.makeResponse(
         result.value ? JSON.parse(result.value) : { ok: false, error: 'No result' },
         Date.now() - start,
@@ -175,7 +176,7 @@ export class FrameTools {
     `;
 
     const result = await this.engine.executeJsInTab(tabUrl, js);
-    if (!result.ok) throw new Error(result.error?.message ?? 'Frame eval failed');
+    if (!result.ok) throw wrapEngineError(result.error, 'Frame eval failed');
 
     return this.makeResponse(
       result.value ? JSON.parse(result.value) : { ok: false, error: 'No result' },

@@ -1,4 +1,5 @@
 import type { IEngine } from '../engines/engine.js';
+import { wrapEngineError } from '../errors.js';
 import { escapeForJsSingleQuote, escapeForTemplateLiteral } from '../escape.js';
 import type { Engine, ToolResponse, ToolRequirements } from '../types.js';
 import { entriesToHar, harToMockRules, type HarLog, type HarToMockOptions, type InterceptEntry } from './har.js';
@@ -342,7 +343,7 @@ export class NetworkTools {
     `;
 
     const result = await this.engine.executeJsInTab(tabUrl, js);
-    if (!result.ok) throw new Error(result.error?.message ?? 'List network requests failed');
+    if (!result.ok) throw wrapEngineError(result.error, 'List network requests failed');
 
     return this.makeResponse(result.value ? JSON.parse(result.value) : { requests: [], count: 0, total: 0 }, Date.now() - start);
   }
@@ -409,7 +410,7 @@ export class NetworkTools {
     `;
 
     const result = await this.engine.executeJsInTab(tabUrl, js);
-    if (!result.ok) throw new Error(result.error?.message ?? 'Get network request failed');
+    if (!result.ok) throw wrapEngineError(result.error, 'Get network request failed');
 
     return this.makeResponse(result.value ? JSON.parse(result.value) : {}, Date.now() - start);
   }
@@ -597,7 +598,7 @@ export class NetworkTools {
     `;
 
     const result = await this.engine.executeJsInTab(tabUrl, js);
-    if (!result.ok) throw new Error(result.error?.message ?? 'Intercept requests failed');
+    if (!result.ok) throw wrapEngineError(result.error, 'Intercept requests failed');
 
     return this.makeResponse(result.value ? JSON.parse(result.value) : {}, Date.now() - start);
   }
@@ -655,7 +656,7 @@ export class NetworkTools {
     `;
 
     const result = await this.engine.executeJsInTab(tabUrl, js);
-    if (!result.ok) throw new Error(result.error?.message ?? 'Network throttle failed');
+    if (!result.ok) throw wrapEngineError(result.error, 'Network throttle failed');
 
     return this.makeResponse(result.value ? JSON.parse(result.value) : {}, Date.now() - start);
   }
@@ -698,7 +699,7 @@ export class NetworkTools {
     `;
 
     const result = await this.engine.executeJsInTab(tabUrl, js);
-    if (!result.ok) throw new Error(result.error?.message ?? 'Network offline failed');
+    if (!result.ok) throw wrapEngineError(result.error, 'Network offline failed');
 
     return this.makeResponse(result.value ? JSON.parse(result.value) : {}, Date.now() - start);
   }
@@ -776,7 +777,7 @@ export class NetworkTools {
     `;
 
     const result = await this.engine.executeJsInTab(tabUrl, js);
-    if (!result.ok) throw new Error(result.error?.message ?? 'Mock request failed');
+    if (!result.ok) throw wrapEngineError(result.error, 'Mock request failed');
 
     return this.makeResponse(result.value ? JSON.parse(result.value) : {}, Date.now() - start);
   }
@@ -839,7 +840,7 @@ export class NetworkTools {
     `;
 
     const result = await this.engine.executeJsInTab(tabUrl, js);
-    if (!result.ok) throw new Error(result.error?.message ?? 'WebSocket listen failed');
+    if (!result.ok) throw wrapEngineError(result.error, 'WebSocket listen failed');
 
     return this.makeResponse(result.value ? JSON.parse(result.value) : {}, Date.now() - start);
   }
@@ -874,7 +875,7 @@ export class NetworkTools {
     `;
 
     const result = await this.engine.executeJsInTab(tabUrl, js);
-    if (!result.ok) throw new Error(result.error?.message ?? 'WebSocket filter failed');
+    if (!result.ok) throw wrapEngineError(result.error, 'WebSocket filter failed');
 
     return this.makeResponse(result.value ? JSON.parse(result.value) : {}, Date.now() - start);
   }
@@ -892,7 +893,7 @@ export class NetworkTools {
         : [];
     `;
     const result = await this.engine.executeJsInTab(tabUrl, js);
-    if (!result.ok) throw new Error(result.error?.message ?? 'Dump HAR failed');
+    if (!result.ok) throw wrapEngineError(result.error, 'Dump HAR failed');
 
     const raw = result.value ? JSON.parse(result.value) : null;
     const entries: InterceptEntry[] = Array.isArray(raw) ? (raw as InterceptEntry[]) : [];

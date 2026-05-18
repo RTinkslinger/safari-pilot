@@ -58,18 +58,43 @@ function mapJsErrorName(name: string): string {
  * relayed verbatim by the daemon's `execute` command). Handles JSON
  * envelope from `wrapJavaScript`, CSP block signal (empty raw = script
  * never executed), shadow-DOM-closed signal, and bare-string fallback.
+ *
+ * Fix A (2026-05-18) — the empty-raw=CSP_BLOCKED rule (T13, 96064f6) was
+ * unconditional. That was correct for `do JavaScript` callers — empty
+ * stdout means the script never ran — but `AppleScriptEngine.execute` also
+ * routes pure-AppleScript stdout (e.g. `safari_list_tabs` against Safari
+ * with zero windows) through this same parser. Empty stdout from a
+ * non-JS-execution AppleScript is legitimate ("no tabs"), not CSP. The
+ * 2026-05-18 batch probe (bench-runs/v0136-probes/RCA-batch-regression.md
+ * §4 Factor 2) measured 55 false-positive CSP_BLOCKED returns from
+ * list_tabs in that exact scenario. The `opts.isJsExecution` flag narrows
+ * the empty-as-CSP rule to JS-execution callers only. Default stays
+ * `true` so any legacy caller that omits opts keeps the T13-safe
+ * behaviour. The textual `Content Security Policy` / `blocked by csp`
+ * markers fire unconditionally — those come from real WebKit refusals
+ * and are unambiguous regardless of how the script was invoked.
  */
-export function parseJsResult(raw: string): EngineResult {
+export function parseJsResult(raw: string, opts?: { isJsExecution?: boolean }): EngineResult {
   const start = Date.now();
+  const isJsExecution = opts?.isJsExecution ?? true;
 
-  // Detect CSP-blocked execution. Production AppleScript path always wraps
-  // results in a JSON envelope, so a BARE empty raw means the script never
-  // executed — CSP block is the dominant cause. (audit-tasks T13)
+  // Universal CSP markers — fire regardless of caller path.
   if (
-    raw === '' ||
     raw.toLowerCase().includes('content security policy') ||
     raw.toLowerCase().includes('blocked by csp')
   ) {
+    return {
+      ok: false,
+      error: { code: 'CSP_BLOCKED', message: 'JavaScript execution blocked by Content Security Policy', retryable: false },
+      elapsed_ms: Date.now() - start,
+    };
+  }
+
+  // Empty-raw heuristic — only meaningful for JS-execution callers (T13).
+  // Non-JS callers can legitimately produce empty stdout (e.g. list_tabs
+  // when Safari has 0 windows) and must fall through to the success
+  // path with value=''.
+  if (raw === '' && isJsExecution) {
     return {
       ok: false,
       error: { code: 'CSP_BLOCKED', message: 'JavaScript execution blocked by Content Security Policy', retryable: false },

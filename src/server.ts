@@ -11,6 +11,7 @@ import { ExtensionEngine } from './engines/extension.js';
 import { EngineProxy } from './engines/engine-proxy.js';
 import { NavigationTools } from './tools/navigation.js';
 import { InteractionTools } from './tools/interaction.js';
+import { BatchTools } from './tools/batch.js';
 import { ExtractionTools } from './tools/extraction.js';
 import { NetworkTools } from './tools/network.js';
 import { StorageTools } from './tools/storage.js';
@@ -30,6 +31,9 @@ import { PdfTools } from './tools/pdf.js';
 import { ExtensionDiagnosticsTools } from './tools/extension-diagnostics.js';
 import { FileUploadTools } from './tools/file-upload.js';
 import { OverlayTools } from './tools/overlays.js';
+import { PageInfoTools } from './tools/page-info.js';
+import { FinalProofTools } from './tools/final-proof.js';
+import { PlaybooksTools } from './tools/playbooks.js';
 import { loadAllAllowlists } from './overlays/index.js';
 import type { PatternRegistryEntry } from './overlays/types.js';
 import { ToolIndex } from './discovery/tool-index.js';
@@ -45,6 +49,8 @@ import { CircuitBreaker } from './security/circuit-breaker.js';
 import { IdpiAnnotator } from './security/idpi-annotator.js';
 import { HumanApproval, HUMAN_APPROVAL_SUGGESTED_NEXT_TOOLS } from './security/human-approval.js';
 import { ScreenshotPolicy } from './security/screenshot-policy.js';
+import { LoopDetector } from './security/loop-detector.js';
+import { WallCapEnforcer } from './security/wall-cap.js';
 import {
   RateLimitedError,
   HumanApprovalRequiredError,
@@ -56,6 +62,10 @@ import {
   CircuitBreakerOpenError,
   SessionRecoveryError,
   SessionWindowInitError,
+  LoopDetectedError,
+  ThrashDetectedError,
+  EngineExecutionError,
+  WallCapExceededError,
 } from './errors.js';
 import { loadConfig, DEFAULT_CONFIG, type SafariPilotConfig } from './config.js';
 import { trace } from './trace.js';
@@ -172,6 +182,9 @@ function isSecurityPipelineError(err: unknown): boolean {
     || err instanceof DomainNotAllowedError
     || err instanceof HumanApprovalRequiredError
     || err instanceof EngineUnavailableError
+    || err instanceof LoopDetectedError
+    || err instanceof ThrashDetectedError
+    || err instanceof WallCapExceededError
   ) {
     return true;
   }
@@ -206,7 +219,13 @@ export class SafariPilotServer {
   private tools: Map<string, ToolDefinition> = new Map();
   private engines: Map<Engine, IEngine> = new Map();
   private engineAvailability = { daemon: false, extension: false };
-  private sessionId: string = `sess_${Date.now().toString(36)}`;
+  // sessionId must be unique across concurrent MCP server spawns. Date.now()
+  // alone collides when two processes start in the same millisecond (bench
+  // concurrency=4 hit this — 2026-05-18 cross-session isolation test had
+  // both Session A and B sharing one dashboard URL → F1.2 map keyed two
+  // distinct windows under one key → cross-session lookups misfired).
+  // Adding a 6-hex random suffix gives 16M-way disambiguation per ms.
+  private sessionId: string = `sess_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
   private _engine: AppleScriptEngine | null = null;
   readonly config: SafariPilotConfig;
 
@@ -219,6 +238,14 @@ export class SafariPilotServer {
   readonly circuitBreaker: CircuitBreaker;
   readonly idpiAnnotator: IdpiAnnotator;
   readonly humanApproval: HumanApproval;
+  readonly loopDetector: LoopDetector = new LoopDetector();
+  // v0.1.36 — enforces MAX_WALL_MS env var (bench-set to 1.2M = 20 min by
+  // default). Pre-v0.1.36 the env var was advertised as a hard limit but
+  // never read; bench tasks routinely ran 25-30+ minutes. Constructed
+  // once at SafariPilotServer construction so the session start timestamp
+  // is fixed early; assertWithinCap() fires at the top of every tool
+  // call. Off when MAX_WALL_MS is unset / zero / non-numeric.
+  readonly wallCapEnforcer: WallCapEnforcer = WallCapEnforcer.fromEnv(process.env);
 
   private engineProxy: EngineProxy | null = null;
   private clickContexts: Map<string, ClickContext> = new Map();
@@ -269,6 +296,7 @@ export class SafariPilotServer {
     const modules = [
       new NavigationTools(engine),
       new InteractionTools(proxy, this),
+      new BatchTools(this),
       new ExtractionTools(proxy, new ScreenshotPolicy(this.config.screenshotPolicy)),
       new NetworkTools(proxy),
       new StorageTools(proxy),
@@ -289,6 +317,14 @@ export class SafariPilotServer {
       new SelectorPackTools(proxy, this.config.selectorPack),
       // OverlayTools: I/O-free static lister — empty patterns + flags off.
       new OverlayTools({ engine: proxy, patterns: [], disableOverlayDismiss: false, enablePaywallDismiss: false }),
+      new PageInfoTools(proxy),
+      new FinalProofTools(proxy),
+      // PlaybooksTools (v0.1.35 Task 9): for the static lister we hand it a
+      // throwaway empty-pattern OverlayTools — only getDefinitions() runs here.
+      new PlaybooksTools({
+        engine: proxy,
+        overlayTools: new OverlayTools({ engine: proxy, patterns: [], disableOverlayDismiss: false, enablePaywallDismiss: false }),
+      }),
     ];
 
     // Build the tool index from all existing modules and add the search meta-tool.
@@ -405,6 +441,7 @@ export class SafariPilotServer {
     // engine directly (for tab management tools that always need AppleScript)
     const navTools = new NavigationTools(engine);
     const interactionTools = new InteractionTools(proxy, this);
+    const batchTools = new BatchTools(this);
     const extractionTools = new ExtractionTools(proxy, new ScreenshotPolicy(this.config.screenshotPolicy));
     const networkTools = new NetworkTools(proxy);
     const storageTools = new StorageTools(proxy);
@@ -449,6 +486,18 @@ export class SafariPilotServer {
       enablePaywallDismiss,
     });
 
+    // v0.1.34 Tasks 4-6: ISOLATED-world page-info capability tools.
+    const pageInfoTools = new PageInfoTools(proxy);
+
+    // v0.1.35 Task 7: pre-answer evidence composer (screenshot + DOM snippet
+    // + claim_grounded) routed through __SP_COMPOSE_FINAL_EVIDENCE__ sentinel.
+    const finalProofTools = new FinalProofTools(proxy);
+
+    // v0.1.35 Task 9: light cross-cutting playbook tools — date normaliser,
+    // cookie-consent dismiss specialization (delegates to overlayTools), and
+    // rate-limit-clear poller (uses __SP_WAIT_RATE_LIMIT_CLEAR__ sentinel).
+    const playbooksTools = new PlaybooksTools({ engine: proxy, overlayTools });
+
     // Register all tools from all modules.
     // Each module may have getHandler returning Handler (NavigationTools) or Handler | undefined.
     type ToolModule = {
@@ -464,6 +513,7 @@ export class SafariPilotServer {
     const modules: ToolModule[] = [
       navTools as unknown as ToolModule,
       interactionTools,
+      batchTools as unknown as ToolModule,
       extractionTools,
       networkTools,
       storageTools,
@@ -483,6 +533,9 @@ export class SafariPilotServer {
       extensionDiagnosticsTools,
       selectorPackTools,
       overlayTools as unknown as ToolModule,
+      pageInfoTools,
+      finalProofTools,
+      playbooksTools,
     ];
 
     // Build the tool index from all registered modules, then add the search meta-tool.
@@ -657,6 +710,12 @@ export class SafariPilotServer {
       paramKeys: Object.keys(params),
     });
 
+    // 0.9. Wall-clock cap (v0.1.36). Fires BEFORE killSwitch so a budget-
+    // expired session surfaces as WALL_CAP_EXCEEDED (clearer signal for
+    // the agent + telemetry) rather than KILL_SWITCH_ACTIVE. No-op when
+    // MAX_WALL_MS is unset (production default outside the bench).
+    this.wallCapEnforcer.assertWithinCap();
+
     // 1. Kill switch check — blocks all automation when active
     this.killSwitch.checkBeforeAction();
 
@@ -736,6 +795,17 @@ export class SafariPilotServer {
     }
     this.rateLimiter.recordAction(domain);
     trace(traceId, 'server', 'rate_limit_check', { domain });
+
+    // 5b. Anti-thrash loop detection (v0.1.35 Task 5).
+    // Reset on safari_health_check (deliberate session-restart signal), then
+    // run preCheck for every other tool. Throws LoopDetectedError after
+    // LOOP_THRESHOLD identical (tool, key-args) calls in a row.
+    // Classified as a security-pipeline error → does NOT feed kill-switch.
+    if (name === 'safari_health_check') {
+      this.loopDetector.reset();
+    } else {
+      this.loopDetector.preCheck(name, params);
+    }
 
     // 6. Circuit breaker check — assertClosed handles half-open probe logic and
     // reports actual remaining cooldown time (not hardcoded 120s)
@@ -996,6 +1066,16 @@ export class SafariPilotServer {
               const parsed = parseInt(winId, 10);
               if (!isNaN(parsed)) {
                 this._sessionWindowId = parsed;
+                // F1.2 (2026-05-18 rework) — re-stamp the dashboard URL on
+                // the engine after WINDOW_CLOSED recovery. The URL itself
+                // doesn't change between session resets — sessionTabUrl is
+                // assigned once per server instance — but the engine may
+                // have been re-instantiated. setSessionDashboardUrl is
+                // idempotent on the same value.
+                const ext = this.engines.get('extension');
+                if (ext instanceof ExtensionEngine) {
+                  ext.setSessionDashboardUrl(this.sessionTabUrl);
+                }
               }
             } catch { /* best effort */ }
           }
@@ -1134,6 +1214,30 @@ export class SafariPilotServer {
         } catch { /* tab detection is best-effort */ }
       }
 
+      // 8c. Anti-thrash post-check (v0.1.35 Task 5).
+      // For safari_snapshot, compare result content across calls. Strip
+      // volatile fields before hashing so the comparison is byte-stable
+      // across identical page states. Throws ThrashDetectedError after
+      // THRASH_THRESHOLD identical results — bubbles to the outer catch
+      // for error-audit; isSecurityPipelineError prevents kill-switch
+      // auto-activation feedback.
+      if (name === 'safari_snapshot' && result.content?.[0]?.type === 'text') {
+        const text = result.content[0].text ?? '';
+        let stableKey = text;
+        try {
+          const parsed = JSON.parse(text) as Record<string, unknown>;
+          delete parsed['__latencyMs'];
+          delete parsed['__engine'];
+          delete parsed['latencyMs'];
+          delete parsed['elapsed_ms'];
+          delete parsed['timestamp'];
+          stableKey = JSON.stringify(parsed);
+        } catch {
+          // Non-JSON snapshot content (rare) — fall back to raw text.
+        }
+        this.loopDetector.recordSnapshotResult(stableKey);
+      }
+
       // 9. Audit log — success path
       this.auditLog.record({
         tool: name,
@@ -1176,7 +1280,16 @@ export class SafariPilotServer {
         error: error instanceof Error ? error.message : String(error),
         code: (error as Record<string, unknown>)?.code ?? 'UNKNOWN',
       }, 'error', Date.now() - start);
-      this.recordToolFailure(domain, selectedEngineName, error);
+      // v0.1.35 Task 5: loop/thrash detections are session-level guardrails,
+      // not domain-level tool failures, and must not feed the per-domain
+      // circuit-breaker. Other security-pipeline errors (rate-limit,
+      // ownership, etc.) preserve their pre-existing wiring through
+      // recordToolFailure for backward compatibility with prior tests.
+      const isAntiThrashError =
+        error instanceof LoopDetectedError || error instanceof ThrashDetectedError;
+      if (!isAntiThrashError) {
+        this.recordToolFailure(domain, selectedEngineName, error);
+      }
 
       // T29 / SD-31 — feed the kill-switch's auto-activation rolling window
       // so a configured `autoActivation` threshold actually trips after N
@@ -1200,6 +1313,39 @@ export class SafariPilotServer {
         elapsed_ms: Date.now() - start,
         session: this.sessionId,
       });
+
+      // F3.1 — Convert EngineExecutionError instances to a structured isError
+      // MCP response. Mirrors the T30 HumanApproval soft-return at
+      // server.ts:737-759 so the agent receives code/retryable/hints instead
+      // of the opaque text the MCP SDK would otherwise serialize from a bare
+      // thrown Error. Scope is intentionally narrow: only the new
+      // EngineExecutionError class added by F3.1. Other SafariPilotError
+      // subclasses (RateLimitedError, TabUrlNotRecognizedError,
+      // CircuitBreakerOpenError, KillSwitchActiveError, etc.) continue to
+      // throw — pre-F3.1 callers and tests (e.g. killswitch-auto-activation
+      // SD-31) depend on that contract, and broadening would be scope creep.
+      // Unifying everything to isError can land in a follow-up sprint.
+      if (error instanceof EngineExecutionError) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                error: error.code,
+                message: error.message,
+                retryable: error.retryable,
+                hints: error.hints,
+              }),
+            },
+          ],
+          isError: true,
+          metadata: {
+            engine: selectedEngineName,
+            degraded: false,
+            latencyMs: Date.now() - start,
+          },
+        };
+      }
 
       throw error;
     }
@@ -1501,6 +1647,18 @@ end tell'`,
     }
     this._sessionWindowId = windowId;
     this._sessionTabOpened = true;
+    // F1.2 (2026-05-18 rework) — surface the session DASHBOARD URL to
+    // ExtensionEngine so every extension_execute payload carries it.
+    // The dashboard URL is the stable string identifier the extension's
+    // tabs.onUpdated listener uses to register dashboardUrl → WebExt
+    // windowId in sessionDashboardUrlToWindowId. Filtering then happens
+    // in the WebExtension namespace (where cache entries live) — not in
+    // the AppleScript namespace (where _sessionWindowId lives), which
+    // was the pre-rework F1.2's broken assumption.
+    const ext = this.engines.get('extension');
+    if (ext instanceof ExtensionEngine) {
+      ext.setSessionDashboardUrl(this.sessionTabUrl);
+    }
     trace(traceId, 'server', 'session_window_created', { windowId });
   }
 

@@ -44,5 +44,7 @@
 
   "selectorPack": {
     "enabled": false
-  }
+  },
+
+  "legacyMainWorld": false
 }

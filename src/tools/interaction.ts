@@ -4,9 +4,10 @@ import type { Engine } from '../types.js';
 import type { SafariPilotServer } from '../server.js';
 import { buildRefSelector } from '../aria.js';
 import { generateAutoWaitJs, ACTION_CHECKS } from '../auto-wait.js';
-import { hasLocatorParams, extractLocatorFromParams, generateLocatorJs } from '../locator.js';
+import { hasLocatorParams, extractLocatorFromParams, buildLocatorSentinel, generateLocatorJs } from '../locator.js';
 import { escapeForJsSingleQuote } from '../escape.js';
-import { StrictnessViolationError } from '../errors.js';
+import { StrictnessViolationError, wrapEngineError } from '../errors.js';
+import { loadConfig } from '../config.js';
 
 export interface ToolDefinition {
   name: string;
@@ -21,10 +22,16 @@ export class InteractionTools {
   private engine: IEngine;
   private server: SafariPilotServer;
   private handlers: Map<string, Handler> = new Map();
+  /** v0.1.34 T16: rollback flag — when true, the 4 refactored interaction tools
+   *  (click, fill, type, scroll) dispatch via the verbatim v0.1.33 JS-string
+   *  paths preserved as `*Legacy` companions. Read once at construction; flag
+   *  changes require server restart. */
+  private readonly legacyMainWorld: boolean;
 
   constructor(engine: IEngine, server: SafariPilotServer) {
     this.engine = engine;
     this.server = server;
+    this.legacyMainWorld = loadConfig().legacyMainWorld === true;
     this.registerHandlers();
   }
 
@@ -53,13 +60,30 @@ export class InteractionTools {
     tabUrl: string,
     params: Record<string, unknown>,
     strict = false,
+    legacy = false,
   ): Promise<string> {
     const ref = params['ref'] as string | undefined;
     if (ref) return buildRefSelector(ref);
 
     if (hasLocatorParams(params)) {
       const locator = extractLocatorFromParams(params)!;
-      const locatorJs = generateLocatorJs(locator);
+      // v0.1.34 T7b: route via __SP_RESOLVE_LOCATOR__ sentinel for CSP immunity
+      // on Trusted-Types-strict pages. The Extension engine intercepts the
+      // sentinel string in MAIN-world content-main.js and calls
+      // window.__SP_LOCATOR__.resolveLocator directly — no `new Function()`
+      // evaluation. Sentinel resolution REQUIRES the Extension engine; no
+      // __SP_LOCATOR__ exists in the AppleScript/Daemon JS worlds, and they
+      // would execute the literal `__SP_RESOLVE_LOCATOR__:<json>` string as
+      // JS source (syntax error). The owning tool's
+      // `requirements.requiresCspBypass: true` gates engine selection at the
+      // dispatcher; if Extension is unavailable, EngineUnavailableError fires
+      // before this code is reached.
+      //
+      // T16 rollback flag: when `legacy === true`, emit the v0.1.33
+      // generateLocatorJs IIFE instead of the sentinel — restores the verbatim
+      // pre-T7b path. generateLocatorJs is still exported from src/locator.ts
+      // (kept as AppleScript fallback by T7b), so the swap is one line.
+      const locatorJs = legacy ? generateLocatorJs(locator) : buildLocatorSentinel(locator);
       const result = await this.engine.executeJsInTab(tabUrl, locatorJs);
       if (result.ok && result.value) {
         const parsed = JSON.parse(result.value);
@@ -111,7 +135,7 @@ export class InteractionTools {
 
     // Execute the action
     const result = await this.engine.executeJsInTab(tabUrl, actionJs, timeout);
-    if (!result.ok) throw new Error(result.error?.message ?? `${actionType} failed`);
+    if (!result.ok) throw wrapEngineError(result.error, `${actionType} failed`);
 
     return this.makeResponse(
       result.value ? JSON.parse(result.value) : { [actionType]: true },
@@ -164,7 +188,9 @@ export class InteractionTools {
           },
           required: ['tabUrl'],
         },
-        requirements: { idempotent: false },
+        // v0.1.35 Task 6 — 'preferred': extension when available, fall back
+        // to applescript/daemon (uses the config-gated legacy IIFE path).
+        requirements: { idempotent: false, requiresCspBypass: 'preferred' },
       },
       {
         name: 'safari_double_click',
@@ -205,7 +231,8 @@ export class InteractionTools {
           },
           required: ['tabUrl', 'value'],
         },
-        requirements: { idempotent: false },
+        // v0.1.35 Task 6 — 'preferred' (see safari_click).
+        requirements: { idempotent: false, requiresCspBypass: 'preferred' },
       },
       {
         name: 'safari_select_option',
@@ -271,7 +298,8 @@ export class InteractionTools {
           },
           required: ['tabUrl', 'content'],
         },
-        requirements: { idempotent: false },
+        // v0.1.35 Task 6 — 'preferred' (see safari_click).
+        requirements: { idempotent: false, requiresCspBypass: 'preferred' },
       },
       {
         name: 'safari_press_key',
@@ -322,7 +350,8 @@ export class InteractionTools {
           },
           required: ['tabUrl'],
         },
-        requirements: { idempotent: false },
+        // v0.1.35 Task 6 — 'preferred' (see safari_click).
+        requirements: { idempotent: false, requiresCspBypass: 'preferred' },
       },
       {
         name: 'safari_drag',
@@ -406,6 +435,64 @@ export class InteractionTools {
   // ── Handlers ────────────────────────────────────────────────────────────────
 
   private async handleClick(params: Record<string, unknown>): Promise<ToolResponse> {
+    if (this.legacyMainWorld) return this.handleClickLegacy(params);
+    const tabUrl = params['tabUrl'] as string;
+    const timeout = typeof params['timeout'] === 'number' ? params['timeout'] : 5000;
+    const force = params['force'] === true;
+
+    // 5A.3: button + modifiers honored. Schema declares both (lines ~142-143);
+    // pre-fix the handler ignored them and dispatched every click as primary
+    // (button=0) with no modifier flags — same "schema lies" class as T49/T50/T51.
+    const buttonName = (params['button'] as string) ?? 'left';
+    const buttonNum = buttonName === 'right' ? 2 : buttonName === 'middle' ? 1 : 0;
+    const mods = Array.isArray(params['modifiers']) ? (params['modifiers'] as string[]) : [];
+
+    const selector = await this.resolveElement(tabUrl, params, true);
+
+    // v0.1.34 Task 7 — CSP-immune sentinel. The JS-string transport was vulnerable to
+    // Trusted Types (`require-trusted-types-for 'script'`) because `new Function(params.script)`
+    // triggers the policy. Sentinel routes through __SP_CLICK__ → MAIN-world content-main.js
+    // handler, which dispatches MouseEvents natively (no Function constructor). All behavior
+    // preserved: button/modifiers/contextmenu/auxclick/link-following/downloadContext.
+    const actionJs = '__SP_CLICK__:' + JSON.stringify({
+      selector,
+      buttonNum,
+      modifiers: { ctrl: mods.includes('ctrl'), shift: mods.includes('shift'), alt: mods.includes('alt'), meta: mods.includes('meta') },
+    });
+
+    const response = await this.waitAndExecute(tabUrl, selector, 'click', actionJs, { timeout, force });
+
+    let resultText: string | undefined;
+    try {
+      resultText = response.content[0]?.text;
+      if (resultText) {
+        const parsed = JSON.parse(resultText);
+        if (parsed.downloadContext) {
+          this.server.setClickContext({
+            href: parsed.downloadContext.href ?? undefined,
+            downloadAttr: parsed.downloadContext.downloadAttr ?? undefined,
+            isDownloadLink: !!parsed.downloadContext.isDownloadLink,
+            tabUrl,
+            timestamp: Date.now(),
+          });
+        }
+      }
+    } catch (err) {
+      if (err instanceof SyntaxError) {
+        console.warn(`[safari_click] Could not parse click response for download context: ${resultText?.slice(0, 100)}`);
+      } else {
+        console.warn(`[safari_click] Download context extraction failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+
+    return response;
+  }
+
+  /** v0.1.34 T16 rollback path. Verbatim v0.1.33 body (commit b8bc4ab^),
+   *  preserved for fast rollback via `legacyMainWorld: true` in config.
+   *  Maintenance rule: any v0.1.35+ behavior change must update BOTH this
+   *  legacy companion and the sentinel handler above. */
+  private async handleClickLegacy(params: Record<string, unknown>): Promise<ToolResponse> {
     const tabUrl = params['tabUrl'] as string;
     const timeout = typeof params['timeout'] === 'number' ? params['timeout'] : 5000;
     const force = params['force'] === true;
@@ -429,7 +516,7 @@ export class InteractionTools {
     // middle is "open in new tab" which our automation cannot replicate via JS.
     const followLinks = buttonNum === 0 ? 'true' : 'false';
 
-    const selector = await this.resolveElement(tabUrl, params, true);
+    const selector = await this.resolveElement(tabUrl, params, true, true);
     const escapedSelector = escapeForJsSingleQuote(selector);
 
     const actionJs = `
@@ -547,6 +634,7 @@ export class InteractionTools {
   }
 
   private async handleFill(params: Record<string, unknown>): Promise<ToolResponse> {
+    if (this.legacyMainWorld) return this.handleFillLegacy(params);
     const tabUrl = params['tabUrl'] as string;
     const value = params['value'] as string;
     const framework = (params['framework'] as string | undefined) ?? 'auto';
@@ -556,6 +644,29 @@ export class InteractionTools {
     const force = params['force'] === true;
 
     const selector = await this.resolveElement(tabUrl, params, true);
+
+    // v0.1.34 Task 8 — CSP-immune sentinel transport. Sentinel handler in
+    // extension/content-main.js replays the full actionJs body natively:
+    // framework auto-detect (react/vue/vanilla), React native-setter trick
+    // for controlled inputs, Vue path, pressEnterAfter, clearFirst.
+    const actionJs = '__SP_FILL__:' + JSON.stringify({
+      selector, value, framework, clearFirst, pressEnterAfter,
+    });
+
+    return this.waitAndExecute(tabUrl, selector, 'fill', actionJs, { timeout, force });
+  }
+
+  /** v0.1.34 T16 rollback path. Verbatim v0.1.33 body (commit 040c32d^). */
+  private async handleFillLegacy(params: Record<string, unknown>): Promise<ToolResponse> {
+    const tabUrl = params['tabUrl'] as string;
+    const value = params['value'] as string;
+    const framework = (params['framework'] as string | undefined) ?? 'auto';
+    const clearFirst = params['clearFirst'] !== false;
+    const pressEnterAfter = params['pressEnterAfter'] === true;
+    const timeout = typeof params['timeout'] === 'number' ? params['timeout'] : 10000;
+    const force = params['force'] === true;
+
+    const selector = await this.resolveElement(tabUrl, params, true, true);
     const escapedSelector = escapeForJsSingleQuote(selector);
     const escapedValue = escapeForJsSingleQuote(value);
 
@@ -709,12 +820,34 @@ export class InteractionTools {
   }
 
   private async handleType(params: Record<string, unknown>): Promise<ToolResponse> {
+    if (this.legacyMainWorld) return this.handleTypeLegacy(params);
     const start = Date.now();
     const tabUrl = params['tabUrl'] as string;
     // 'content' avoids collision with locator 'text' param
     const content = params['content'] as string;
 
     const selector = await this.resolveElement(tabUrl, params, true);
+
+    // v0.1.34 Task 9 — CSP-immune sentinel transport. Sentinel handler in
+    // extension/content-main.js replays the per-character keydown/keypress/
+    // input/keyup loop natively in MAIN world.
+    const js = '__SP_TYPE__:' + JSON.stringify({ selector, content });
+
+    // type has no actionability checks (ACTION_CHECKS.type = []), execute directly
+    const result = await this.engine.executeJsInTab(tabUrl, js);
+    if (!result.ok) throw wrapEngineError(result.error, 'Type failed');
+
+    return this.makeResponse(result.value ? JSON.parse(result.value) : { typed: true }, Date.now() - start);
+  }
+
+  /** v0.1.34 T16 rollback path. Verbatim v0.1.33 body (commit 67497e7^). */
+  private async handleTypeLegacy(params: Record<string, unknown>): Promise<ToolResponse> {
+    const start = Date.now();
+    const tabUrl = params['tabUrl'] as string;
+    // 'content' avoids collision with locator 'text' param
+    const content = params['content'] as string;
+
+    const selector = await this.resolveElement(tabUrl, params, true, true);
     const escapedSelector = escapeForJsSingleQuote(selector);
     const escapedText = escapeForJsSingleQuote(content);
 
@@ -738,7 +871,7 @@ export class InteractionTools {
 
     // type has no actionability checks (ACTION_CHECKS.type = []), execute directly
     const result = await this.engine.executeJsInTab(tabUrl, js);
-    if (!result.ok) throw new Error(result.error?.message ?? 'Type failed');
+    if (!result.ok) throw wrapEngineError(result.error, 'Type failed');
 
     return this.makeResponse(result.value ? JSON.parse(result.value) : { typed: true }, Date.now() - start);
   }
@@ -781,12 +914,56 @@ export class InteractionTools {
 
     // pressKey has no actionability checks, execute directly
     const result = await this.engine.executeJsInTab(tabUrl, js);
-    if (!result.ok) throw new Error(result.error?.message ?? 'Press key failed');
+    if (!result.ok) throw wrapEngineError(result.error, 'Press key failed');
 
     return this.makeResponse(result.value ? JSON.parse(result.value) : { pressed: true }, Date.now() - start);
   }
 
   private async handleScroll(params: Record<string, unknown>): Promise<ToolResponse> {
+    if (this.legacyMainWorld) return this.handleScrollLegacy(params);
+    const start = Date.now();
+    const tabUrl = params['tabUrl'] as string;
+    const direction = (params['direction'] as string | undefined) ?? 'down';
+    const amount = typeof params['amount'] === 'number' ? params['amount'] : 500;
+    const toTop = params['toTop'] === true;
+    const toBottom = params['toBottom'] === true;
+    const toElement = params['toElement'] as string | undefined;
+
+    // T50 — `toTop`, `toBottom`, and `toElement` are mutually exclusive scroll
+    // modes. Pre-T50 the handler emitted each branch as a separate JS
+    // statement, so a multi-mode call ran them serially with last-write-wins
+    // and no caller-visible warning.
+    const modeCount = (toTop ? 1 : 0) + (toBottom ? 1 : 0) + (toElement ? 1 : 0);
+    if (modeCount > 1) {
+      throw new Error(
+        '`toTop`, `toBottom`, and `toElement` are mutually exclusive — pass only one.',
+      );
+    }
+
+    // scroll optionally targets an element (if omitted, scrolls page)
+    const hasTarget = params['ref'] || params['selector'] || hasLocatorParams(params);
+    let targetSelector: string | undefined;
+    if (hasTarget) {
+      targetSelector = await this.resolveElement(tabUrl, params);
+    }
+
+    // v0.1.34 Task 10 — CSP-immune sentinel transport. Sentinel handler in
+    // extension/content-main.js replays the previous actionJs branching
+    // verbatim: scroll a container or the document; toTop/toBottom/toElement
+    // modes; up/down/left/right deltas; same result shape.
+    const js = '__SP_SCROLL__:' + JSON.stringify({
+      targetSelector, direction, amount, toTop, toBottom, toElement,
+    });
+
+    // scroll has no actionability checks, execute directly
+    const result = await this.engine.executeJsInTab(tabUrl, js);
+    if (!result.ok) throw wrapEngineError(result.error, 'Scroll failed');
+
+    return this.makeResponse(result.value ? JSON.parse(result.value) : { scrolled: true }, Date.now() - start);
+  }
+
+  /** v0.1.34 T16 rollback path. Verbatim v0.1.33 body (commit 8794342^). */
+  private async handleScrollLegacy(params: Record<string, unknown>): Promise<ToolResponse> {
     const start = Date.now();
     const tabUrl = params['tabUrl'] as string;
     const direction = (params['direction'] as string | undefined) ?? 'down';
@@ -810,7 +987,7 @@ export class InteractionTools {
     const hasTarget = params['ref'] || params['selector'] || hasLocatorParams(params);
     let escapedSelector = '';
     if (hasTarget) {
-      const selector = await this.resolveElement(tabUrl, params);
+      const selector = await this.resolveElement(tabUrl, params, false, true);
       escapedSelector = escapeForJsSingleQuote(selector);
     }
 
@@ -842,7 +1019,7 @@ export class InteractionTools {
 
     // scroll has no actionability checks, execute directly
     const result = await this.engine.executeJsInTab(tabUrl, js);
-    if (!result.ok) throw new Error(result.error?.message ?? 'Scroll failed');
+    if (!result.ok) throw wrapEngineError(result.error, 'Scroll failed');
 
     return this.makeResponse(result.value ? JSON.parse(result.value) : { scrolled: true }, Date.now() - start);
   }
@@ -971,7 +1148,7 @@ export class InteractionTools {
     `;
 
     const result = await this.engine.executeJsInTab(tabUrl, js);
-    if (!result.ok) throw new Error(result.error?.message ?? 'Handle dialog failed');
+    if (!result.ok) throw wrapEngineError(result.error, 'Handle dialog failed');
 
     return this.makeResponse(result.value ? JSON.parse(result.value) : { status: 'installed' }, Date.now() - start);
   }

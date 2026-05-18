@@ -191,9 +191,17 @@ export class WaitTools {
   /**
    * Execute JS in a tab and return the raw boolean/truthy result.
    * Returns false on engine failure or unparseable output.
+   *
+   * v0.1.36 — per-poll timeout is fixed at 5000ms so the outer wait_for
+   * poll loop iterates fast instead of getting blocked for the engine's
+   * default-extension-timeout per poll. The agent's overall `timeout`
+   * (default 30s) is enforced by the poll loop's `elapsed >= timeout`
+   * check; this inner timeout just bounds a single condition evaluation.
+   * Pre-v0.1.36 this used the default 90s, so each poll cost 90s and
+   * the overall 30s budget allowed at most 1 iteration before timing out.
    */
   private async evalCondition(tabUrl: string, jsCode: string): Promise<boolean> {
-    const result = await this.engine.executeJsInTab(tabUrl, jsCode);
+    const result = await this.engine.executeJsInTab(tabUrl, jsCode, 5000);
     if (!result.ok || !result.value) return false;
 
     const raw = result.value.trim();

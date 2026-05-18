@@ -16,6 +16,96 @@
 
 ## Current Work
 
+### Iteration 84 - 2026-05-14 — Phase 1 systematic-debugging + Phase 2 deep research; v0.1.35 spec revised root-and-branch
+
+**What:** User invoked upp:systematic-debugging (Phase 1: root cause investigation only — NO fixes) on the v0.1.34 bench gate failure, then asked to research the addressable items + assumptions before forming the v0.1.35 plan. Both phases completed end-to-end. **Phase 1 reframe:** of the "10 persistent regressions," only 2 are real product bugs (Booking--5 shortcut, Google Search--14 wrong James Smith). 5 are GPT-4o judge-strictness false negatives (correct text answer; screenshot doesn't visually confirm). 3 are stale-date Google Flights tasks (Jan-Mar 2024 dates the site rejects in May 2026). Sentinel envelope drift hypothesis fully refuted via byte-equivalent verification of all 7 refactored tools. The real v0.1.34 behavioral shift is a 4-nudge stack against safari_evaluate (3 new tool descriptions + safari_evaluate's existing description + requiresCspBypass routing). 41% of v0.1.33 baseline failures (19/46) are stale-date — unrecoverable for any agent. The spec acceptance criterion ≥30/47 recovery was unrealistic. **Phase 2 research (parallel:research pro-fast, 8m20s, ~$3):** All SOTA agents patch the bench. Magnitude 93.9% with patches.json + manual judge review. Browserable 90.4% after removing 56 tasks (643→567). Kura 87% with documented Benchmark Adjustments; Kura 90% vs Anthropic Computer Use 56% on a 50-task subset. Original WebVoyager paper itself uses 3-run mean ± std with κ≈0.70. Safari Pilot at 73.7% on the unpatched 184 is competitive; the gap to SOTA is partly the patching gap. **v0.1.35 spec fully revised** per Phase 1 + Phase 2: 11 slices, 3 priorities (bench integrity, product honesty, behavioral correction), revised acceptance criteria split into patched-2026 + comparable-original sets, multi-run majority-of-3 mandatory, dual-metric (Pass@1 + steps + wall + cost), anti-thrash hard caps, abstention policy, evidence-grounded final-proof tool, 4-nudge unwind. ~10 eng days + ~$750 bench cost.
+
+**Changes:**
+- `bench-runs/webvoyager-v0.1.34-bench-20260514/phase1-diagnostic.md` (NEW, ~10 KB) — corrected diagnostic with assumption audit (A1-A14), per-task root cause categorization, 4-nudge analysis, items-to-address (R-bug-1/2, R-shift-1/2, R-bench-1/5, R1-R10).
+- `bench-runs/webvoyager-v0.1.34-bench-20260514/research-r1-r10.md` (NEW, ~27 KB) + `.json` (~600 KB with citations + basis) — Phase 2 deep research synthesis with R1-R10 findings, cross-cutting insights, 10 ranked recommendations.
+- `docs/upp/specs/2026-05-14-safari-pilot-v0135-efficiency-and-recovery.md` (FULL REWRITE) — supersedes starter spec. Diagnosis section, new acceptance criteria, 11 slices in execution order, out-of-scope decisions documented (compound tool deferred, site-recipes refuted/reframed, tier-surface deferred, --bare drop deferred).
+- `docs/upp/specs/2026-05-14-safari-pilot-v0135-starter-superseded.md` (NEW) — backup of original starter spec for traceability.
+- `CHECKPOINT.md` — updated to reflect Phase 2 completion.
+
+**Context:** Per the user's directive ("first do systematic debugging but only to find out what to address. then research those approches. Also research all other thoughts and doubts assumptions. your work otherwise is just pure shit"), no fixes were proposed during Phase 1. Phase 2 was a single parallel:research pro-fast call with 10 topics R1-R10 (output schema auto, 202 basis citations). Key reversals from old starter spec: (a) H3a Google Flights site recipe REFUTED — stale-date not date-picker fumble, recipe can't search past dates; (b) H1 (CSP nudging) PROMOTED — quantified 4-nudge evidence; (c) NEW priorities: patches.json bench protocol + multi-run judge + final-proof tool + abstention. v0.1.34 sprint preservation status unchanged: 16 sentinels + Layer 3 TT + locator port + 3 capability tools + legacyMainWorld flag all carry forward. Branch `feat/v0134-csp-bypass` at HEAD `4960ae3`. Next: invoke upp:writing-plans on the revised spec. Total session API spend including Phase 2 research: ~$190-210.
+
+---
+
+### Iteration 83 - 2026-05-14 — v0.1.34 bench gate FAILED 3/3 acceptance criteria; sprint deferred to v0.1.35 with H1-H10 plan
+
+**What:** Completed T18 in two passes after the iter 82 BLOCKED. Root-caused the smoke failures: T11's mid-sprint rebuild at dev.3 happened BEFORE T12-T15 added their 8 sentinels, so dev.3 binary was missing them — `__SP_GET_TEXT__:`, `__SP_SNAPSHOT__:`, `__SP_QUERY_ALL__:`, `__SP_SMART_SCRAPE__:` etc. all fell through to `new _Function(params.script)` and either CSP-blocked (TT-strict pages) or syntax-errored (literal sentinel string parsed as JS). Fix: bumped to dev.4, full rebuild + notarize (submission `d233ecfe`, Accepted), reinstalled. 16/16 sentinels in binary. Apple--12 + GitHub--19 smokes both PASSED. Ran full 104-task v0.1.34 bench (4h wall-clock, $83.23 spend). Hit Anthropic Console credit cap on retry round 1 (all 31 tasks billing_error 400). User topped up; retry round 2 (1h50m, $32.29 spend) completed cleanly. Judged. **Bench result: 133/184 = 72.3%** vs baseline 128/184 = 69.6% (+5 net). All 3 spec acceptance criteria FAIL: failure recovery 18/46 (need 30), spot-check regressions 10 (need 0), Google Flights 2/11 (need 6). Apple per-site PASS (8/12). Of 13 originally-flagged "regressions", 3 were flake (Amazon--13, BBC News--31, Booking--34) and 10 are persistent. Per same-task-pair analysis (42 tasks where both versions succeeded) v0.1.34 is actually median −1 turn / −$0.027 cost. Real story: v0.1.34's CSP_BLOCKED error UX inadvertently taught the agent to FEAR safari_evaluate (usage halved 2.17 → 1.07/task), causing a pivot to query_all + click combos (query_all rose 5.4×). Simple tasks win dramatically (Booking--1: 57 → 7 turns, −90% cost); complex multi-step tasks regress catastrophically (Google Flights--34: 28 → 82 turns, +725% cost). User chose option (B') defer v0.1.34 → fold into v0.1.35.
+
+**Changes:**
+- `bench/webvoyager/run-one-task.sh` (+8 lines): WV_AUTH=max env-opt-in to drop ANTHROPIC_API_KEY before claude --bare (note: --bare is API-key-only by design; opt-in stays inert until --bare is dropped — H8 in v0.1.35 plan).
+- `bench/webvoyager/analyze-v0134.py` (NEW, ~280 lines): per-task + aggregate analyzer over baseline/first/retry/judged dirs. Outputs markdown report with aggregates, per-site breakdown, top-15 cost/turn/wall outliers, verdict flips, full per-task table, improvement recommendations.
+- `bench-runs/webvoyager-v0.1.34-bench-20260514/` (NEW, gitignored): runner.log + retry.log + retry2.log + summary logs + analysis.md + deep-analysis.md (~25 KB sprint synthesis with H1-H10 ranked) + scoreboard-final.json.
+- `docs/upp/specs/2026-05-14-safari-pilot-v0135-efficiency-and-recovery.md` (NEW): v0.1.35 starter spec covering H1 (soften CSP nudging), H2 (safari_evaluate_then_act compound tool), H3a/b/c (Google Flights / Booking / Google Map site recipes), H4 (query_all interactivity hints), H5 (extract_text_window quality_score), H6 (tiered tool surface), H7 (implicit waitForLoadState), H8 (drop --bare for non-CI), H9 (BBC News investigation), H10 (3-run bench protocol). Sprint estimate: ~13 eng days. Expected gain: +8 to +15 bench tasks, −30 to −40% cost. Acceptance criteria carry forward from v0.1.34 plus NEW: cost reduction ≥25%, median tool calls ≤13.
+- v0.1.34 placeholder T19 docs (CHANGELOG.md / ARCHITECTURE.md / CLAUDE.md edits) reverted — won't ship.
+- `extension/manifest.json` + `package.json`: 0.1.34-dev.4 (extension binary at this version, locked in case anyone re-uses it).
+
+**Context:** Branch `feat/v0134-csp-bypass` at HEAD `d3fee62` stays unmerged. v0.1.34 ships nothing externally; the work IS preserved as v0.1.35 foundation (sentinels, locator port, rollback flag, capability tools all stay). Total session API spend across v0.1.34 sprint: dev work ~$30-40 + bench $116.10 = ~$150. WebVoyager flakiness verified empirically — only 3/13 "regressions" were flake; the 10 persistent ones cluster on Google Flights (date-picker fumble), ESPN (noisy data shortcuts), and assorted single-task issues. v0.1.35 H3 site recipes target exactly those clusters. Per "feedback-benchmarks-are-sacred" the bench gate is non-negotiable; deferral is the honest call.
+
+---
+
+### Iteration 82 - 2026-05-14 — T18 bench gate BLOCKED on smoke: sentinels for safari_get_text + safari_snapshot regress against v0.1.33 baseline
+
+**What:** Started T18 (v0.1.34 bench gate, ~$78 approved). Promoted `bench/webvoyager/run-one-task.sh` from /tmp into repo with `WV_OUT_DIR` + `WV_VARIANT` env hooks so v0.1.34 runs don't pollute the v0.1.33 baseline at `/tmp/wv-inline-runs/`. Backed up baseline to `/tmp/wv-inline-runs-baseline-v0.1.33/`. Generated 47-task rerun list (46 FAILURE + 1 UNKNOWN Amazon--5) and 59-task stratified spot-check (4-per-site, 3 for Google Flights). Ran 2 smoke tasks per advisor recommendation **before** committing to the full bench. Both smoke tasks exposed regressions on T12/T14 sentinels, halting the gate.
+
+**Changes:** `bench/webvoyager/run-one-task.sh` (promoted from /tmp, parameterized variant + output dir), `bench/webvoyager/stream-pretty.py` (vendored from /tmp). Durable smoke artifacts + BLOCKED.md report at `bench-runs/webvoyager-v0.1.34-bench-20260513/` (gitignored).
+
+**Smoke results vs v0.1.33 baseline:**
+- Apple--12 (baseline SUCCESS 4t/$0.14): v0.1.34 used 7t/$0.39. `safari_get_text` + `safari_snapshot` both returned `MCP error -32603: Unexpected token ':'`. Agent recovered via `safari_get_page_info` (T4 sentinel — works).
+- GitHub--19 (baseline SUCCESS): v0.1.34 used 9t/$0.27. `safari_get_text` + `safari_snapshot` both returned the full Trusted-Types CSP refusal `Refused to evaluate a string as JavaScript because 'unsafe-eval' or 'trusted-types-eval' is not an allowed source ... "script-src github.githubassets.com"`. Agent recovered via `safari_navigate` + `safari_extract_text_window` (T6 sentinel — works).
+
+**Context:** Two distinct failure modes confirm T12 (safari_get_text → __SP_GET_TEXT__) and T14 (safari_snapshot → __SP_SNAPSHOT__) sentinels are NOT actually CSP-immune as designed. Apple-path emits `Unexpected token ':'` (likely envelope-escape bug — unescaped page text with colons leaking into storage-bus response wrapper). GitHub-path emits the full TT CSP refusal (likely the dispatch is NOT routing through the sentinel and is falling back to a `new Function`/`eval` path that CSP blocks). Note: T11's e2e gate ran 19/19 GREEN on a localhost TT-strict fixture, but real-world CSP-strict sites (Apple, GitHub) expose the regression. The localhost fixture's CSP is `require-trusted-types-for 'script'` only; production sites add `script-src` directives that may trigger different code paths. Hypotheses for next-session systematic-debugging: H1 sentinels not in installed v0.1.34-dev.3 binary; H2 sentinel handlers emit unescaped strings; H3 engine-selector routing to daemon engine; H4 stale dist. Did NOT proceed to full bench. Total smoke spend ~$0.66. Per `feedback-debugging-discipline`, fix path is upp:systematic-debugging.
+
+---
+
+### Iteration 81 - 2026-05-13 — v0.1.34 mid-sprint verification gate (T11): dev.3 rebuilt, 19/19 CSP e2e GREEN
+
+**What:** v0.1.34 sprint mid-flight rebuild + verification gate. After T2-T10 + T7b landed extension-side changes without being baked into the installed binary (still dev.2), bumped to 0.1.34-dev.3, rebuilt + notarized + stapled the extension, re-registered with Safari, and ran the full CSP-related e2e set. All 19 tests GREEN on the TT-strict fixture. Empirically validates that the 7 new sentinels (`__SP_TT_PROBE__`, `__SP_GET_PAGE_INFO__`, `__SP_GET_META_TAGS__`, `__SP_EXTRACT_TEXT_WINDOW__`, `__SP_CLICK__`, `__SP_FILL__`, `__SP_TYPE__`, `__SP_SCROLL__`, `__SP_RESOLVE_LOCATOR__`) + Layer 3 TT policy registration + the full `resolveLocator` body port to `__SP_LOCATOR__` all work end-to-end against real Safari, not just in theory.
+
+**Changes:**
+- `src/tools/interaction.ts` — fixed misleading comment at resolveElement (lines 62-73): the AppleScript fallback path was claimed to use generateLocatorJs, but buildLocatorSentinel emits a literal `__SP_RESOLVE_LOCATOR__:<json>` string that AppleScript would execute as JS source (syntax error). Comment now correctly states the path REQUIRES Extension engine; engine-selector gates via `requiresCspBypass`.
+- `src/tools/interaction.ts` — added `requiresCspBypass: true` to safari_click, safari_fill, safari_type, safari_scroll.
+- `src/tools/extraction.ts` — added `requiresCspBypass: true` to safari_get_text, safari_get_html, safari_get_attribute (all 3 route locators through `buildLocatorSentinel`).
+- `test/e2e/csp-interaction-sentinels.test.ts` — added 2 new tests covering T7b's role+name and text locator paths through `__SP_RESOLVE_LOCATOR__` on TT-strict pages (4 → 6 tests).
+- `package.json` + `extension/manifest.json` — version 0.1.34-dev.2 → 0.1.34-dev.3 (lockstep per `feedback-extension-version-both-fields`).
+- `bin/Safari Pilot.app`, `bin/Safari Pilot.zip` — rebuilt + notarized (submission 46a66147-72cd-449a-91cc-32d498ce5cb5, Accepted), stapled, verified entitlements.
+
+**Context:** This is the empirical-reality gate for v0.1.34's Section-8 sentinel refactor. Pre-gate: T2-T10 + T7b were theoretical — extension-side sentinel handlers were committed to source but never run against Safari since dev.2. Post-gate: the architecture is structurally working end-to-end. Test breakdown by file: csp-interaction-sentinels 6/6 (4 selector + 2 locator), page-info-tools 7/7 (page_info + meta_tags + extract_text_window), csp-tt-policy-registration 2/2 (Layer 3 TT probe), csp-evaluate-blocked-error 3/3 (CSP_BLOCKED/CSP_HARD_BLOCK error UX), csp-baseline-tt-strict 1/1 (v0.1.33 regression baseline, expected failure of bare safari_evaluate still reproduces). Total: 19/19 e2e + 679/679 unit. **Behavior change for callers:** the 7 refactored tools used to silently degrade to AppleScript when Extension was unavailable; they now fail-fast with `EngineUnavailableError`. This is intentional — pre-v0.1.34 "fallback" was passing the literal sentinel string to AppleScript which executed it as JS source and either errored noisily or wrote garbage. Fail-fast surfaces real install problems instead of masking them. Remaining v0.1.34 sprint: T12-T14 extraction sentinels (get_text / query_all / snapshot), T15 smart_scrape + audit sweep, T16 legacyMainWorld rollback flag, T17 stats CLI CSP counters, T18 bench gate, T19 docs, T20 ship.
+
+---
+
+### Iteration 80 - 2026-05-13 — v0.1.34 architectural-pivot attempt failed; falling back to spec Section 8
+
+**What:** Attempted spec Section 3's architectural pivot: duplicate `new Function(params.script)` dispatcher into ISOLATED-world content-isolated.js, route via `cspMode` per-tab so strict-CSP pages execute in CSP-exempt ISOLATED. Spent ~1h on Slice 1's empirical-verification gate (Task 2 in plan `904fd81`). Three rebuilds at 0.1.34, 0.1.34-dev.1, 0.1.34-dev.2 with progressively more diagnostic sentinels. **The gate failed for a reason different than the synthesis assumed.**
+
+**Empirical findings on TT-strict fixture (Content-Security-Policy: require-trusted-types-for 'script'):**
+- `safari_evaluate(script: '__SP_CSP_VERIFY__')` returns `MCP protocol error -32603: Refused to evaluate a string as JavaScript because this document requires a 'Trusted Type' assignment` — same error as bench v0.1.33 saw on Google Flights / Apple Shop / X.com.
+- Adding `__SP_CSP_VERIFY__` and `__SP_EXECUTE_ISOLATED__:<script>` sentinels to content-isolated.js's processStorageCommand (built and notarized) did NOT change the result — sentinels never fired.
+- The error matches `new _Function(params.script)` at extension/content-main.js:714 — meaning the command reached content-main.js (MAIN world) despite content-isolated.js's intercept being correctly placed BEFORE the postMessage fall-through.
+- Couldn't determine WHY content-isolated.js's intercept didn't fire (the diagnostic console.log at line 169 would have answered, but ISOLATED-world console.log doesn't surface in Safari's page-console view, and we don't have a tool to read extension-context console).
+
+**Conclusion:** The architectural pivot's premise — that we can route safari_evaluate's script string through content-isolated.js's CSP-exempt context by adding a sentinel — is empirically not landing as designed in the v0.1.33 dispatch architecture. The dispatch path for arbitrary scripts appears to bypass content-isolated.js's sentinel intercept in some way we haven't identified.
+
+**Decision:** Pivot to spec Section 8 fallback. Stop trying to make the architectural-pivot land; instead, do the multi-tool sentinel refactor — every DOM-affecting tool (click, fill, snapshot, type, get_text, query_all, scroll, dismiss_overlays, etc.) gets a dedicated sentinel handler in content-main.js's switch (same pattern as existing `__SP_TAKE_SCREENSHOT__`, `__SP_LIST_FRAMES__` which are confirmed working on TT-strict pages per v0.1.33 bench). Pre-bundled handlers, no `new Function`. Plus the 3 new capability tools (safari_get_page_info, safari_get_meta_tags, safari_extract_text_window) as new sentinels.
+
+**Estimate update:** Original v0.1.34 plan was 6-8 days (architectural pivot). Fallback Section 8 is 9-12 days. Re-planning needed.
+
+**Changes preserved from the failed attempt:**
+- `test/fixtures/csp-trusted-types.ts` — useful localhost fixture for regression testing
+- `test/e2e/csp-baseline-tt-strict.test.ts` (renamed from csp-isolated-verify.test.ts) — documents v0.1.33's TT failure mode as a regression baseline. The failure is now expected (non-goal of v0.1.34 to fix safari_evaluate on TT-strict pages); the new sentinel-based tools are what should succeed post-refactor.
+- Version bumped from 0.1.33 → 0.1.34 (target ship version unchanged).
+
+**Changes reverted:**
+- content-isolated.js's `__SP_CSP_VERIFY__` and `__SP_EXECUTE_ISOLATED__:` sentinels removed (dead code in the fallback design).
+- Extension build artifacts (bin/) reset to v0.1.33 — will be rebuilt cleanly during Section 8 implementation.
+
+**Next:** Write a new plan based on spec Section 8 fallback. Commit alongside this trace entry.
+
+---
+
 ### Iteration 79 - 2026-05-13 — Bench finalized 175/175 + judge run → v0.1.33 acceptance PASS
 
 **What:** Resumed inline-bench from the 40/175 pause (CHECKPOINT). Completed the remaining 135 tasks across 11 sites in one continuous run with two transient incidents (Anthropic API 529 storm — recovered after one cycle; cleanup-AppleScript hang on GitHub--21 and Google Flights--24 — recovered by reading the existing stream.jsonl + score.json regenerated). Ran `bench/webvoyager/judge-inline-runs.ts` (NEW one-shot orchestrator, sister to runner.ts's judge call) over all 174 PENDING_JUDGE+screenshot tasks. **Final WebVoyager v0.1.33 score: 128/175 = 73.1% SUCCESS, 0.0% capture failure rate across all 15 sites.**

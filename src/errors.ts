@@ -1,4 +1,4 @@
-import type { Engine, StructuredUncertainty, ToolError } from './types.js';
+import type { Engine, EngineError, StructuredUncertainty, ToolError } from './types.js';
 
 // ─── Error Codes ─────────────────────────────────────────────────────────────
 
@@ -53,6 +53,20 @@ export const ERROR_CODES = {
   INVALID_PARAMS: 'INVALID_PARAMS',
   TARGET_NOT_FOUND: 'TARGET_NOT_FOUND',
   TARGET_HIDDEN: 'TARGET_HIDDEN',
+  // v0.1.35 Task 5 — anti-thrash controls.
+  LOOP_DETECTED: 'LOOP_DETECTED',
+  THRASH_DETECTED: 'THRASH_DETECTED',
+  STEP_CAP_EXCEEDED: 'STEP_CAP_EXCEEDED',
+  WALL_CAP_EXCEEDED: 'WALL_CAP_EXCEEDED',
+  // v0.1.36 Track A Fix 2 — surfaced when the daemon's extension_execute
+  // wait exceeds the per-tool-class timeout (default 15s). Replaces opaque
+  // "Daemon command 'execute' timed out after Xms" text errors with a
+  // structured envelope so the agent can recover instead of retrying blind.
+  DAEMON_TIMEOUT: 'DAEMON_TIMEOUT',
+  // v0.1.36 Track A Fix 3 — emitted by extension/background.js storage-bus
+  // dispatch when the target tab has not posted an `sp_cs_ready_<tabId>`
+  // heartbeat. Fast-fails at 5s instead of the previous 30s STORAGE_BUS_TIMEOUT.
+  CONTENT_SCRIPT_NOT_READY: 'CONTENT_SCRIPT_NOT_READY',
 } as const;
 // SD-22 (2026-04-25): removed 4 dead codes (ELEMENT_NOT_INTERACTABLE,
 // CROSS_ORIGIN_FRAME, DIALOG_UNEXPECTED, FRAME_NOT_FOUND) — declared but
@@ -85,6 +99,48 @@ export const ERROR_METADATA: Partial<Record<ErrorCode, { retryable: boolean; hin
     hints: [
       'Element exists but is display:none, visibility:hidden, or inside a closed <details>.',
       'Tool does NOT auto-expand parents (idempotency). Agent may need to expand a parent element first.',
+    ],
+  },
+  LOOP_DETECTED: {
+    retryable: false,
+    hints: [
+      'Same (tool, key-args) called 5+ times in a row. The page state is not changing — try a different approach.',
+    ],
+  },
+  THRASH_DETECTED: {
+    retryable: false,
+    hints: [
+      'safari_snapshot returned identical content 4+ times. The page is not loading new state — check for stale-data or rate-limit indicators.',
+    ],
+  },
+  STEP_CAP_EXCEEDED: {
+    retryable: false,
+    hints: ['Session step cap reached. Abort and report inability to complete.'],
+  },
+  WALL_CAP_EXCEEDED: {
+    retryable: false,
+    hints: ['Session wall-clock cap reached. Abort and report inability to complete.'],
+  },
+  DAEMON_TIMEOUT: {
+    // retryable=false because the 50-task probe showed retryable=true caused
+    // an agent retry-storm on legit slow ops (DAEMON_TIMEOUT count ballooned
+    // from 119 to 450+). The agent should treat this as terminal for that
+    // call and pivot to a different tool or abandon the sub-step. The hints
+    // give recovery paths via different methods, not retries of the same.
+    retryable: false,
+    hints: [
+      'Daemon execution exceeded the per-call timeout (default 90s).',
+      'Do NOT immediately retry the same call — switch strategies. Try a structured tool (safari_query_all, safari_get_text) if the failing call was safari_evaluate.',
+      'If the page is heavy, call safari_wait_for with a specific selector first, then a single targeted extract — not the same evaluate.',
+      'If the failure persists across two different tools, ABSTAIN — the page is uncooperative.',
+    ],
+  },
+  CONTENT_SCRIPT_NOT_READY: {
+    retryable: true,
+    hints: [
+      'Content script has not yet loaded on the target tab — happens on the first call after safari_new_tab or safari_navigate.',
+      'Call safari_wait_for with selector="body" (or another guaranteed-present selector) before retrying.',
+      'If the tab has just navigated to a different origin, the previous content script may have unloaded — wait for the new one to register.',
     ],
   },
 };
@@ -338,6 +394,34 @@ export class CircuitBreakerOpenError extends SafariPilotError {
       `Domain "${domain}" circuit breaker is open due to repeated failures`,
       `Retry after ${cooldownSeconds} seconds cooldown`,
       'Investigate the root cause before the circuit auto-closes',
+    ];
+  }
+}
+
+export class LoopDetectedError extends SafariPilotError {
+  readonly code = ERROR_CODES.LOOP_DETECTED;
+  readonly retryable = false;
+  readonly hints: string[];
+
+  constructor(tool: string, threshold: number) {
+    super(`Loop detected: ${tool} called ${threshold} times with the same arguments`);
+    this.hints = [
+      `Same (tool, key-args) called ${threshold}+ times in a row. The page state is not changing — try a different approach.`,
+      'Inspect with safari_snapshot, or use safari_get_text to read current state before retrying.',
+    ];
+  }
+}
+
+export class ThrashDetectedError extends SafariPilotError {
+  readonly code = ERROR_CODES.THRASH_DETECTED;
+  readonly retryable = false;
+  readonly hints: string[];
+
+  constructor(threshold: number) {
+    super(`Thrash detected: safari_snapshot returned identical content ${threshold} times`);
+    this.hints = [
+      `safari_snapshot returned identical content ${threshold}+ times. The page is not loading new state — check for stale-data or rate-limit indicators.`,
+      'Try a different navigation, wait for content to load, or abort the task.',
     ];
   }
 }
@@ -687,6 +771,38 @@ export class FileUploadInvalidParamsError extends SafariPilotError {
  * Matches Playwright's strict-mode contract: actions must target exactly
  * one element. Multi-match is a caller-side spec issue, not retryable.
  */
+/**
+ * Session wall-clock cap exceeded (v0.1.36).
+ *
+ * Thrown by `WallCapEnforcer.assertWithinCap()` from `src/security/wall-cap.ts`
+ * when a single MCP-server session has been running longer than the
+ * configured `MAX_WALL_MS` budget (typically 1200000ms / 20 min, set by
+ * the bench wrapper). Pre-v0.1.36 this budget was advertised as a hard
+ * limit but had no enforcer; bench tasks routinely ran 25-30+ minutes.
+ *
+ * Non-retryable. The hint tells the agent to ABSTAIN — there is no
+ * "wait and try again" recovery because the budget for this session is
+ * fully consumed.
+ */
+export class WallCapExceededError extends SafariPilotError {
+  readonly code = ERROR_CODES.WALL_CAP_EXCEEDED;
+  readonly retryable = false;
+  readonly hints: string[];
+  readonly elapsedMs: number;
+  readonly capMs: number;
+
+  constructor(capMs: number, elapsedMs: number) {
+    super(`Session wall-clock cap exceeded: ${elapsedMs}ms elapsed exceeds ${capMs}ms budget`);
+    this.capMs = capMs;
+    this.elapsedMs = elapsedMs;
+    this.hints = [
+      'Session wall-clock cap reached. Abort and report inability to complete.',
+      'Do NOT retry — the per-session budget is fully consumed.',
+      'If this fires unexpectedly, MAX_WALL_MS may be set too low for the workload.',
+    ];
+  }
+}
+
 export class StrictnessViolationError extends SafariPilotError {
   readonly code = ERROR_CODES.STRICTNESS_VIOLATION;
   readonly retryable = false;
@@ -729,4 +845,52 @@ export function formatToolError(
       ? { uncertainResult: error.uncertainResult }
       : {}),
   };
+}
+
+// ─── EngineExecutionError + wrapEngineError ──────────────────────────────────
+//
+// Reviewer finding F3.1 (v0.1.36): tool handlers historically used
+//   if (!result.ok) throw new Error(result.error?.message ?? 'X failed');
+// which collapses the structured engine envelope to plain message text — the
+// `code`, `retryable`, and `hints` from EngineResult.error were dropped before
+// reaching the MCP response. The agent saw opaque strings instead of
+// recoverable structured errors, making the DAEMON_TIMEOUT /
+// CONTENT_SCRIPT_NOT_READY envelopes operationally inert in v0.1.36 Track A.
+//
+// EngineExecutionError preserves the full envelope so the catch block in
+// src/server.ts:executeToolWithSecurity can convert any caught
+// SafariPilotError into a structured `isError: true` MCP response (mirroring
+// the T30 HumanApproval soft-return). One return type — no separate
+// "fallback" class — keeps the catch block uniform.
+
+export class EngineExecutionError extends SafariPilotError {
+  readonly code: ErrorCode;
+  readonly retryable: boolean;
+  readonly hints: string[];
+
+  constructor(engineErr: EngineError) {
+    super(engineErr.message);
+    // Engine codes are strings from the daemon/extension layer; if the value
+    // matches a known ErrorCode it round-trips intact, otherwise we keep the
+    // raw string. The MCP response carries the string regardless — the
+    // ErrorCode union is documentation, not enforcement.
+    this.code = engineErr.code as ErrorCode;
+    this.retryable = engineErr.retryable ?? false;
+    this.hints = Array.isArray(engineErr.hints) ? [...engineErr.hints] : [];
+  }
+}
+
+export function wrapEngineError(
+  engineErr: EngineError | undefined,
+  fallbackMessage: string,
+): SafariPilotError {
+  if (!engineErr) {
+    return new EngineExecutionError({
+      code: ERROR_CODES.INTERNAL_ERROR,
+      message: fallbackMessage,
+      retryable: false,
+      hints: [],
+    });
+  }
+  return new EngineExecutionError(engineErr);
 }
