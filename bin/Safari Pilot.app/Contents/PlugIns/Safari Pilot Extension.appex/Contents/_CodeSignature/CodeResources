@@ -6,7 +6,7 @@
 	<dict>
 		<key>Resources/background.js</key>
 		<data>
-		eGxA48/waS+/C/Bb1kzquQZvV6U=
+		VTm8wJvICwkWOQ0H25NiqAB+i1A=
 		</data>
 		<key>Resources/build.config.js</key>
 		<data>
@@ -44,6 +44,10 @@
 		<data>
 		HKuqS+wkhyyQtqWt/h3FZ6LGBVE=
 		</data>
+		<key>Resources/lib/session-filter.js</key>
+		<data>
+		RNo8MGWCDtZ7KS+lYQH0YrjqC5Q=
+		</data>
 		<key>Resources/lib/storage-keys.js</key>
 		<data>
 		QuKBeYVj7KLBM6uXEnrEc0NnHGg=
@@ -58,7 +62,7 @@
 		</data>
 		<key>Resources/manifest.json</key>
 		<data>
-		eKmupQ+tf/kYtu1UnBsTK+ihg4A=
+		ZHnnivqXs4xr4u6QyhsMsVaLTU0=
 		</data>
 		<key>Resources/native/SafariWebExtensionHandler.swift</key>
 		<data>
@@ -71,7 +75,7 @@
 		<dict>
 			<key>hash2</key>
 			<data>
-			HKeCtaeIqLyqa/0or2yAOhrcFzyRqFIb2sZAhcnM6MM=
+			V3wTbOaiQbTUDbAIGA4Ns48XSbGLm4uRJo1QMItQ2+k=
 			</data>
 		</dict>
 		<key>Resources/build.config.js</key>
@@ -137,6 +141,13 @@
 			TmCGEnvNKTjj9MLLxSfNOG5dCHPLoL6LHvZmo9eGC5Y=
 			</data>
 		</dict>
+		<key>Resources/lib/session-filter.js</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			7KcK8GY39SJxhDF6sJdR5nGnwEumjy9JwlAUGZvRdgg=
+			</data>
+		</dict>
 		<key>Resources/lib/storage-keys.js</key>
 		<dict>
 			<key>hash2</key>
@@ -162,7 +173,7 @@
 		<dict>
 			<key>hash2</key>
 			<data>
-			oKuP75uu7AHApTXW+mknpfy/Xc37iVbNGNOAD/fWFX0=
+			EUZ3vWPgcp8vnsXAZW9GXJ6NTdKSIU+/4+zrOlyUT7I=
 			</data>
 		</dict>
 		<key>Resources/native/SafariWebExtensionHandler.swift</key>

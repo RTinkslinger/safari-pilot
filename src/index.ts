@@ -31,7 +31,13 @@ async function main(): Promise<void> {
   // window in that case; a subsequent session's registerWithDaemon() /
   // orphan-sweep is the only remedy.
   let shuttingDown = false;
-  const gracefulShutdown = async (signal: NodeJS.Signals): Promise<void> => {
+  // Bug-2 (2026-05-18) — STDIO_EOF added. claude exits its child via stdio
+  // pipe close, no signal sent; without this branch the session window
+  // leaked because Node drained the event loop and exited before
+  // gracefulShutdown ran. Exit code 0 for the EOF path matches "clean
+  // drain" (SIGINT keeps 130, SIGTERM keeps 143 for backward compat with
+  // anything that grepped on the prior codes).
+  const gracefulShutdown = async (reason: 'SIGINT' | 'SIGTERM' | 'STDIO_EOF'): Promise<void> => {
     if (shuttingDown) return;
     shuttingDown = true;
     try {
@@ -42,7 +48,8 @@ async function main(): Promise<void> {
     } catch (err) {
       console.error('Safari Pilot shutdown error:', err);
     }
-    process.exit(signal === 'SIGINT' ? 130 : 143);
+    const exitCode = reason === 'SIGINT' ? 130 : reason === 'SIGTERM' ? 143 : 0;
+    process.exit(exitCode);
   };
   process.on('SIGINT', () => { void gracefulShutdown('SIGINT'); });
   process.on('SIGTERM', () => { void gracefulShutdown('SIGTERM'); });
@@ -90,6 +97,24 @@ async function main(): Promise<void> {
   });
 
   const transport = new StdioServerTransport();
+  // Bug-2 (2026-05-18) — stdio EOF must flow through the same shutdown
+  // path as SIGTERM/SIGINT, otherwise the session window leaks when the
+  // parent (claude, vitest harness, etc.) closes the pipe instead of
+  // sending a signal.
+  //
+  // The MCP SDK's StdioServerTransport listens for stdin 'data' and
+  // 'error' events but NOT 'end' — so its `onclose` callback only fires
+  // when a caller explicitly invokes `transport.close()`. Closing stdin
+  // from the outside therefore does NOT propagate through the SDK; we
+  // have to listen on the raw stream ourselves. Once 'end' fires, Node's
+  // event loop drains and the process exits — registering the listener
+  // is the difference between "shutdown ran" and "Node hard-exited."
+  process.stdin.on('end', () => { void gracefulShutdown('STDIO_EOF'); });
+  // 'close' fires after 'end' (or when stdin is destroyed). Belt-and-
+  // suspenders for parents that abruptly destroy the pipe rather than
+  // closing it cleanly. gracefulShutdown is idempotent (shuttingDown
+  // flag), so double-firing is safe.
+  process.stdin.on('close', () => { void gracefulShutdown('STDIO_EOF'); });
   await server.connect(transport);
 }
 

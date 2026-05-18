@@ -63,29 +63,110 @@ async function saveTabCache() {
   }
 }
 
+// v0.1.36 F1.2 dashboard-URL handshake (2026-05-18 evening rework).
+//
+// The daemon identifies each MCP session by the URL of its dashboard tab
+// (http://127.0.0.1:19475/session?id=sess_<n>). Every daemon-side command
+// carries that URL in `cmd.sessionDashboardUrl`. The extension watches
+// tabs.onUpdated / onCreated for that URL pattern and records
+// dashboardUrl → tab.windowId (WebExtension namespace) so the candidate
+// filter can resolve session → window in the SAME namespace the cache
+// uses. The previous design (passing AppleScript window IDs) silently
+// dropped every candidate because the two ID schemes never matched.
+const SESSION_DASHBOARD_URL_PREFIX = 'http://127.0.0.1:19475/session?id=';
+const sessionDashboardUrlToWindowId = new Map();
+// Reverse mapping (tabId → dashboardUrl) so tabs.onRemoved can drop the
+// forward entry without iterating the whole Map.
+const dashboardTabIdToUrl = new Map();
+
+function registerDashboardTab(tab) {
+  if (!tab || tab.id == null || tab.windowId == null) return;
+  const url = tab.url;
+  if (typeof url !== 'string' || !url.startsWith(SESSION_DASHBOARD_URL_PREFIX)) return;
+  const prevUrl = dashboardTabIdToUrl.get(tab.id);
+  if (prevUrl && prevUrl !== url) {
+    // Tab navigated from one dashboard URL to another (or away then back).
+    // Drop the stale forward entry. The new one is rewritten below.
+    if (sessionDashboardUrlToWindowId.get(prevUrl) === tab.windowId) {
+      sessionDashboardUrlToWindowId.delete(prevUrl);
+    }
+  }
+  sessionDashboardUrlToWindowId.set(url, tab.windowId);
+  dashboardTabIdToUrl.set(tab.id, url);
+}
+
+// MV3 event pages are recycled aggressively. If Safari already has session
+// dashboard tabs open when the extension wakes up — common when a session
+// was created before the extension's event page was alive, or when the
+// page was unloaded and re-loaded mid-session — the tabs.onCreated /
+// onUpdated events for those tabs already fired and won't fire again. The
+// map would be empty, and spFilterBySession would fall back to its
+// startup-race "return all candidates" path → cross-session pollution
+// becomes possible.
+//
+// Solution: every time the event page loads, scan existing tabs once and
+// populate the map for any dashboard URLs already open. Idempotent —
+// re-registering the same (tab, url, windowId) triple is a no-op.
+async function populateSessionMapFromExistingTabs() {
+  try {
+    const tabs = await browser.tabs.query({});
+    for (const t of tabs) {
+      registerDashboardTab(t);
+    }
+  } catch {
+    // browser.tabs.query can fail in event-page wake contexts where the
+    // host hasn't fully initialised. The tabs.onCreated/onUpdated paths
+    // remain as the fallback registration mechanism.
+  }
+}
+populateSessionMapFromExistingTabs();
+
 // Top-level tab lifecycle listeners — MUST be registered synchronously at script
 // load time so Safari wakes the event page when tabs change.
 browser.tabs.onCreated.addListener((tab) => {
   if (tab.id != null) {
-    tabCacheMap.set(tab.id, { url: tab.url || '', title: tab.title || '' });
+    // v0.1.36 reviewer F1.2 — store windowId so findTargetTab can filter
+    // candidates by the originating MCP session's window. Cross-session
+    // matchers would otherwise route one agent's command into another
+    // agent's tab when two MCP sessions share a Safari instance (typical
+    // at bench concurrency).
+    tabCacheMap.set(tab.id, {
+      url: tab.url || '',
+      title: tab.title || '',
+      windowId: tab.windowId,
+    });
     saveTabCache();
+    registerDashboardTab(tab);
   }
 });
 
 browser.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-  const entry = tabCacheMap.get(tabId) || { url: '', title: '' };
+  const entry = tabCacheMap.get(tabId) || { url: '', title: '', windowId: undefined };
   if (changeInfo.url !== undefined) entry.url = changeInfo.url;
   if (changeInfo.title !== undefined) entry.title = changeInfo.title;
   // Also pick up from the full tab object if changeInfo is sparse
   if (tab.url && !entry.url) entry.url = tab.url;
   if (tab.title && !entry.title) entry.title = tab.title;
+  // F1.2: keep windowId fresh from the full tab object; tabs.onUpdated does
+  // not emit a windowId changeInfo even when the tab is moved between
+  // windows, so always sync from `tab.windowId`.
+  if (tab.windowId !== undefined) entry.windowId = tab.windowId;
   tabCacheMap.set(tabId, entry);
   saveTabCache();
+  registerDashboardTab(tab);
 });
 
 browser.tabs.onRemoved.addListener((tabId) => {
   tabCacheMap.delete(tabId);
   saveTabCache();
+  // F1.2: clean up dashboard URL mapping if this was a session dashboard
+  // tab. Leaving stale entries would mean a later command targeting the
+  // closed session's URL would still try to filter by its dead windowId.
+  const url = dashboardTabIdToUrl.get(tabId);
+  if (url) {
+    dashboardTabIdToUrl.delete(tabId);
+    sessionDashboardUrlToWindowId.delete(url);
+  }
 });
 
 // T79: clear tab-scoped selectorPack storage on tab close. Keys live under
@@ -390,7 +471,36 @@ function spMatchTabUrl(requestedUrl, candidates) {
   return bestId !== null && bestCount === 1 ? bestId : null;
 }
 
-async function findTargetTab(tabUrl) {
+// v0.1.36 reviewer F1.2 — session-scoped candidate filter. Pre-filters the
+// tab list to only those belonging to the originating MCP session's window
+// BEFORE the URL matcher fires, so cross-session tabs cannot be matched.
+// Logic mirrors extension/lib/session-filter.js (tested in
+// test/unit/extension/session-filter.test.ts). Inlined because MV3
+// background can't import ES modules.
+//
+// 2026-05-18 evening rework: signature changed from `sessionWindowId`
+// (AppleScript int — wrong namespace) to `sessionDashboardUrl` (stable
+// string identifier). The Map sessionDashboardUrlToWindowId is populated
+// by tabs.onUpdated / onCreated above whenever a tab loads a URL matching
+// SESSION_DASHBOARD_URL_PREFIX. Filtering happens in the WebExtension
+// API's windowId namespace where the cache entries also live.
+function spFilterBySession(candidates, sessionDashboardUrl) {
+  if (sessionDashboardUrl === undefined || sessionDashboardUrl === null) {
+    return candidates;
+  }
+  const wid = sessionDashboardUrlToWindowId.get(sessionDashboardUrl);
+  if (wid === undefined) {
+    // Startup race or unknown session — fail OPEN (per spec). The TS-side
+    // TabOwnershipRegistry still enforces per-session isolation by URL.
+    return candidates;
+  }
+  return candidates.filter((c) => c.windowId === wid);
+}
+
+async function findTargetTab(tabUrl, opts) {
+  const sessionDashboardUrl = (opts && opts.sessionDashboardUrl !== undefined)
+    ? opts.sessionDashboardUrl
+    : undefined;
   if (tabUrl) {
     // Test-only escape hatch: if `__sp_test_skip_tabs_query__` is set in
     // storage, the tabs.query primary path is skipped. Used by e2e tests to
@@ -405,7 +515,9 @@ async function findTargetTab(tabUrl) {
       // URL drift / www-prefix / tracking-params don't trigger TAB_NOT_FOUND.
       const all = await browser.tabs.query({});
       if (all.length > 0) {
-        const matchedId = spMatchTabUrl(tabUrl, all.map((t) => ({ id: t.id, url: t.url || '' })));
+        const liveCandidates = all.map((t) => ({ id: t.id, url: t.url || '', windowId: t.windowId }));
+        const sessionScoped = spFilterBySession(liveCandidates, sessionDashboardUrl);
+        const matchedId = spMatchTabUrl(tabUrl, sessionScoped);
         if (matchedId != null) {
           const t = all.find((x) => x.id === matchedId);
           if (t) return t;
@@ -418,9 +530,10 @@ async function findTargetTab(tabUrl) {
     if (tabCacheMap.size > 0) {
       const cacheList = [];
       for (const [tabId, info] of tabCacheMap) {
-        cacheList.push({ id: tabId, url: info.url || '' });
+        cacheList.push({ id: tabId, url: info.url || '', windowId: info.windowId });
       }
-      const matchedId = spMatchTabUrl(tabUrl, cacheList);
+      const sessionScoped = spFilterBySession(cacheList, sessionDashboardUrl);
+      const matchedId = spMatchTabUrl(tabUrl, sessionScoped);
       if (matchedId != null) {
         const info = tabCacheMap.get(matchedId);
         return { id: matchedId, url: info.url, title: info.title };
@@ -453,7 +566,11 @@ async function executeCommand(cmd) {
     return result;
   }
 
-  const tab = await findTargetTab(cmd.tabUrl);
+  // F1.2: scope candidates to the originating MCP session's Safari window
+  // when the command carries a sessionDashboardUrl. Commands without one
+  // (legacy callers, health probes, startup-race) keep pre-F1.2
+  // cross-session behaviour — see spFilterBySession header above.
+  const tab = await findTargetTab(cmd.tabUrl, { sessionDashboardUrl: cmd.sessionDashboardUrl });
   if (!tab || tab.id == null) {
     // T27: structured error so the daemon's ExtensionBridge.handleResult
     // lifts `name` into StructuredError.code. The TS-side ExtensionEngine

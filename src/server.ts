@@ -219,7 +219,13 @@ export class SafariPilotServer {
   private tools: Map<string, ToolDefinition> = new Map();
   private engines: Map<Engine, IEngine> = new Map();
   private engineAvailability = { daemon: false, extension: false };
-  private sessionId: string = `sess_${Date.now().toString(36)}`;
+  // sessionId must be unique across concurrent MCP server spawns. Date.now()
+  // alone collides when two processes start in the same millisecond (bench
+  // concurrency=4 hit this — 2026-05-18 cross-session isolation test had
+  // both Session A and B sharing one dashboard URL → F1.2 map keyed two
+  // distinct windows under one key → cross-session lookups misfired).
+  // Adding a 6-hex random suffix gives 16M-way disambiguation per ms.
+  private sessionId: string = `sess_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
   private _engine: AppleScriptEngine | null = null;
   readonly config: SafariPilotConfig;
 
@@ -1060,12 +1066,15 @@ export class SafariPilotServer {
               const parsed = parseInt(winId, 10);
               if (!isNaN(parsed)) {
                 this._sessionWindowId = parsed;
-                // F1.2 — keep ExtensionEngine's session id in sync after
-                // WINDOW_CLOSED recovery so subsequent extension_execute
-                // payloads carry the new window id.
+                // F1.2 (2026-05-18 rework) — re-stamp the dashboard URL on
+                // the engine after WINDOW_CLOSED recovery. The URL itself
+                // doesn't change between session resets — sessionTabUrl is
+                // assigned once per server instance — but the engine may
+                // have been re-instantiated. setSessionDashboardUrl is
+                // idempotent on the same value.
                 const ext = this.engines.get('extension');
                 if (ext instanceof ExtensionEngine) {
-                  ext.setSessionWindowId(parsed);
+                  ext.setSessionDashboardUrl(this.sessionTabUrl);
                 }
               }
             } catch { /* best effort */ }
@@ -1638,14 +1647,17 @@ end tell'`,
     }
     this._sessionWindowId = windowId;
     this._sessionTabOpened = true;
-    // F1.2 — surface the session window id to ExtensionEngine so every
-    // extension_execute payload carries it. background.js's findTargetTab
-    // filters candidate tabs by windowId === sessionWindowId before the URL
-    // matcher fires, preventing cross-session pollution when two MCP
-    // sessions share a Safari instance (bench concurrency case).
+    // F1.2 (2026-05-18 rework) — surface the session DASHBOARD URL to
+    // ExtensionEngine so every extension_execute payload carries it.
+    // The dashboard URL is the stable string identifier the extension's
+    // tabs.onUpdated listener uses to register dashboardUrl → WebExt
+    // windowId in sessionDashboardUrlToWindowId. Filtering then happens
+    // in the WebExtension namespace (where cache entries live) — not in
+    // the AppleScript namespace (where _sessionWindowId lives), which
+    // was the pre-rework F1.2's broken assumption.
     const ext = this.engines.get('extension');
     if (ext instanceof ExtensionEngine) {
-      ext.setSessionWindowId(windowId);
+      ext.setSessionDashboardUrl(this.sessionTabUrl);
     }
     trace(traceId, 'server', 'session_window_created', { windowId });
   }

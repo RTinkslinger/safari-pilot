@@ -90,25 +90,11 @@ echo "════════════════════════�
 
 # Fix C (2026-05-18) — Safari prewarm. The 2026-05-18 batch probe RCA
 # §4 Factor 1 measured 73 "no front window" AppleScript errors at task
-# start vs 5 in the matched envelope-only probe. The cleanup race
-# (Fix D, below) was the primary cause; this prewarm is the
-# belt-and-suspenders. `activate` is idempotent — if Safari already has
-# a window, nothing happens; otherwise it brings up the start page so
-# the agent's first `safari_new_tab` doesn't trip on -1719.
+# start. `activate` is idempotent — if Safari already has a window,
+# nothing happens; if not, it brings up the start page so the MCP
+# server's ensureSessionWindow() has something to drop a `make new
+# document` call into.
 osascript -e 'tell application "Safari" to activate' 2>/dev/null || true
-
-# Snapshot existing tab URLs BEFORE agent runs (so we know what NOT to close)
-SNAPSHOT_FILE=$(mktemp /tmp/wv-snapshot.XXXXXX)
-osascript -e 'tell application "Safari"
-  set urls to ""
-  repeat with w in (every window)
-    repeat with t in (tabs of w)
-      set urls to urls & (URL of t) & "
-"
-    end repeat
-  end repeat
-  return urls
-end tell' 2>/dev/null > "$SNAPSHOT_FILE"
 
 cd "$REPO_ROOT"
 
@@ -141,8 +127,18 @@ export MAX_WALL_MS="${MAX_WALL_MS:-1200000}"
 # one arg. Neither value contains whitespace, so word-splitting is safe
 # here and survives `set -u` (vs. `"${arr[@]}"` on an empty array, which
 # trips it).
-SAFARI_PILOT_NO_SESSION_WINDOW=1 \
-  claude $CLAUDE_BARE_FLAG --dangerously-skip-permissions --mcp-config .mcp.json \
+#
+# Per-window isolation (2026-05-18 evening): SAFARI_PILOT_NO_SESSION_WINDOW
+# was removed. Each spawned `claude` boots its own MCP server, which calls
+# ensureSessionWindow() at start — `make new document` creates a dedicated
+# Safari window for that session, captured as _sessionWindowId. The MCP
+# server's shutdown handler calls closeSessionWindow() on stdio EOF,
+# which `close window id N`s the entire window (and every tab in it).
+# Concurrent bench tasks each get their own window; sibling tasks never
+# share a window so cleanup races are structurally impossible. Orphans
+# from SIGKILLed children are reaped by closeOrphanedSessionWindows() on
+# the next session's start.
+claude $CLAUDE_BARE_FLAG --dangerously-skip-permissions --mcp-config .mcp.json \
     -p "$(cat "$PROMPT_FILE")" --verbose --output-format stream-json \
     < /dev/null 2>&1 \
     | tee "$STREAM_JSONL" \
@@ -156,52 +152,12 @@ rm -f "$PROMPT_FILE"
 END_TS=$(date +%s)
 WALL_MS=$(( (END_TS - START_TS) * 1000 ))
 
-# Fix D (2026-05-18) — per-task cleanup, derived from THIS task's
-# stream.jsonl. The previous "close anything not in pre-snapshot" approach
-# was racy at concurrency=4: Task A's pre-snapshot didn't include
-# concurrent Task B's mid-execution tabs, so A's cleanup would close B's
-# tabs. The 2026-05-18 batch probe RCA Q-a documented 41 confirmed
-# "confirmed-then-TAB_NOT_FOUND" events across 21 distinct tasks caused
-# by this race.
-#
-# New cleanup: derive-task-tabs.py parses stream.jsonl for successful
-# safari_new_tab + safari_navigate response payloads → emits the set of
-# URLs THIS agent actually opened/visited. Cleanup closes any tab whose
-# CURRENT URL is in that set AND is NOT in the pre-snapshot (so sibling
-# tasks' tabs and user tabs are untouched).
-TASK_URLS_FILE=$(mktemp /tmp/wv-task-urls.XXXXXX)
-python3 "$REPO_ROOT/bench/webvoyager/derive-task-tabs.py" "$STREAM_JSONL" \
-  > "$TASK_URLS_FILE" 2>/dev/null || true
-
-CLEANUP_SCRIPT=$(mktemp /tmp/wv-cleanup.XXXXXX)
-{
-  echo 'tell application "Safari"'
-  echo '  set snapshotUrls to {}'
-  while IFS= read -r line; do
-    [ -z "$line" ] && continue
-    safe=$(printf '%s' "$line" | sed 's/\\/\\\\/g; s/"/\\"/g')
-    echo "  set end of snapshotUrls to \"$safe\""
-  done < "$SNAPSHOT_FILE"
-  echo '  set taskUrls to {}'
-  while IFS= read -r line; do
-    [ -z "$line" ] && continue
-    safe=$(printf '%s' "$line" | sed 's/\\/\\\\/g; s/"/\\"/g')
-    echo "  set end of taskUrls to \"$safe\""
-  done < "$TASK_URLS_FILE"
-  echo '  repeat with w in (every window)'
-  echo '    set tCount to count of tabs of w'
-  echo '    repeat with i from tCount to 1 by -1'
-  echo '      try'
-  echo '        set t to tab i of w'
-  echo '        set tUrl to URL of t'
-  echo '        if (taskUrls contains tUrl) and (snapshotUrls does not contain tUrl) then close t'
-  echo '      end try'
-  echo '    end repeat'
-  echo '  end repeat'
-  echo 'end tell'
-} > "$CLEANUP_SCRIPT"
-CLEANED=$(perl -e 'alarm 8; exec @ARGV' osascript "$CLEANUP_SCRIPT" 2>&1; echo $?)
-rm -f "$CLEANUP_SCRIPT" "$SNAPSHOT_FILE" "$TASK_URLS_FILE"
+# Per-window isolation (2026-05-18 evening): cleanup is now owned by the
+# MCP server's shutdown path (closeSessionWindow → `close window id N`),
+# which fires on stdio EOF when claude exits. No bash-side cleanup needed,
+# and no derive-task-tabs / pre-snapshot diff (both removed) — the entire
+# session window dies with its claude child. closeOrphanedSessionWindows
+# on the NEXT session's start reaps any window left behind by a SIGKILL.
 
 # Build score.json + transcript
 python3 - "$STREAM_JSONL" "$SCORE_FILE" "$TRANSCRIPT" "$TASK_ID" "$WALL_MS" "$EXIT" "$SCREENSHOT" "$VARIANT_TAG" "$RUN_SEQ" <<'PYEOF'
