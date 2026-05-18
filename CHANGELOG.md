@@ -1,5 +1,114 @@
 # Changelog
 
+## v0.1.36 (2026-05-19) — Per-window session isolation
+
+Every MCP session — every bench task, every claude conversation — now opens
+its own dedicated Safari window via the daemon's `ensureSessionWindow`
+path. The window closes automatically when the session ends (claude exits,
+SIGTERM, or stdio EOF). Cross-session pollution is structurally prevented
+at the extension layer.
+
+The user-visible outcome: tabs no longer pile up. When a bench probe at
+concurrency=4 finishes, Safari is back to whatever windows existed before
+it started.
+
+### Added
+
+- **F1.2 dashboard-URL handshake**: every daemon → extension command now
+  carries the session's dashboard URL (`http://127.0.0.1:19475/session?id=sess_<n>`),
+  a stable string identifier that crosses the AppleScript ↔ WebExtension
+  API boundary safely. `extension/background.js` watches
+  `tabs.onUpdated`/`onCreated` for that URL pattern and populates
+  `sessionDashboardUrlToWindowId`. The candidate filter
+  (`extension/lib/session-filter.js`) resolves the URL via that Map and
+  filters in the WebExtension namespace where cache entries actually live.
+  The pre-rework version of F1.2 sent the AppleScript `id of window N`,
+  which lives in a different integer namespace from the cache's
+  `tab.windowId` — they never matched, and the filter silently dropped
+  every candidate.
+
+- **stdio-EOF graceful shutdown** in `src/index.ts`: registers
+  `process.stdin.on('end')` and `on('close')` listeners that call
+  `gracefulShutdown('STDIO_EOF')`. The MCP SDK's `StdioServerTransport`
+  listens for stdin 'data' and 'error' but NOT 'end', so its `onclose`
+  callback only fires on explicit `transport.close()`. claude exits its
+  child via pipe close (no signal), Node drained the event loop before
+  the SIGTERM-only handler could run — the session window leaked. The new
+  handlers close it via `closeSessionWindow` before exiting. Exit code 0
+  on the EOF path (clean drain); SIGINT keeps 130, SIGTERM keeps 143.
+
+- **`bench/webvoyager/probe-analysis.py`**: aggregates a probe directory
+  into median/mean wall + turns, verdict distribution, and error counts
+  against the configured ship-gate criteria. Replaces the throwaway
+  `/tmp/rca-batch-probe/postfix-analysis.py` used during the 2026-05-18
+  RCA — that script lived in `/tmp` and got wiped on a Claude Code
+  crash; this one lives in-tree.
+
+### Fixed
+
+- **`parseJsResult` empty=CSP_BLOCKED false positive**
+  (`src/engines/js-helpers.ts`, `src/engines/applescript.ts`).
+  `parseJsResult` now takes `opts.isJsExecution`. `AppleScriptEngine.execute()`
+  passes `isJsExecution: false`, so empty stdout from non-JS callers
+  (`safari_list_tabs` against a 0-window Safari, etc.) resolves to
+  `ok:true, value:''` instead of being mis-labeled CSP_BLOCKED.
+  `executeJsInTab` keeps the empty=CSP invariant on the JS path. The
+  2026-05-18 batch probe saw 55/61 of its CSP_BLOCKED errors collapse to
+  zero after this fix landed.
+
+- **`handleNewTab` no-front-window recovery**
+  (`src/tools/navigation.ts:263-303`). When `_sessionWindowId` is undefined
+  (bench mode without the session window) and Safari has zero windows,
+  AppleScript's `tell front window` returned `-1719` / `-1700`. The new
+  branch activates Safari and retries `buildNewTabScript` once when both
+  conditions are met. The batch probe's 73 no-front-window errors are
+  zero post-fix.
+
+- **`bench/webvoyager/run-one-task.sh` per-task cleanup race**. The pre-fix
+  cleanup logic captured a pre-snapshot of Safari tab URLs at task start
+  and closed "anything not in the snapshot" at task end. At concurrency 4,
+  Task A's pre-snapshot didn't include Task B's mid-execution tabs → A's
+  cleanup closed B's tabs. The 2026-05-18 RCA documented 41 such
+  confirmed-then-TAB_NOT_FOUND events. v0.1.36 removes the per-task
+  cleanup entirely: the per-window session model means each task's tabs
+  live in their own window, and `closeSessionWindow` on stdio EOF closes
+  the entire window.
+
+- **sessionId uniqueness under concurrent spawn** (`src/server.ts:222`).
+  `sess_${Date.now().toString(36)}` collided when two MCP servers spawned
+  in the same millisecond — the F1.2 map keyed two distinct windows under
+  one key, and cross-session lookups misfired. Added a 6-hex random
+  suffix for 16M-way disambiguation per ms.
+
+### 50-task probe — ship-gate verification
+
+Same 50-task subset as the 2026-05-18 evening regressed probe
+(Allrecipes/Amazon/Coursera/ESPN 0-12, concurrency 4, Max-billed). Full
+report at `bench-runs/v0136-probes/RESULTS-perwin.md`.
+
+| Metric | Regressed batch+dev.10 | Envelope-only baseline | Per-window v0.1.36 |
+|---|---:|---:|---:|
+| Median wall | 369s | 324s | **348s** (+7.4% vs baseline) |
+| Median turns | 23.5 | 14 | **15** (+7.1% vs baseline) |
+| CSP_BLOCKED | 61 | low | **0** |
+| No-window AppleScript errors | 73 | low | **0** |
+| TAB_NOT_FOUND | 51 | low | **13** (−75% vs regressed) |
+
+4/5 ship gates hard PASS, 1/5 borderline pass at 75% reduction. The
+residual 13 TAB_NOT_FOUND trace to a known slow-path where F1.2
+correctly rejects a candidate but the extension takes ~15s to surface
+the no-match instead of milliseconds. Response-path optimization is
+captured for v0.1.37.
+
+### Watch-list for v0.1.37
+
+- Slow-path TAB_NOT_FOUND surfacing (15s → ms when the F1.2 filter rejects).
+- Cross-session F1.2 filter behavior on same-site adjacency (the full
+  WebVoyager 643-task benchmark has 49 Amazon tasks etc. — captured but
+  not exercised by this probe).
+- Apply the per-window model to the standalone `safari_pilot` CLI hooks
+  and the `/safari-pilot:stats` skill path.
+
 ## v0.1.33 (2026-05-12) — Daemon HTTP-layer hardening
 
 Pure-bugfix release. No new tools, skills, or commands. The TS-side feature
