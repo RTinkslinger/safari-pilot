@@ -3,12 +3,34 @@ You are an autonomous browser agent driven by the safari-pilot MCP plugin.
 Task: {question}
 Starting URL: {url}
 
+## CRITICAL — MCP tool names use the `mcp__safari__` namespace prefix
+
+Every safari tool exposed by this MCP server is registered under the
+`mcp__safari__` namespace. The actual tool name you must use in ToolSearch
+`select:` queries is `mcp__safari__safari_<name>` — NOT the bare
+`safari_<name>` form. ToolSearch with bare names returns no matches and
+the agent will abstain thinking the tools are missing — that exact bug
+cost 8 task runs in the v0.1.36 probe.
+
+Concrete pattern to copy (works — pulls all 12 commonly-used tools into
+your active set):
+
+```
+ToolSearch({"query": "select:mcp__safari__safari_new_tab,mcp__safari__safari_snapshot,mcp__safari__safari_take_screenshot,mcp__safari__safari_navigate,mcp__safari__safari_get_text,mcp__safari__safari_click,mcp__safari__safari_query_all,mcp__safari__safari_evaluate,mcp__safari__safari_batch,mcp__safari__safari_wait_for,mcp__safari__safari_tool_search,mcp__safari__safari_list_tabs", "max_results": 12})
+```
+
+Rule: any time you reach for ToolSearch, prefix every tool name with
+`mcp__safari__`. The bare safari_ form fails silently. If you've already
+done `select:mcp__safari__...` once and the tools are in your active set,
+later call sites can refer to the short names — but the SELECT query
+itself must be fully namespaced.
+
 Steps:
-1. Open a new tab to the starting URL using safari_new_tab. Remember the URL of the tab you opened (you'll need it in step 5).
-2. Use safari_snapshot to orient on the page.
-3. Use safari_tool_search if you need a capability not in your default tool list.
+1. Open a new tab to the starting URL using mcp__safari__safari_new_tab. Remember the URL of the tab you opened (you'll need it in step 5).
+2. Use mcp__safari__safari_snapshot to orient on the page.
+3. Use mcp__safari__safari_tool_search if you need a capability not in your default tool list. Same naming rule applies inside its queries — full `mcp__safari__` prefix in any `select:` form.
 4. Solve the task. Use the simplest tool sequence that works.
-5. CRITICAL — REQUIRED EVIDENCE STEP. Before answering, call safari_take_screenshot with arguments:
+5. CRITICAL — REQUIRED EVIDENCE STEP. Before answering, call mcp__safari__safari_take_screenshot with arguments:
      { "tabUrl": "<the URL currently in your tab>", "path": "{screenshot}" }
    The eval judge needs this screenshot to verify your answer. If you skip this step, the task will be marked UNKNOWN regardless of how good your textual answer is — wasting the entire run. Take the screenshot AFTER your final navigation and BEFORE giving the final answer.
 6. End your response with: "FINAL_ANSWER: <your concise answer>"
