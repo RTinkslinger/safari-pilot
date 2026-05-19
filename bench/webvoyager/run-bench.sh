@@ -60,7 +60,15 @@ while IFS= read -r tid; do
   [[ -z "$tid" ]] && continue
   for ((r=1; r<=RUNS; r++)); do
     while [[ $(jobs -r | wc -l) -ge $CONCURRENCY ]]; do sleep 0.5; done
+    # Hard external wall-cap (1500s = 25 min) so a hung child can't pin
+    # the launcher forever — the v0.1.36 Playwright probe had two tasks
+    # zombie for 14h each before being noticed. WallCapEnforcer inside
+    # the agent is supposed to cap at MAX_WALL_MS (default 20m) but if
+    # it fails to fire (extension or daemon wedged), this perl-alarm
+    # terminates the process tree externally. 5 min of slack above
+    # MAX_WALL_MS so a legitimately-near-cap task isn't truncated.
     WV_OUT_DIR="$OUT_DIR" WV_VARIANT="$VARIANT_TAG" WV_RUN_SEQ="$r" WV_DATASET="$DATASET" \
+      perl -e 'alarm 1500; exec @ARGV' \
       bash "$REPO_ROOT/bench/webvoyager/run-one-task.sh" "$tid" &
   done
 done <<< "$TASK_IDS"
