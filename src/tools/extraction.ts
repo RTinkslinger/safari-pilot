@@ -1,4 +1,4 @@
-import { writeFile, readFile, unlink } from 'node:fs/promises';
+import { writeFile, readFile, unlink, stat } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { buildRefSelector, generateSnapshotJs } from '../aria.js';
@@ -12,6 +12,47 @@ import { loadConfig } from '../config.js';
 import { wrapEngineError } from '../errors.js';
 
 const execFileP = promisify(execFile);
+
+/**
+ * v0.1.37 fix #2 — Verify a screenshot file actually landed on disk
+ * with non-trivial content. Empirically (v0.1.36 c=4 probe, ~10 of 22
+ * SP-lost tasks) `safari_take_screenshot` returned `is_error:None` with
+ * an [IMAGE] body but no file at `params.path`. The downstream effect
+ * was bench harness writing `screenshot_path: null` into score.json,
+ * judge marking task UNKNOWN. This helper converts those silent
+ * failures into observable `CAPTURE_FAILED` errors.
+ *
+ * Threshold = 100 bytes: real screenshots are always kilobytes; a
+ * sub-100-byte PNG is a silent capture failure (captureVisibleTab
+ * returned an empty data URL, screencapture got truncated, etc.).
+ */
+export async function verifyScreenshotWrittenOrThrow(path: string): Promise<void> {
+  let size: number;
+  try {
+    const s = await stat(path);
+    size = s.size;
+  } catch (err) {
+    const errno = (err as NodeJS.ErrnoException).code;
+    const msg = errno === 'ENOENT'
+      ? `Screenshot file not written: "${path}" is missing after writeFile completed (silent capture failure)`
+      : `Screenshot file stat failed: ${(err as Error).message ?? String(err)}`;
+    const e = new Error(msg);
+    (e as Error & { code?: string }).code = 'CAPTURE_FAILED';
+    throw e;
+  }
+  if (size === 0) {
+    const e = new Error(`Screenshot empty: "${path}" is zero bytes (silent capture failure)`);
+    (e as Error & { code?: string }).code = 'CAPTURE_FAILED';
+    throw e;
+  }
+  if (size < 100) {
+    const e = new Error(
+      `Screenshot too small: "${path}" is ${size} bytes — suspect silent capture failure (real PNG screenshots are always kilobytes)`,
+    );
+    (e as Error & { code?: string }).code = 'CAPTURE_FAILED';
+    throw e;
+  }
+}
 
 export interface ToolDefinition {
   name: string;
@@ -872,6 +913,13 @@ export class ExtractionTools {
     if (savePath) {
       const buf = Buffer.from(base64, 'base64');
       await writeFile(savePath, buf);
+      // v0.1.37 fix #2 — verify the file landed before declaring success.
+      // The data showed `is_error:None` + [IMAGE] body shipping while the
+      // file on disk was missing or sub-100B in ~10 of 22 SP-lost tasks
+      // in the v0.1.36 c=4 probe. The throw here converts that silent
+      // failure into a structured CAPTURE_FAILED the agent (and judge)
+      // can observe.
+      await verifyScreenshotWrittenOrThrow(savePath);
     }
 
     return {
