@@ -1480,6 +1480,44 @@ async function wakeSequence(reason) {
   catch (e) { emitTrace('__wake__', 'wake_cleanup_error', { errName: e?.name, errMessage: e?.message }); }
 }
 
+// T08 (v0.1.38) — ad/tracking block rules. Ad-heavy pages (recipe sites,
+// news) load programmatic-ad + analytics JS that wedges Safari's WebContent
+// main thread, timing out every extension tool (Allrecipes--0/1/4, Amazon--3,
+// ESPN--1 catastrophically regressed: 300-979s/18-46 turns). Blocking these
+// domains at the network layer (declarativeNetRequest) BEFORE the page loads
+// prevents the wedge — the robust fix the bounded wedge-retry only partially
+// mitigates. Fixed rule IDs 9001+ avoid collision with the caller-supplied
+// auth DNR rules (handleDnrAddRule). Idempotent: clears then re-adds.
+const AD_BLOCK_RULE_BASE_ID = 9001;
+const AD_BLOCK_DOMAINS = [
+  'doubleclick.net', 'googlesyndication.com', 'google-analytics.com',
+  'googletagmanager.com', 'googletagservices.com', 'adservice.google.com',
+  'amazon-adsystem.com', 'adsystem.com', 'adnxs.com', 'scorecardresearch.com',
+  'moatads.com', 'adsrvr.org', 'pubmatic.com', 'rubiconproject.com',
+  'criteo.com', 'criteo.net', 'taboola.com', 'outbrain.com',
+  'casalemedia.com', '3lift.com', 'indexww.com', 'openx.net',
+  'quantserve.com', 'bidswitch.net', 'sharethrough.com', 'teads.tv',
+];
+async function registerAdBlockRules() {
+  try {
+    if (!browser.declarativeNetRequest || typeof browser.declarativeNetRequest.updateDynamicRules !== 'function') return;
+    const ids = AD_BLOCK_DOMAINS.map((_, i) => AD_BLOCK_RULE_BASE_ID + i);
+    const rules = AD_BLOCK_DOMAINS.map((domain, i) => ({
+      id: AD_BLOCK_RULE_BASE_ID + i,
+      priority: 1,
+      action: { type: 'block' },
+      condition: {
+        urlFilter: `||${domain}`,
+        resourceTypes: ['script', 'xmlhttprequest', 'sub_frame', 'image', 'ping', 'media'],
+      },
+    }));
+    await browser.declarativeNetRequest.updateDynamicRules({ removeRuleIds: ids, addRules: rules });
+    emitTrace('__init__', 'adblock_rules_registered', { count: rules.length });
+  } catch (e) {
+    emitTrace('__init__', 'adblock_rules_error', { errName: e?.name, errMessage: e?.message });
+  }
+}
+
 async function initialize(reason) {
   if (isWakeRunning) {
     // T60 diagnostic: when alarm fires while a prior setup is still in
@@ -1499,6 +1537,9 @@ async function initialize(reason) {
     if (!alarms.some(a => a.name === KEEPALIVE_ALARM_NAME)) {
       browser.alarms.create(KEEPALIVE_ALARM_NAME, { periodInMinutes: KEEPALIVE_PERIOD_MIN });
     }
+    // T08 — register ad/tracking block rules (idempotent) so ad-heavy pages
+    // don't wedge the WebContent main thread. Best-effort; doesn't block init.
+    await registerAdBlockRules();
     await wakeSequence(reason);
     while (wakePending) {
       wakePending = false;
