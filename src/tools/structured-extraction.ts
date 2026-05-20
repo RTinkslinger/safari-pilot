@@ -30,10 +30,9 @@ export class StructuredExtractionTools {
       {
         name: 'safari_smart_scrape',
         description:
-          'Heuristic schema-driven extraction via 5 DOM patterns (label→input, heading→sibling, dt→dd, th→adjacent-td, meta tag). ' +
-          'Best for SINGLE OBJECT extraction from pages with structured markup (label-value pairs, definition lists, table rows). ' +
-          'WARNING: returns null for fields it cannot heuristically identify — fields commonly miss on card-list pages or pages without structured markup. ' +
-          'For LIST extraction (array fields like {results: [...]}, search-results cards, product grids) prefer safari_evaluate with an IIFE that uses document.querySelectorAll + map — that is what Playwright agents do, and Bug-MCP-1 v0.1.37+ wraps the result reliably.',
+          'Heuristic schema-driven extraction of a SINGLE object via DOM patterns (label→value, headings, tables, meta tags). ' +
+          'Use when a page has structured markup and you need keyed fields; returns null for unmatched fields — ' +
+          'for LIST/array extraction prefer safari_evaluate with a querySelectorAll+map IIFE.',
         inputSchema: {
           type: 'object',
           properties: {

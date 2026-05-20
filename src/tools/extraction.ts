@@ -355,12 +355,9 @@ export class ExtractionTools {
       {
         name: 'safari_evaluate',
         description:
-          'Run an arbitrary JavaScript expression in the page context. ' +
-          'Accepts any of: a bare expression (`document.title`), a self-invoked arrow IIFE (`(() => x)()`), ' +
-          'an async IIFE (`(async () => x)()`), a top-level await expression (`await fetch(...).then(r => r.json())`), ' +
-          'or a multi-statement script using a literal top-level `return X;`. ' +
-          'Returns `{ value, type }` where `type` is `typeof value` after JSON serialization. ' +
-          'Use when no higher-level tool fits the extraction or DOM-interaction shape you need.',
+          'Run a JavaScript expression in the page and return its value as `{value, type}`. ' +
+          'Use when no higher-level tool fits — accepts bare expressions, IIFEs (`(() => x)()`), ' +
+          'async IIFEs, top-level await, or multi-statement scripts with a literal top-level `return X`.',
         inputSchema: {
           type: 'object',
           properties: {

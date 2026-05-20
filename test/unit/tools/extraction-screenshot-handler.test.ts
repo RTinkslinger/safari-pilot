@@ -44,12 +44,22 @@ vi.mock('node:fs/promises', () => ({
   unlink: (...args: unknown[]) => unlinkMock(...(args as Parameters<typeof unlinkMock>)),
 }));
 
-// Import AFTER mocks are declared so extraction.ts captures the mocked symbols.
-import { ExtractionTools } from '../../../src/tools/extraction.js';
 import type { IEngine } from '../../../src/engines/engine.js';
 import type { EngineResult } from '../../../src/types.js';
 
-beforeEach(() => {
+// Under the repo's `isolate: false` + `singleFork` vitest config, module
+// mocks can leak across files: if another test file imports extraction.ts
+// (which binds execFile via `promisify(execFile)` at module load) BEFORE
+// this file's vi.mock applies, the screenshot handler ends up with the REAL
+// execFile — and the fallback-path tests run a live `screencapture` instead
+// of the controllable mock (base64 mismatch). Fix: reset the module registry
+// and re-import ExtractionTools fresh in beforeEach so the hoisted vi.mock
+// always binds. Keeps this suite order-independent.
+let ExtractionTools: typeof import('../../../src/tools/extraction.js').ExtractionTools;
+
+beforeEach(async () => {
+  vi.resetModules();
+  ({ ExtractionTools } = await import('../../../src/tools/extraction.js'));
   execFileMock.mockClear();
   readFileMock.mockClear();
   writeFileMock.mockClear();

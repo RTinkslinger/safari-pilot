@@ -1,11 +1,26 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from 'vitest';
 import { readFileSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { verifyScreenshotWrittenOrThrow, ExtractionTools } from '../../../src/tools/extraction.js';
 import { SafariPilotError } from '../../../src/errors.js';
 import type { IEngine } from '../../../src/engines/engine.js';
 import type { EngineResult } from '../../../src/types.js';
+
+// This file needs the REAL node:fs/promises (verifyScreenshotWrittenOrThrow
+// stat()s real temp files). Under `isolate: false`, a sibling test
+// (extraction-screenshot-handler) mocks node:fs/promises, and the shared
+// extraction.ts module instance can carry that mock here. Reset the module
+// registry + re-import fresh in beforeEach so extraction.ts binds the real
+// fs/promises for this file. Order-independent.
+let verifyScreenshotWrittenOrThrow: typeof import('../../../src/tools/extraction.js').verifyScreenshotWrittenOrThrow;
+let ExtractionTools: typeof import('../../../src/tools/extraction.js').ExtractionTools;
+
+beforeEach(async () => {
+  vi.resetModules();
+  vi.doUnmock('node:fs/promises');
+  vi.doUnmock('node:child_process');
+  ({ verifyScreenshotWrittenOrThrow, ExtractionTools } = await import('../../../src/tools/extraction.js'));
+});
 
 // v0.1.37 fix #2 — `safari_take_screenshot` returned is_error:None with
 // an [IMAGE] body in the v0.1.36 c=4 probe for ~10 of 22 SP-lost tasks,
