@@ -61,9 +61,17 @@ if [ -z "$URL" ] || [ -z "$QUES" ]; then
   exit 1
 fi
 
-# Build prompt by interpolating the template at bench/webvoyager/prompt-template.md
+# Build prompt by interpolating the template.
+#   WV_BARE_PROMPT=1 -> 3-line symmetric scaffold (prompt-template-bare.md).
+#     Used for the "no custom prompt" parity comparison against Playwright.
+#     Tool descriptions become the only signal — agent must auto-discover.
+#   default          -> heavy prompt-template.md (namespace rule, batching, error envelope).
+TEMPLATE_NAME="prompt-template.md"
+if [ "${WV_BARE_PROMPT:-0}" = "1" ]; then
+  TEMPLATE_NAME="prompt-template-bare.md"
+fi
 PROMPT_FILE=$(mktemp /tmp/wv-prompt.XXXXXX)
-PROMPT_TEMPLATE=$(cat "$REPO_ROOT/bench/webvoyager/prompt-template.md")
+PROMPT_TEMPLATE=$(cat "$REPO_ROOT/bench/webvoyager/$TEMPLATE_NAME")
 PROMPT="${PROMPT_TEMPLATE//\{url\}/$URL}"
 PROMPT="${PROMPT//\{question\}/$QUES}"
 PROMPT="${PROMPT//\{screenshot\}/$SCREENSHOT}"
@@ -95,6 +103,18 @@ echo "════════════════════════�
 # server's ensureSessionWindow() has something to drop a `make new
 # document` call into.
 osascript -e 'tell application "Safari" to activate' 2>/dev/null || true
+
+# Window-leak detection (goal constraint): capture pre-run window count.
+# Post-run delta != 0 means cleanup failed — score.json verdict flips UNKNOWN.
+#
+# CAVEAT (2026-05-20): the global-window-count signal is RELIABLE ONLY IN
+# SERIAL MODE. Parallel runs see each other's session windows in the
+# global count, producing delta=N false positives where N = sibling runs
+# still alive at sample time. For accurate leak detection use serial
+# runs, or set WV_SKIP_WINDOW_LEAK=1 to record the count but not flip
+# verdict to UNKNOWN. Long-term fix in task #28: query the MCP server
+# for its own session-window-ID lifecycle.
+SAFARI_WIN_PRE=$(osascript -e 'tell application "Safari" to count of windows' 2>/dev/null || echo 0)
 
 cd "$REPO_ROOT"
 
@@ -159,10 +179,16 @@ WALL_MS=$(( (END_TS - START_TS) * 1000 ))
 # session window dies with its claude child. closeOrphanedSessionWindows
 # on the NEXT session's start reaps any window left behind by a SIGKILL.
 
+# Post-run window count for leak detection. Sample after a small settle
+# delay so a still-closing window doesn't read as leaked.
+sleep 1
+SAFARI_WIN_POST=$(osascript -e 'tell application "Safari" to count of windows' 2>/dev/null || echo 0)
+WIN_DELTA=$(( SAFARI_WIN_POST - SAFARI_WIN_PRE ))
+
 # Build score.json + transcript
-python3 - "$STREAM_JSONL" "$SCORE_FILE" "$TRANSCRIPT" "$TASK_ID" "$WALL_MS" "$EXIT" "$SCREENSHOT" "$VARIANT_TAG" "$RUN_SEQ" <<'PYEOF'
+python3 - "$STREAM_JSONL" "$SCORE_FILE" "$TRANSCRIPT" "$TASK_ID" "$WALL_MS" "$EXIT" "$SCREENSHOT" "$VARIANT_TAG" "$RUN_SEQ" "$SAFARI_WIN_PRE" "$SAFARI_WIN_POST" "$WIN_DELTA" <<'PYEOF'
 import json, os, sys
-stream, score_path, trans_path, tid, wall, exit_code, shot, variant, run_seq = sys.argv[1:10]
+stream, score_path, trans_path, tid, wall, exit_code, shot, variant, run_seq, win_pre, win_post, win_delta = sys.argv[1:13]
 final = ''
 turns = 0
 cost = 0.0
@@ -180,12 +206,22 @@ for line in open(stream):
         cost = d.get('total_cost_usd',0)
         duration = d.get('duration_ms',0)
 shot_present = os.path.exists(shot)
-verdict = 'PENDING_JUDGE' if shot_present and final else 'UNKNOWN'
+win_delta_i = int(win_delta)
+window_leaked = win_delta_i != 0
+skip_leak_verdict = os.environ.get('WV_SKIP_WINDOW_LEAK', '0') == '1'
+if not shot_present:
+    verdict = 'UNKNOWN'; reason = 'screenshot capture failed'
+elif not final:
+    verdict = 'UNKNOWN'; reason = 'no final answer'
+elif window_leaked and not skip_leak_verdict:
+    verdict = 'UNKNOWN'; reason = f'safari window leak: pre={win_pre} post={win_post} delta={win_delta_i}'
+else:
+    verdict = 'PENDING_JUDGE'; reason = ''
 d = {
   'task_id': tid,
   'variant': variant,
   'verdict': verdict,
-  'judge_reasoning': '' if shot_present else 'screenshot capture failed',
+  'judge_reasoning': reason,
   'agent_final_text': final,
   'run_seq': int(run_seq),
   'wall_ms': int(wall),
@@ -194,6 +230,10 @@ d = {
   'cost_usd': cost,
   'screenshot_path': shot if shot_present else None,
   'exit_code': int(exit_code),
+  'safari_window_count_pre': int(win_pre),
+  'safari_window_count_post': int(win_post),
+  'safari_window_delta': win_delta_i,
+  'window_leaked': window_leaked,
 }
 with open(score_path,'w') as f: json.dump(d,f,indent=2)
 with open(trans_path,'w') as f:

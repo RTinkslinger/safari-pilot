@@ -1842,9 +1842,77 @@ end tell'`,
     // see stray `example.com` windows accumulate across MCP server lifecycles.
     // Uses direct execSync with a short timeout so an unresponsive Safari can't
     // deadlock the shutdown path.
+    //
+    // T04 (2026-05-20) — count session-titled windows BEFORE closing ours so we
+    // know whether any other live MCP sessions own a session window. If we're
+    // the only one, sweep any session-titled windows that remain AFTER our
+    // windowId-based close — that catches non-deterministic windowId-race
+    // leaks (closeSessionWindow returning "not_found" while our actual window
+    // persists). Skipping the sweep when other sessions exist preserves their
+    // windows.
+    const sessionTitledBefore = await this.countSessionTitledWindows();
     await this.closeSessionWindow();
+    // Other sessions ≈ titled-windows - ourselves. If we owned one and
+    // closeSessionWindow attempted to close it, count - 1; if we didn't own
+    // one (rare boot path), count - 0. Use count - 1 as the conservative
+    // estimate; sweep only when 0 estimated others.
+    const otherSessionsLive = Math.max(0, sessionTitledBefore - 1);
+    if (otherSessionsLive === 0) {
+      await this.sweepRemainingSessionWindows();
+    } else {
+      trace('shutdown', 'server', 'sweep_skipped', {
+        reason: 'other_live_sessions',
+        sessionTitledBefore,
+        otherSessionsLive,
+      });
+    }
     for (const engine of this.engines.values()) {
       await engine.shutdown();
+    }
+  }
+
+  private async countSessionTitledWindows(): Promise<number> {
+    try {
+      const { execSync } = await import('node:child_process');
+      const out = execSync(
+        `osascript -e 'tell application "Safari" to return (count of (every window whose name is "Safari Pilot — Active Session"))'`,
+        { timeout: 2000, encoding: 'utf-8' },
+      ).trim();
+      const n = parseInt(out, 10);
+      return Number.isFinite(n) ? n : 0;
+    } catch {
+      return 0;
+    }
+  }
+
+  /**
+   * T04 — best-effort sweep for session-titled windows that survived
+   * closeSessionWindow. Triggered only when no other live MCP sessions
+   * exist (per countSessionTitledWindows pre-check). Closes leaked
+   * windows that the windowId-based close missed (windowId race, stale
+   * id, AppleScript silent no-op, etc.).
+   */
+  private async sweepRemainingSessionWindows(): Promise<void> {
+    try {
+      const { execSync } = await import('node:child_process');
+      const out = execSync(
+        `osascript -e 'tell application "Safari"
+  set targetWindows to (every window whose name is "Safari Pilot — Active Session")
+  set closedCount to 0
+  repeat with w in targetWindows
+    try
+      close w
+      set closedCount to closedCount + 1
+    end try
+  end repeat
+  return closedCount
+end tell'`,
+        { timeout: 3000, encoding: 'utf-8' },
+      ).trim();
+      const n = parseInt(out, 10);
+      trace('shutdown', 'server', 'sweep_done', { closed: Number.isFinite(n) ? n : 0 });
+    } catch (err) {
+      trace('shutdown', 'server', 'sweep_failed', { error: String(err) }, 'error');
     }
   }
 
@@ -1855,11 +1923,23 @@ end tell'`,
     trace('shutdown', 'server', 'session_window_close_start', { windowId: wid });
     try {
       const { execSync } = await import('node:child_process');
-      execSync(
-        `osascript -e 'tell application "Safari" to if (exists window id ${wid}) then close window id ${wid}'`,
+      // T03 — return whether the close actually fired vs. window already gone.
+      // Pre-fix logged "session_window_closed" in both cases, masking real
+      // leak conditions (stale wid, AppleScript silent failure, etc.).
+      const out = execSync(
+        `osascript -e 'tell application "Safari"
+  if (exists window id ${wid}) then
+    close window id ${wid}
+    return "closed"
+  else
+    return "not_found"
+  end if
+end tell'`,
         { timeout: 3000, encoding: 'utf-8' },
-      );
-      trace('shutdown', 'server', 'session_window_closed', { windowId: wid });
+      ).trim();
+      trace('shutdown', 'server', 'session_window_close_result', {
+        windowId: wid, result: out,
+      }, out === 'closed' ? 'event' : 'error');
     } catch (err) {
       trace('shutdown', 'server', 'session_window_close_failed', {
         windowId: wid, error: String(err),

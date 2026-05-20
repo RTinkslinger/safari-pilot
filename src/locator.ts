@@ -200,6 +200,34 @@ export function extractLocatorFromParams(
     if (typeof f.hasText === 'string') desc.filter = { hasText: f.hasText };
   }
   if (typeof params.exact === 'boolean') desc.exact = params.exact;
+  // v0.1.37 T02 — role+text alias to role+name. When the agent writes
+  // `safari_click({role:"link", text:"X"})` the natural intent is "click
+  // the LINK whose visible name is X" (Playwright's `getByRole('link',
+  // {name:'X'})`). Without this alias, generateLocatorJs's priority table
+  // picks role-only, ignoring text — every element with role=link matches
+  // and strict-mode rejects (empirical evidence: bare2-sp Allrecipes--1
+  // events #43-44, 221 elements matched). Gated on:
+  //   - role present
+  //   - name absent (explicit name always wins)
+  //   - text is a non-empty string (empty would match all empty-name elements)
+  if (
+    desc.role !== undefined &&
+    desc.name === undefined &&
+    typeof desc.text === 'string' &&
+    desc.text.length > 0
+  ) {
+    desc.name = desc.text;
+    delete desc.text;
+  } else if (
+    desc.role !== undefined &&
+    desc.name !== undefined &&
+    typeof desc.text === 'string'
+  ) {
+    // Explicit name + text: drop text so the descriptor unambiguously
+    // expresses role+name. Without dropping, downstream priority table
+    // picks role (text is lower) but the leftover text obscures intent.
+    delete desc.text;
+  }
   // T77: chain — array of ChainOp entries. Filter malformed entries (must be
   // an object with a string `op` discriminator). Don't set `chain` if no
   // valid entries survive.

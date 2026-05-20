@@ -76,8 +76,15 @@ cat > "$MCP_CONFIG" <<EOF
 }
 EOF
 
+# Bare-prompt mode (WV_BARE_PROMPT=1) uses the symmetric 3-line scaffold so
+# PW and SP are compared on identical prompting. Default keeps the heavier
+# prompt-template-playwright.md for backward compatibility.
+TEMPLATE_NAME="prompt-template-playwright.md"
+if [ "${WV_BARE_PROMPT:-0}" = "1" ]; then
+  TEMPLATE_NAME="prompt-template-bare.md"
+fi
 PROMPT_FILE=$(mktemp /tmp/wv-pw-prompt.XXXXXX)
-PROMPT_TEMPLATE=$(cat "$REPO_ROOT/bench/webvoyager/prompt-template-playwright.md")
+PROMPT_TEMPLATE=$(cat "$REPO_ROOT/bench/webvoyager/$TEMPLATE_NAME")
 PROMPT="${PROMPT_TEMPLATE//\{url\}/$URL}"
 PROMPT="${PROMPT//\{question\}/$QUES}"
 PROMPT="${PROMPT//\{screenshot\}/$SCREENSHOT}"
@@ -88,6 +95,9 @@ if [ "${WV_DRY_RUN:-0}" = "1" ]; then
   rm -f "$PROMPT_FILE"
   exit 0
 fi
+
+# Symmetric window-leak detection — PW should always show delta=0.
+SAFARI_WIN_PRE=$(osascript -e 'tell application "Safari" to count of windows' 2>/dev/null || echo 0)
 
 START_TS=$(date +%s)
 echo "════════════════════════════════════════════════"
@@ -125,11 +135,15 @@ rm -f "$PROMPT_FILE"
 END_TS=$(date +%s)
 WALL_MS=$(( (END_TS - START_TS) * 1000 ))
 
+sleep 1
+SAFARI_WIN_POST=$(osascript -e 'tell application "Safari" to count of windows' 2>/dev/null || echo 0)
+WIN_DELTA=$(( SAFARI_WIN_POST - SAFARI_WIN_PRE ))
+
 # Build score.json + transcript using the same Python block run-one-task.sh uses.
 # Shape MUST match so judge-probe.ts (and any future analysis) treats it identically.
-python3 - "$STREAM_JSONL" "$SCORE_FILE" "$TRANSCRIPT" "$TASK_ID" "$WALL_MS" "$EXIT" "$SCREENSHOT" "$VARIANT_TAG" "$RUN_SEQ" <<'PYEOF'
+python3 - "$STREAM_JSONL" "$SCORE_FILE" "$TRANSCRIPT" "$TASK_ID" "$WALL_MS" "$EXIT" "$SCREENSHOT" "$VARIANT_TAG" "$RUN_SEQ" "$SAFARI_WIN_PRE" "$SAFARI_WIN_POST" "$WIN_DELTA" <<'PYEOF'
 import json, os, sys
-stream, score_path, trans_path, tid, wall, exit_code, shot, variant, run_seq = sys.argv[1:10]
+stream, score_path, trans_path, tid, wall, exit_code, shot, variant, run_seq, win_pre, win_post, win_delta = sys.argv[1:13]
 final = ''
 turns = 0
 cost = 0.0
@@ -154,6 +168,8 @@ for line in open(stream):
 
 # Verdict heuristic: SUCCESS pending judge if screenshot exists + final answer text.
 # ABSTAIN if the agent self-reported. UNKNOWN if no screenshot.
+win_delta_i = int(win_delta)
+window_leaked = win_delta_i != 0
 verdict = 'PENDING_JUDGE'
 reason = ''
 if 'ABSTAIN' in (final or '').upper():
@@ -162,6 +178,9 @@ if 'ABSTAIN' in (final or '').upper():
 elif not os.path.exists(shot):
     verdict = 'UNKNOWN'
     reason = 'screenshot capture failed'
+elif window_leaked and os.environ.get('WV_SKIP_WINDOW_LEAK', '0') != '1':
+    verdict = 'UNKNOWN'
+    reason = f'safari window leak: pre={win_pre} post={win_post} delta={win_delta_i}'
 
 score = {
     'task_id': tid, 'variant': variant, 'verdict': verdict,
@@ -171,6 +190,10 @@ score = {
     'cost_usd': float(cost),
     'screenshot_path': shot if os.path.exists(shot) else None,
     'exit_code': int(exit_code),
+    'safari_window_count_pre': int(win_pre),
+    'safari_window_count_post': int(win_post),
+    'safari_window_delta': win_delta_i,
+    'window_leaked': window_leaked,
 }
 with open(score_path, 'w') as f:
     json.dump(score, f, indent=2)

@@ -84,7 +84,11 @@ export class NavigationTools {
       {
         name: 'safari_new_tab',
         description:
-          'Open a new Safari tab at a URL. Use when isolating work from an existing tab, opening multiple windows in parallel, or starting a task with a fresh context; returns a tabUrl you must pass to subsequent tools.',
+          'Open a new Safari tab at a URL AND wait for the page to load before returning. ' +
+          'After this call, extraction and interaction tools (safari_get_text, safari_click, safari_evaluate, etc.) ' +
+          'can be called directly on the returned tabUrl — no need to insert safari_wait_for between safari_new_tab ' +
+          'and the next tool call. Use when isolating work from an existing tab, opening multiple windows in parallel, ' +
+          'or starting a task with a fresh context; returns a tabUrl you must pass to subsequent tools.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -101,7 +105,10 @@ export class NavigationTools {
       },
       {
         name: 'safari_close_tab',
-        description: 'Close an agent-owned Safari tab. Use when finished with a task, when a tab is in an unrecoverable state, or to clean up before a new isolated workflow.',
+        description:
+          'Close a specific agent-owned tab. ' +
+          'NOTE: routine cleanup is NOT required — the MCP server automatically closes its session window (and every tab inside it) when the session ends, so end-of-task close_tab calls are redundant and waste a turn. ' +
+          'Use only when you need to free a tab MID-TASK (e.g., recovering from an unrecoverable page state, switching contexts before opening another tab with the same URL).',
         inputSchema: {
           type: 'object',
           properties: {
@@ -175,7 +182,23 @@ export class NavigationTools {
       return this.errorResponse(navResult.error?.message ?? 'Navigation failed', start);
     }
 
-    await sleep(WAIT_NAVIGATE_MS);
+    // T06 — wait for JS-responsiveness (not just elapsed time) after navigation,
+    // same rationale as handleNewTab: ad-heavy destination pages wedge the
+    // WebContent main thread during ad-load; returning while wedged makes the
+    // agent's first extraction time out and burn turns retrying. Poll a trivial
+    // eval until responsive, up to a budget; the page is reached by position
+    // (windowId/tabIndex) since the URL just changed and the registry is stale.
+    if (windowId !== undefined && tabIndex !== undefined) {
+      const probeDeadline = Date.now() + 18_000;
+      await sleep(WAIT_NAVIGATE_MS);
+      while (Date.now() < probeDeadline) {
+        const probe = await this.engine.executeJsInTabByPosition(windowId, tabIndex, 'return 1+1;', 3000);
+        if (probe.ok && typeof probe.value === 'string' && probe.value.includes('2')) break;
+        await sleep(1500);
+      }
+    } else {
+      await sleep(WAIT_NAVIGATE_MS);
+    }
 
     // Get final URL and title via the original tabUrl.
     // Known limitation (T2): the tab's URL has changed but the registry still has
@@ -316,6 +339,45 @@ export class NavigationTools {
       tabIndex = parts[2] ? parseInt(parts[2].trim(), 10) : undefined;
     } else if (raw.length > 0 && raw !== 'missing value') {
       tabUrl = raw.trim();
+    }
+
+    // T03 — implicit wait for page load. handleNavigate already does this
+    // (WAIT_NAVIGATE_MS sleep after AppleScript). handleNewTab did not,
+    // forcing agents to insert a defensive safari_wait_for after every
+    // safari_new_tab. Empirical evidence: every bench task's SP trace
+    // (bare1-sp through bare4-sp) shows a safari_wait_for that returns in
+    // 30-50ms because the page IS already loaded — the wait_for is wasted
+    // turn. Matching handleNavigate's behavior closes that 1-turn gap.
+    //
+    // T06 — wait for JS-RESPONSIVENESS, not just elapsed time. Ad-heavy
+    // pages (recipe sites, news) wedge the WebContent main thread during
+    // ad-load; returning while wedged makes the agent's first extraction
+    // time out, and it then burns 10+ turns retrying (Allrecipes--4/5:
+    // 388-513s, 17-19 turns). The wedge is intermittent/transient — a
+    // probe showed the same page responsive in 411ms when not caught
+    // mid-ad-load. Poll a trivial eval until it returns, up to a budget,
+    // so safari_new_tab returns only when the page can execute JS. On a
+    // page that never settles, the budget caps the wait (no worse than a
+    // fixed sleep). windowId/tabIndex come from the make-tab result above.
+    if (url !== 'about:blank') {
+      if (windowId !== undefined && tabIndex !== undefined) {
+        const probeDeadline = Date.now() + 18_000; // 18s budget
+        let responsive = false;
+        // First probe after a short settle so the initial parse completes.
+        await sleep(WAIT_NAVIGATE_MS);
+        while (Date.now() < probeDeadline) {
+          const probe = await this.engine.executeJsInTabByPosition(windowId, tabIndex, 'return 1+1;', 3000);
+          if (probe.ok && typeof probe.value === 'string' && probe.value.includes('2')) {
+            responsive = true;
+            break;
+          }
+          // Wedged (timeout / CSP / empty) — give the ad-load a moment, retry.
+          await sleep(1500);
+        }
+        void responsive; // best-effort; we return regardless once budget elapses
+      } else {
+        await sleep(WAIT_NAVIGATE_MS);
+      }
     }
 
     return {

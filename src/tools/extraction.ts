@@ -54,6 +54,132 @@ export async function verifyScreenshotWrittenOrThrow(path: string): Promise<void
   }
 }
 
+/**
+ * v0.1.37 Bug-MCP-1 — wrap a user-supplied `safari_evaluate` script so the
+ * returned `{value, type}` envelope surfaces the script's value regardless
+ * of whether the agent wrote it as:
+ *
+ *   - bare expression               `document.title`
+ *   - self-invoked arrow IIFE       `(() => "x")()`
+ *   - self-invoked async IIFE       `(async () => "x")()`
+ *   - JSON.stringify call           `JSON.stringify({...})`
+ *   - top-level await expression    `await Promise.resolve(7)`
+ *   - multi-statement with return   `const x = 1; return x;` (back-compat)
+ *
+ * The pre-fix wrapper interpolated `script` as the body of an async function,
+ * which required a literal top-level `return X;` to produce a value — every
+ * other shape silently yielded `{type:"undefined"}`. Empirically observed
+ * across 6 bench tasks (CHECKPOINT.md Bug-MCP-1 evidence index).
+ *
+ * Detection: strip string literals + comments, then look for a `return`
+ * keyword in the residue. With a top-level `return`, route to the body path
+ * (back-compat); otherwise wrap as `return (${script});`. Pure-statement
+ * scripts (`let x = 1;`) are detected by a statement-leading keyword and
+ * routed to body path — they return undefined, which matches what they would
+ * have done before the fix.
+ *
+ * Returns a function-BODY string. The production callsite (handleEvaluate)
+ * feeds it into engine.executeJsInTab, which packages it inside an inner
+ * `(async function() { ${body} })()` envelope.
+ */
+export function wrapEvaluateScript(script: string): string {
+  const stripped = script
+    .replace(/\/\*[\s\S]*?\*\//g, '')        // block comments
+    .replace(/\/\/[^\n]*/g, '')              // line comments
+    .replace(/"(?:[^"\\]|\\.)*"/g, '""')     // double-quoted strings
+    .replace(/'(?:[^'\\]|\\.)*'/g, "''")     // single-quoted strings
+    .replace(/`(?:[^`\\]|\\.)*`/g, '``');    // template literals (rough)
+
+  // T03 (Bug-MCP-1 refinement): top-level-return detection must respect brace
+  // depth. The naive `/\breturn\b/.test(stripped)` matched `return` inside
+  // IIFE bodies, e.g. `(() => { return x; })()` — that return is at brace
+  // depth 1, not top-level for the wrapper. Routing such scripts to body
+  // path discards the IIFE's value at the outer level (agent received
+  // `{type:"undefined"}` despite the IIFE returning correctly). Empirical
+  // evidence: bare3-sp/Allrecipes--2-r1 event #41.
+  const hasTopLevelReturn = scanForTopLevelReturn(stripped);
+  // Statement-leading keywords cannot be expression-wrapped (syntax error).
+  // Route these to the body path; with no top-level return they yield
+  // undefined, matching pre-fix behavior for statement-only inputs.
+  const STATEMENT_LEAD = /^\s*(?:let|const|var|if|for|while|do|switch|function|class|try|throw)\b/;
+  const isStatementLed = STATEMENT_LEAD.test(stripped);
+
+  const body = (hasTopLevelReturn || isStatementLed) ? script : `return (${script});`;
+
+  return `
+    return (async () => {
+      var __userResult = await (async function() { ${body} })();
+      return { value: __userResult, type: typeof __userResult };
+    })();
+  `;
+}
+
+/**
+ * T07 — wedge-aware retry for JS execution on ad-heavy pages.
+ *
+ * Ad-heavy pages (recipe sites, news) intermittently wedge the Safari
+ * WebContent main thread during ad-load. T06's navigation-time poll catches
+ * the initial settle, but pages can RE-WEDGE mid-extraction. When that
+ * happens the engine returns DAEMON_TIMEOUT and — without this helper — the
+ * agent burns a whole turn on the failed call, then retries, compounding into
+ * a turn explosion (Allrecipes--1 verification: 263s/15t).
+ *
+ * This helper absorbs the re-wedge INSIDE the tool call: on timeout, poll a
+ * trivial eval until the page is responsive again (up to a budget), then
+ * retry the original script ONCE. The re-wedge becomes "slightly slower wall"
+ * instead of "wasted agent turn". Only retries on timeout — CSP / other
+ * errors pass through unchanged so real failures aren't masked.
+ */
+async function execJsWithWedgeRetry(
+  engine: IEngine,
+  tabUrl: string,
+  js: string,
+  timeout: number,
+): Promise<import('../types.js').EngineResult> {
+  const first = await engine.executeJsInTab(tabUrl, js, timeout);
+  if (first.ok) return first;
+  const msg = first.error?.message ?? '';
+  const isTimeout = first.error?.code === 'DAEMON_TIMEOUT' || /timed out/i.test(msg);
+  if (!isTimeout) return first;
+  // BOUNDED retry: single short probe + at most one retry (~3s added max).
+  // A 12s polling loop AMPLIFIED persistent-wedge cost (Allrecipes--4 hit
+  // 979s when dozens of calls each added 12s). One 3s probe recovers fast
+  // transient wedges and fails fast on persistent ones.
+  const probe = await engine.executeJsInTab(tabUrl, 'return 1+1;', 3_000);
+  if (probe.ok && typeof probe.value === 'string' && probe.value.includes('2')) {
+    return await engine.executeJsInTab(tabUrl, js, timeout);
+  }
+  return first; // still wedged — surface the original timeout (fail fast)
+}
+
+/**
+ * Scan stripped script for a `return` keyword at brace depth 0.
+ * Strings + comments must be removed by the caller before invoking.
+ * Identifier boundaries are respected so `foo.return` / `myreturn`
+ * aren't misread as the keyword.
+ */
+function scanForTopLevelReturn(s: string): boolean {
+  let depth = 0;
+  const isIdentChar = (c: string): boolean => /[A-Za-z0-9_$]/.test(c);
+  let i = 0;
+  while (i < s.length) {
+    const c = s[i];
+    if (c === '{') { depth++; i++; continue; }
+    if (c === '}') { depth--; i++; continue; }
+    // At depth 0, check for the literal keyword `return` with proper
+    // word boundaries on both sides.
+    if (depth === 0 && c === 'r' && s.slice(i, i + 6) === 'return') {
+      const prev = i > 0 ? s[i - 1]! : '';
+      const next = i + 6 < s.length ? s[i + 6]! : '';
+      if (!isIdentChar(prev) && !isIdentChar(next)) {
+        return true;
+      }
+    }
+    i++;
+  }
+  return false;
+}
+
 export interface ToolDefinition {
   name: string;
   description: string;
@@ -229,13 +355,18 @@ export class ExtractionTools {
       {
         name: 'safari_evaluate',
         description:
-          'Use when you need to run an arbitrary JavaScript expression in the page context — typically when no higher-level tool fits the data extraction or DOM-interaction shape you need. Returns the expression\'s value via JSON serialization.',
+          'Run an arbitrary JavaScript expression in the page context. ' +
+          'Accepts any of: a bare expression (`document.title`), a self-invoked arrow IIFE (`(() => x)()`), ' +
+          'an async IIFE (`(async () => x)()`), a top-level await expression (`await fetch(...).then(r => r.json())`), ' +
+          'or a multi-statement script using a literal top-level `return X;`. ' +
+          'Returns `{ value, type }` where `type` is `typeof value` after JSON serialization. ' +
+          'Use when no higher-level tool fits the extraction or DOM-interaction shape you need.',
         inputSchema: {
           type: 'object',
           properties: {
             tabUrl: { type: 'string', description: 'Current URL of the tab' },
             script: { type: 'string', description: 'JavaScript code to execute. Must return a value.' },
-            timeout: { type: 'number', description: 'Execution timeout in milliseconds', default: 10000 },
+            timeout: { type: 'number', description: 'Execution timeout in milliseconds. Default 30s — ad-heavy pages (e.g. recipe sites, news sites) can take 5-15s before main-thread JS becomes responsive.', default: 30000 },
           },
           required: ['tabUrl', 'script'],
         },
@@ -718,7 +849,7 @@ export class ExtractionTools {
     const start = Date.now();
     const tabUrl = params['tabUrl'] as string;
     const script = params['script'] as string;
-    const timeout = typeof params['timeout'] === 'number' ? params['timeout'] : 10000;
+    const timeout = typeof params['timeout'] === 'number' ? params['timeout'] : 30000;
 
     // Async IIFE wrapper. Awaits the user script's result before packaging,
     // so a script that `return new Promise(...)` resolves end-to-end instead
@@ -752,14 +883,17 @@ export class ExtractionTools {
       // params.script.startsWith('__SP_TT_PROBE__:') check.
       script.startsWith('__SP_TT_PROBE__:')
     );
-    const js = isSentinelBypass ? script : `
-      return (async () => {
-        var __userResult = await (async function() { ${script} })();
-        return { value: __userResult, type: typeof __userResult };
-      })();
-    `;
+    // Bug-MCP-1 fix (v0.1.37): wrapEvaluateScript handles bare expressions,
+    // IIFEs, async IIFEs, top-level await, and back-compat `return X;` bodies.
+    // Sentinels still bypass wrapping so prefix matches upstream stay intact.
+    const js = isSentinelBypass ? script : wrapEvaluateScript(script);
+    // T07 — absorb mid-extraction ad-wedge re-timeouts inside the call so the
+    // agent doesn't burn turns retrying. Sentinels bypass (they target the
+    // bridge directly and shouldn't be retried via the generic JS path).
 
-    const result = await this.engine.executeJsInTab(tabUrl, js, timeout);
+    const result = isSentinelBypass
+      ? await this.engine.executeJsInTab(tabUrl, js, timeout)
+      : await execJsWithWedgeRetry(this.engine, tabUrl, js, timeout);
     if (!result.ok) {
       const rawMsg = result.error?.message ?? 'safari_evaluate failed';
       // Match Trusted Types / CSP eval refusal patterns. Safari surfaces these as
